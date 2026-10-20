@@ -1,7 +1,6 @@
 //! ShellZip window. Buttons call the same core operations as `szip`.
 
-use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
@@ -9,53 +8,97 @@ use shellzip_core::{
     CompressOpts, Entry, ExtractOpts, Overwrite, ZipMethod, add, extract, format_bytes, list, test,
 };
 
-use crate::panels;
-use crate::theme::{self, INK};
+use crate::chrome::{self, AddressEvent, MenuCommand, PackSettings, ToolCommand};
+use crate::explorer::{
+    ArchiveIndex, Explorer, JumpTarget, Row, RowKind, Target, archive_prefix, folder_parent,
+    is_supported_archive, jumps, location_text, path_under, read_directory, sort_rows, totals,
+    totals_label,
+};
+use crate::theme::{self, CANVAS};
 use crate::worker::{self, Outcome, SharedProgress};
 
-/// Desktop state for Milestone 1: open, list, extract, test, and create.
+/// Where the file pane is looking.
+enum Place {
+    /// A real directory. `rows` does not include `..`.
+    Folder { path: PathBuf, rows: Vec<Row> },
+    /// An open archive, browsed one folder at a time.
+    Archive {
+        path: PathBuf,
+        format: String,
+        index: Box<ArchiveIndex>,
+        members: Vec<String>,
+        prefix: String,
+    },
+}
+
+/// Desktop window: filesystem browser, and the same browser inside an archive.
 pub struct ShellZipApp {
-    archive: Option<PathBuf>,
-    format: String,
-    entries: Vec<Entry>,
-    selected: HashSet<String>,
+    place: Place,
+    view: Vec<Row>,
+    explorer: Explorer,
+    address: String,
+    scroll_to: Option<usize>,
+    pending_select: Option<String>,
     status: String,
     error: Option<String>,
     busy: bool,
-    overwrite: Overwrite,
-    level: u8,
-    method: ZipMethod,
-    flat: bool,
+    loaded: bool,
+    about: bool,
+    options: PackSettings,
+    generation: u64,
     progress: Arc<SharedProgress>,
     tx: Sender<Outcome>,
     rx: Receiver<Outcome>,
 }
 
 impl ShellZipApp {
-    /// Install image loaders and the zinc theme.
+    /// Install image loaders, apply the file-manager theme, and list the desktop.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
         let (tx, rx) = mpsc::channel();
-        Self {
-            archive: None,
-            format: String::new(),
-            entries: Vec::new(),
-            selected: HashSet::new(),
+        let path = starting_folder();
+        let generation = 1;
+        spawn_directory(tx.clone(), path.clone(), generation);
+        let mut app = Self {
+            place: Place::Folder {
+                path: path.clone(),
+                rows: Vec::new(),
+            },
+            view: Vec::new(),
+            explorer: Explorer::new(),
+            address: path.display().to_string(),
+            scroll_to: None,
+            pending_select: None,
             status: String::new(),
             error: None,
             busy: false,
-            overwrite: Overwrite::Never,
-            level: 3,
-            method: ZipMethod::Deflate,
-            flat: false,
+            loaded: false,
+            about: false,
+            options: PackSettings {
+                level: 3,
+                method: ZipMethod::Deflate,
+                overwrite: Overwrite::Never,
+                flat: false,
+            },
+            generation,
             progress: Arc::new(SharedProgress::new()),
             tx,
             rx,
-        }
+        };
+        app.rebuild_view();
+        app
     }
 
     fn open_archive(&mut self) {
+        if self.busy {
+            return;
+        }
+        let selected = self.selected_archives();
+        if let [path] = selected.as_slice() {
+            self.start_list(path.clone());
+            return;
+        }
         let Some(path) = rfd::FileDialog::new()
             .add_filter("Archives", &["zip", "tar", "gz", "tgz", "zst", "tzst"])
             .pick_file()
@@ -69,11 +112,14 @@ impl ShellZipApp {
         if self.busy {
             return;
         }
+        let generation = self.next_generation();
         self.begin_job();
+        self.status = format!("Opening {}", path.display());
         let tx = self.tx.clone();
         worker::spawn(tx, move || {
             let (opened, entries) = list(&path)?;
             Ok(Outcome::Listed {
+                generation,
                 format: opened.detected().label(),
                 path,
                 entries,
@@ -82,8 +128,8 @@ impl ShellZipApp {
     }
 
     fn extract_archive(&mut self) {
-        let Some(archive) = self.archive.clone() else {
-            self.error = Some("Open an archive first.".to_string());
+        let Some(archive) = self.command_archive() else {
+            self.error = Some("Open an archive, or select one.".to_string());
             return;
         };
         if self.busy {
@@ -92,9 +138,9 @@ impl ShellZipApp {
         let Some(output) = rfd::FileDialog::new().pick_folder() else {
             return;
         };
-        let names: Vec<String> = self.selected.iter().cloned().collect();
-        let flat = self.flat;
-        let overwrite = self.overwrite;
+        let names = self.member_filter(&archive);
+        let flat = self.options.flat;
+        let overwrite = self.options.overwrite;
         let progress = Arc::clone(&self.progress);
         self.begin_job();
         let tx = self.tx.clone();
@@ -102,8 +148,8 @@ impl ShellZipApp {
             let mut opts = ExtractOpts::new(output);
             opts.flat = flat;
             opts.overwrite = overwrite;
-            if !names.is_empty() {
-                opts.exact_paths = Some(names);
+            if names.is_some() {
+                opts.exact_paths = names;
             }
             let report = extract(&archive, &opts, None, progress.as_ref())?;
             Ok(Outcome::Finished(format!(
@@ -114,8 +160,8 @@ impl ShellZipApp {
     }
 
     fn test_archive(&mut self) {
-        let Some(archive) = self.archive.clone() else {
-            self.error = Some("Open an archive first.".to_string());
+        let Some(archive) = self.command_archive() else {
+            self.error = Some("Open an archive, or select one.".to_string());
             return;
         };
         if self.busy {
@@ -143,9 +189,13 @@ impl ShellZipApp {
         if self.busy {
             return;
         }
-        let Some(files) = rfd::FileDialog::new().pick_files() else {
-            return;
-        };
+        let mut files = self.selected_inputs();
+        if files.is_empty() {
+            let Some(picked) = rfd::FileDialog::new().pick_files() else {
+                return;
+            };
+            files = picked;
+        }
         if files.is_empty() {
             return;
         }
@@ -160,8 +210,9 @@ impl ShellZipApp {
         else {
             return;
         };
-        let level = self.level;
-        let method = self.method;
+        let level = self.options.level;
+        let method = self.options.method;
+        let generation = self.next_generation();
         let progress = Arc::clone(&self.progress);
         self.begin_job();
         let tx = self.tx.clone();
@@ -175,6 +226,7 @@ impl ShellZipApp {
             let report = add(&dest, &files, &opts, progress.as_ref())?;
             match list(&dest) {
                 Ok((opened, entries)) => Ok(Outcome::Listed {
+                    generation,
                     path: dest,
                     format: opened.detected().label(),
                     entries,
@@ -195,28 +247,449 @@ impl ShellZipApp {
         self.progress.reset();
     }
 
+    fn next_generation(&mut self) -> u64 {
+        self.generation = self.generation.wrapping_add(1);
+        self.generation
+    }
+
     fn poll(&mut self) {
         while let Ok(outcome) = self.rx.try_recv() {
-            self.busy = false;
             match outcome {
+                Outcome::Directory {
+                    generation,
+                    path,
+                    rows,
+                    error,
+                } => self.apply_directory(generation, path, rows, error),
                 Outcome::Listed {
+                    generation,
                     path,
                     format,
                     entries,
                 } => {
-                    self.status = format!("opened {}", path.display());
-                    self.archive = Some(path);
-                    self.format = format;
-                    self.entries = entries;
-                    self.selected.clear();
+                    self.busy = false;
+                    if generation == self.generation {
+                        self.apply_archive(path, format, entries);
+                    }
                 }
-                Outcome::Finished(summary) => self.status = summary,
-                Outcome::Failed(message) => self.error = Some(message),
+                Outcome::Finished(summary) => {
+                    self.busy = false;
+                    self.status = summary;
+                }
+                Outcome::Failed(message) => {
+                    self.busy = false;
+                    self.status.clear();
+                    self.error = Some(message);
+                }
             }
         }
     }
 
+    fn apply_directory(
+        &mut self,
+        generation: u64,
+        path: PathBuf,
+        rows: Vec<Row>,
+        error: Option<String>,
+    ) {
+        if generation != self.generation {
+            return;
+        }
+        self.place = Place::Folder { path, rows };
+        self.loaded = true;
+        self.explorer.clear_selection();
+        self.rebuild_view();
+        if let Some(key) = self.pending_select.take()
+            && self.view.iter().any(|row| row.key == key)
+        {
+            self.scroll_to = self.view.iter().position(|row| row.key == key);
+            self.explorer.select_only(&key);
+        }
+        match error {
+            Some(message) => {
+                self.error = Some(message);
+                self.status.clear();
+            }
+            None => self.status.clear(),
+        }
+    }
+
+    fn apply_archive(&mut self, path: PathBuf, format: String, entries: Vec<Entry>) {
+        let members = entries.iter().map(|entry| entry.path.clone()).collect();
+        let index = Box::new(ArchiveIndex::build(&entries));
+        self.address = location_text(&path, Some(""));
+        self.place = Place::Archive {
+            path,
+            format,
+            index,
+            members,
+            prefix: String::new(),
+        };
+        self.loaded = true;
+        self.pending_select = None;
+        self.explorer.clear_selection();
+        self.rebuild_view();
+        self.error = None;
+        self.status = match &self.place {
+            Place::Archive { path, .. } => format!("Opened {}", path.display()),
+            Place::Folder { .. } => String::new(),
+        };
+    }
+
+    fn open_folder(&mut self, path: PathBuf) {
+        self.open_folder_inner(path, true);
+    }
+
+    fn open_folder_inner(&mut self, path: PathBuf, clear_pending: bool) {
+        if self.busy {
+            return;
+        }
+        if clear_pending {
+            self.pending_select = None;
+        }
+        let generation = self.next_generation();
+        self.address = path.display().to_string();
+        self.place = Place::Folder {
+            path: path.clone(),
+            rows: Vec::new(),
+        };
+        self.loaded = false;
+        self.error = None;
+        self.status.clear();
+        self.explorer.clear_selection();
+        self.rebuild_view();
+        spawn_directory(self.tx.clone(), path, generation);
+    }
+
+    fn set_prefix(&mut self, prefix: String) {
+        let allowed = match &self.place {
+            Place::Archive { index, .. } => prefix.is_empty() || index.contains_folder(&prefix),
+            Place::Folder { .. } => false,
+        };
+        if !allowed {
+            self.error = Some("That folder is not in the archive.".to_string());
+            return;
+        }
+        let address = match &self.place {
+            Place::Archive { path, .. } => location_text(path, Some(&prefix)),
+            Place::Folder { .. } => return,
+        };
+        if let Place::Archive {
+            prefix: slot, path, ..
+        } = &mut self.place
+        {
+            *slot = prefix;
+            if slot.is_empty() {
+                self.status = format!("Opened {}", path.display());
+            } else {
+                self.status.clear();
+            }
+        }
+        self.address = address;
+        self.error = None;
+        self.explorer.clear_selection();
+        self.rebuild_view();
+    }
+
+    fn go_up(&mut self) {
+        if self.busy {
+            return;
+        }
+        enum Step {
+            Folder(PathBuf),
+            Prefix(String),
+            Leave { parent: PathBuf, key: String },
+        }
+        let step = match &self.place {
+            Place::Folder { path, .. } => {
+                let Some(parent) = folder_parent(path).map(Path::to_path_buf) else {
+                    return;
+                };
+                Step::Folder(parent)
+            }
+            Place::Archive { path, prefix, .. } => {
+                if prefix.is_empty() {
+                    let Some(parent) = folder_parent(path).map(Path::to_path_buf) else {
+                        return;
+                    };
+                    Step::Leave {
+                        parent,
+                        key: path.display().to_string(),
+                    }
+                } else {
+                    let parent = prefix
+                        .rsplit_once('/')
+                        .map(|(head, _)| head.to_string())
+                        .unwrap_or_default();
+                    Step::Prefix(parent)
+                }
+            }
+        };
+        match step {
+            Step::Folder(path) => self.open_folder(path),
+            Step::Prefix(prefix) => self.set_prefix(prefix),
+            Step::Leave { parent, key } => {
+                self.pending_select = Some(key);
+                self.open_folder_inner(parent, false);
+            }
+        }
+    }
+
+    fn open_address(&mut self) {
+        if self.busy {
+            return;
+        }
+        let typed = self.address.trim().to_string();
+        if typed.is_empty() {
+            return;
+        }
+        let archive = match &self.place {
+            Place::Archive { path, .. } => Some(path.clone()),
+            Place::Folder { .. } => None,
+        };
+        if let Some(archive) = archive
+            && let Some(prefix) = archive_prefix(&typed, &archive)
+        {
+            self.set_prefix(prefix);
+            return;
+        }
+        let path = PathBuf::from(&typed);
+        if path.is_dir() {
+            self.open_folder(path);
+        } else if path.is_file() && is_supported_archive(&path) {
+            self.start_list(path);
+        } else {
+            self.error = Some(format!("Cannot open {typed}"));
+        }
+    }
+
+    fn activate(&mut self, index: usize) {
+        if self.busy {
+            return;
+        }
+        let Some(row) = self.view.get(index).cloned() else {
+            return;
+        };
+        match row.target {
+            Target::Parent => self.go_up(),
+            Target::Path(path) => match row.kind {
+                RowKind::Directory => self.open_folder(path),
+                RowKind::Archive => self.start_list(path),
+                RowKind::File | RowKind::Symlink | RowKind::Parent => {}
+            },
+            Target::ArchiveDir(prefix) => self.set_prefix(prefix),
+            Target::ArchiveMember(_) => {}
+        }
+    }
+
+    fn activate_selected(&mut self) {
+        let key = self.explorer.anchor().map(str::to_string);
+        let Some(key) = key else {
+            return;
+        };
+        let Some(index) = self.view.iter().position(|row| row.key == key) else {
+            return;
+        };
+        self.activate(index);
+    }
+
+    fn rebuild_view(&mut self) {
+        self.view = match &self.place {
+            Place::Folder { rows, .. } => rows.clone(),
+            Place::Archive { index, prefix, .. } => index.children(prefix).to_vec(),
+        };
+        if self.can_go_up() {
+            self.view.insert(0, Row::parent());
+        }
+        let (column, order) = self.explorer.ordering();
+        sort_rows(&mut self.view, column, order);
+    }
+
+    fn can_go_up(&self) -> bool {
+        match &self.place {
+            Place::Folder { path, .. } => folder_parent(path).is_some(),
+            Place::Archive { .. } => true,
+        }
+    }
+
+    fn archive_ready(&self) -> bool {
+        match &self.place {
+            Place::Archive { .. } => true,
+            Place::Folder { .. } => self
+                .view
+                .iter()
+                .any(|row| row.kind == RowKind::Archive && self.explorer.is_selected(&row.key)),
+        }
+    }
+
+    fn command_archive(&self) -> Option<PathBuf> {
+        match &self.place {
+            Place::Archive { path, .. } => Some(path.clone()),
+            Place::Folder { .. } => self.selected_archives().into_iter().next(),
+        }
+    }
+
+    fn selected_archives(&self) -> Vec<PathBuf> {
+        let Place::Folder { .. } = &self.place else {
+            return Vec::new();
+        };
+        self.view
+            .iter()
+            .filter_map(|row| match &row.target {
+                Target::Path(path)
+                    if row.kind == RowKind::Archive && self.explorer.is_selected(&row.key) =>
+                {
+                    Some(path.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn selected_inputs(&self) -> Vec<PathBuf> {
+        let Place::Folder { .. } = &self.place else {
+            return Vec::new();
+        };
+        self.view
+            .iter()
+            .filter_map(|row| {
+                if row.kind == RowKind::Parent || !self.explorer.is_selected(&row.key) {
+                    return None;
+                }
+                match &row.target {
+                    Target::Path(path) => Some(path.clone()),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    fn member_filter(&self, archive: &Path) -> Option<Vec<String>> {
+        let Place::Archive { path, members, .. } = &self.place else {
+            return None;
+        };
+        if path != archive {
+            return None;
+        }
+        let chosen: Vec<&Row> = self
+            .view
+            .iter()
+            .filter(|row| row.kind != RowKind::Parent && self.explorer.is_selected(&row.key))
+            .collect();
+        if chosen.is_empty() {
+            return None;
+        }
+        let mut paths = Vec::new();
+        for row in chosen {
+            match &row.target {
+                Target::ArchiveMember(member) => paths.push(member.clone()),
+                Target::ArchiveDir(prefix) => {
+                    for member in members {
+                        if path_under(member, prefix) {
+                            paths.push(member.clone());
+                        }
+                    }
+                }
+                Target::Parent | Target::Path(_) => {}
+            }
+        }
+        Some(paths)
+    }
+
+    fn address_jumps(&self) -> Vec<crate::explorer::Jump> {
+        match &self.place {
+            Place::Folder { path, .. } => jumps(path, None),
+            Place::Archive { path, prefix, .. } => jumps(path, Some(prefix)),
+        }
+    }
+
+    fn summary(&self) -> String {
+        if self.loaded {
+            let (folders, files, bytes) = totals(&self.view);
+            totals_label(folders, files, bytes)
+        } else {
+            "Reading...".to_string()
+        }
+    }
+
+    fn note(&self) -> &str {
+        if !self.status.is_empty() {
+            self.status.as_str()
+        } else {
+            match &self.place {
+                Place::Archive { format, .. } => format.as_str(),
+                Place::Folder { .. } => "",
+            }
+        }
+    }
+
+    fn title(&self) -> String {
+        match &self.place {
+            Place::Folder { path, .. } => folder_title(path),
+            Place::Archive { path, prefix, .. } => {
+                if prefix.is_empty() {
+                    folder_title(path)
+                } else {
+                    prefix.rsplit('/').next().unwrap_or("ShellZip").to_string()
+                }
+            }
+        }
+    }
+
+    fn on_menu(&mut self, command: MenuCommand) {
+        match command {
+            MenuCommand::Open => self.open_archive(),
+            MenuCommand::Add => self.create_archive(),
+            MenuCommand::Extract => self.extract_archive(),
+            MenuCommand::Test => self.test_archive(),
+            MenuCommand::SelectAll => self.explorer.select_all(&self.view),
+            MenuCommand::SelectNone => self.explorer.clear_selection(),
+            MenuCommand::About => self.about = true,
+            MenuCommand::Exit => {}
+        }
+    }
+
+    fn on_tool(&mut self, command: ToolCommand) {
+        match command {
+            ToolCommand::Add => self.create_archive(),
+            ToolCommand::Extract => self.extract_archive(),
+            ToolCommand::Test => self.test_archive(),
+            ToolCommand::Open => self.open_archive(),
+        }
+    }
+
+    fn on_address(&mut self, event: AddressEvent) {
+        match event {
+            AddressEvent::Up => self.go_up(),
+            AddressEvent::Submit => self.open_address(),
+            AddressEvent::Jump(JumpTarget::Folder(path)) => self.open_folder(path),
+            AddressEvent::Jump(JumpTarget::Prefix(prefix)) => self.set_prefix(prefix),
+        }
+    }
+
+    fn shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.wants_keyboard_input() {
+            return;
+        }
+        let up = ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
+                || input.consume_key(egui::Modifiers::ALT, egui::Key::ArrowUp)
+        });
+        if up {
+            self.go_up();
+        }
+        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::A)) {
+            self.explorer.select_all(&self.view);
+        }
+        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+            self.activate_selected();
+        }
+    }
+
     fn take_drop(&mut self, ctx: &egui::Context) {
+        if self.busy {
+            return;
+        }
         let dropped: Vec<PathBuf> = ctx.input(|input| {
             input
                 .raw
@@ -225,8 +698,15 @@ impl ShellZipApp {
                 .filter_map(|file| file.path.clone())
                 .collect()
         });
-        if let Some(path) = dropped.into_iter().next() {
+        let Some(path) = dropped.into_iter().next() else {
+            return;
+        };
+        if path.is_dir() {
+            self.open_folder(path);
+        } else if is_supported_archive(&path) {
             self.start_list(path);
+        } else {
+            self.error = Some(format!("{} is not a supported archive", path.display()));
         }
     }
 }
@@ -234,97 +714,125 @@ impl ShellZipApp {
 impl eframe::App for ShellZipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
-        if self.busy {
+        crate::icons::warm(ctx);
+        if self.busy || !self.loaded {
             ctx.request_repaint();
         }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.title()));
         self.take_drop(ctx);
 
-        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-            ui.add_space(6.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.heading(egui::RichText::new("ShellZip").color(INK));
-                ui.separator();
-                ui.add_enabled_ui(!self.busy, |ui| {
-                    if panels::tool(ui, crate::icons::Icon::FolderOpen, "Open") {
-                        self.open_archive();
-                    }
-                    if panels::tool(ui, crate::icons::Icon::FolderDown, "Extract") {
-                        self.extract_archive();
-                    }
-                    if panels::tool(ui, crate::icons::Icon::CircleCheck, "Test") {
-                        self.test_archive();
-                    }
-                    if panels::tool(ui, crate::icons::Icon::Plus, "New") {
-                        self.create_archive();
-                    }
-                });
-                ui.separator();
-                ui.add(egui::Slider::new(&mut self.level, 0..=5).text("level"));
-                egui::ComboBox::from_id_salt("method")
-                    .selected_text(match self.method {
-                        ZipMethod::Deflate => "deflate",
-                        ZipMethod::Zstd => "zstd",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.method, ZipMethod::Deflate, "deflate");
-                        ui.selectable_value(&mut self.method, ZipMethod::Zstd, "zstd");
-                    });
-                egui::ComboBox::from_id_salt("overwrite")
-                    .selected_text(overwrite_label(self.overwrite))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.overwrite, Overwrite::Never, "skip existing");
-                        ui.selectable_value(
-                            &mut self.overwrite,
-                            Overwrite::Always,
-                            "replace existing",
-                        );
-                        ui.selectable_value(&mut self.overwrite, Overwrite::Rename, "rename");
-                    });
-                ui.checkbox(&mut self.flat, "Flat extract");
+        let mut menu_command = None;
+        egui::TopBottomPanel::top("menu")
+            .frame(chrome::bar_frame(4, 0))
+            .show(ctx, |ui| {
+                menu_command = chrome::menu_bar(ui, &mut self.options);
             });
-            if let Some(path) = &self.archive {
-                ui.label(
-                    egui::RichText::new(path.display().to_string()).color(crate::theme::MUTED),
+        if matches!(menu_command, Some(MenuCommand::Exit)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else if let Some(command) = menu_command {
+            self.on_menu(command);
+        }
+
+        let archive_ready = self.archive_ready();
+        let busy = self.busy;
+        let mut tool_command = None;
+        egui::TopBottomPanel::top("toolbar")
+            .frame(chrome::bar_frame(6, 2))
+            .show(ctx, |ui| {
+                tool_command = chrome::toolbar(ui, busy, archive_ready);
+            });
+        if let Some(command) = tool_command {
+            self.on_tool(command);
+        }
+
+        let can_up = self.can_go_up() && !self.busy;
+        let jump_list = self.address_jumps();
+        let mut address_event = None;
+        egui::TopBottomPanel::top("address")
+            .frame(chrome::bar_frame(6, 4))
+            .show(ctx, |ui| {
+                address_event = chrome::address_bar(ui, &mut self.address, can_up, &jump_list);
+            });
+        let submitted = matches!(address_event, Some(AddressEvent::Submit));
+        if let Some(event) = address_event {
+            self.on_address(event);
+        }
+
+        let summary = self.summary();
+        let note = self.note().to_string();
+        let progress = self.progress.snapshot();
+        let mut dismiss_error = false;
+        egui::TopBottomPanel::bottom("status")
+            .frame(chrome::bar_frame(10, 4))
+            .show(ctx, |ui| {
+                dismiss_error = chrome::status_bar(
+                    ui,
+                    &summary,
+                    self.busy,
+                    progress,
+                    self.error.as_deref(),
+                    &note,
                 );
-            }
-            ui.add_space(6.0);
-        });
+            });
+        if dismiss_error {
+            self.error = None;
+        }
 
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.add_space(4.0);
-            panels::status(
-                ui,
-                &self.format,
-                self.entries.len(),
-                self.selected.len(),
-                self.busy,
-                &self.status,
-                self.progress.snapshot(),
-            );
-            ui.add_space(4.0);
-        });
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(message) = &self.error {
-                if panels::error_banner(ui, message) {
-                    self.error = None;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(CANVAS))
+            .show(ctx, |ui| {
+                if let Some(index) = crate::explorer::show(
+                    ui,
+                    &mut self.explorer,
+                    &mut self.view,
+                    &mut self.scroll_to,
+                ) {
+                    self.activate(index);
                 }
-                ui.separator();
-            }
-            if self.entries.is_empty() {
-                panels::empty_state(ui);
-            } else {
-                panels::file_list(ui, &self.entries, &mut self.selected);
-            }
-        });
+            });
+
+        chrome::about(ctx, &mut self.about);
+        if !submitted {
+            self.shortcuts(ctx);
+        }
     }
 }
 
-fn overwrite_label(mode: Overwrite) -> &'static str {
-    match mode {
-        Overwrite::Never => "skip existing",
-        Overwrite::Always => "replace existing",
-        Overwrite::Rename => "rename",
-        Overwrite::Ask => "skip existing",
+fn starting_folder() -> PathBuf {
+    for key in ["USERPROFILE", "HOME"] {
+        let Ok(home) = std::env::var(key) else {
+            continue;
+        };
+        let desktop = PathBuf::from(&home).join("Desktop");
+        if desktop.is_dir() {
+            return desktop;
+        }
+        let home = PathBuf::from(home);
+        if home.is_dir() {
+            return home;
+        }
     }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn folder_title(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+fn spawn_directory(tx: Sender<Outcome>, path: PathBuf, generation: u64) {
+    worker::spawn(tx, move || {
+        let (rows, error) = match read_directory(&path) {
+            Ok(rows) => (rows, None),
+            Err(message) => (Vec::new(), Some(message)),
+        };
+        Ok(Outcome::Directory {
+            generation,
+            path,
+            rows,
+            error,
+        })
+    });
 }

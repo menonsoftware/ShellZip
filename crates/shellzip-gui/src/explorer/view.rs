@@ -1,0 +1,312 @@
+//! Virtualized name, size, type, and modified columns.
+
+use std::collections::HashSet;
+
+use egui_extras::{Column, TableBuilder};
+
+use super::model::{self, Row, RowKind, SortColumn, SortOrder};
+use crate::icons::{self, Icon};
+use crate::theme::{FOLDER, INK, MUTED, OPEN, SELECT_TEXT};
+
+/// Selection and sort for the file pane.
+#[derive(Debug, Default)]
+pub struct Explorer {
+    column: SortColumn,
+    order: SortOrder,
+    selected: HashSet<String>,
+    anchor: Option<String>,
+}
+
+impl Explorer {
+    /// Name ascending, nothing selected.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Drop the selection after a navigation.
+    pub fn clear_selection(&mut self) {
+        self.selected.clear();
+        self.anchor = None;
+    }
+
+    /// Select one row and make it the shift-click anchor.
+    pub fn select_only(&mut self, key: &str) {
+        self.selected.clear();
+        self.selected.insert(key.to_string());
+        self.anchor = Some(key.to_string());
+    }
+
+    /// Select every row except `..`.
+    pub fn select_all(&mut self, rows: &[Row]) {
+        self.selected.clear();
+        for row in rows {
+            if row.kind != RowKind::Parent {
+                self.selected.insert(row.key.clone());
+            }
+        }
+        self.anchor = rows
+            .iter()
+            .find(|row| row.kind != RowKind::Parent)
+            .map(|row| row.key.clone());
+    }
+
+    /// Whether `key` is part of the selection.
+    pub fn is_selected(&self, key: &str) -> bool {
+        self.selected.contains(key)
+    }
+
+    /// Row that Enter activates.
+    pub fn anchor(&self) -> Option<&str> {
+        self.anchor.as_deref()
+    }
+
+    /// Current header sort.
+    pub fn ordering(&self) -> (SortColumn, SortOrder) {
+        (self.column, self.order)
+    }
+
+    fn toggle(&mut self, column: SortColumn) {
+        if self.column == column {
+            self.order = match self.order {
+                SortOrder::Asc => SortOrder::Desc,
+                SortOrder::Desc => SortOrder::Asc,
+            };
+        } else {
+            self.column = column;
+            self.order = SortOrder::Asc;
+        }
+    }
+
+    fn click(&mut self, index: usize, rows: &[Row], modifiers: egui::Modifiers) {
+        let Some(row) = rows.get(index) else {
+            return;
+        };
+        let key = row.key.clone();
+        if modifiers.command {
+            if !self.selected.insert(key.clone()) {
+                self.selected.remove(&key);
+            }
+            self.anchor = Some(key);
+        } else if modifiers.shift {
+            self.select_range(index, rows, &key);
+        } else {
+            self.selected.clear();
+            self.selected.insert(key.clone());
+            self.anchor = Some(key);
+        }
+    }
+
+    fn select_range(&mut self, index: usize, rows: &[Row], key: &str) {
+        let Some(anchor) = &self.anchor else {
+            self.selected.clear();
+            self.selected.insert(key.to_string());
+            self.anchor = Some(key.to_string());
+            return;
+        };
+        let Some(start) = rows.iter().position(|row| row.key == *anchor) else {
+            self.selected.clear();
+            self.selected.insert(key.to_string());
+            self.anchor = Some(key.to_string());
+            return;
+        };
+        let (lo, hi) = if start < index {
+            (start, index)
+        } else {
+            (index, start)
+        };
+        self.selected.clear();
+        for row in &rows[lo..=hi] {
+            self.selected.insert(row.key.clone());
+        }
+    }
+}
+
+/// Paint `rows` and return the index that was double-clicked.
+///
+/// A header click reorders `rows` before the body is built, so the new order
+/// is visible on the same frame. `scroll_to` is consumed once.
+pub fn show(
+    ui: &mut egui::Ui,
+    explorer: &mut Explorer,
+    rows: &mut [Row],
+    scroll_to: &mut Option<usize>,
+) -> Option<usize> {
+    // Cells share edges, so the selection fill is one bar instead of a strip behind each label.
+    ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+    ui.style_mut().interaction.selectable_labels = false;
+
+    let mut builder = TableBuilder::new(ui)
+        .id_salt("shellzip-files")
+        .striped(false)
+        .resizable(true)
+        .sense(egui::Sense::click())
+        .drag_to_scroll(false)
+        .auto_shrink(false)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+        .column(Column::exact(28.0).resizable(false))
+        .column(Column::remainder().at_least(160.0).clip(true))
+        .column(Column::initial(90.0).at_least(64.0).clip(true))
+        .column(Column::initial(180.0).at_least(110.0).clip(true))
+        .column(Column::initial(150.0).at_least(120.0).clip(true));
+    if let Some(index) = scroll_to.take() {
+        builder = builder.scroll_to_row(index, Some(egui::Align::Center));
+    }
+
+    let mut resorted = false;
+    let table = builder.header(24.0, |mut header| {
+        header.col(|_| {});
+        if header_clicked(
+            &mut header,
+            "Name",
+            explorer.column == SortColumn::Name,
+            explorer.order,
+        ) {
+            explorer.toggle(SortColumn::Name);
+            resorted = true;
+        }
+        if header_clicked(
+            &mut header,
+            "Size",
+            explorer.column == SortColumn::Size,
+            explorer.order,
+        ) {
+            explorer.toggle(SortColumn::Size);
+            resorted = true;
+        }
+        if header_clicked(
+            &mut header,
+            "Type",
+            explorer.column == SortColumn::Type,
+            explorer.order,
+        ) {
+            explorer.toggle(SortColumn::Type);
+            resorted = true;
+        }
+        if header_clicked(
+            &mut header,
+            "Modified",
+            explorer.column == SortColumn::Modified,
+            explorer.order,
+        ) {
+            explorer.toggle(SortColumn::Modified);
+            resorted = true;
+        }
+    });
+    if resorted {
+        model::sort_rows(rows, explorer.column, explorer.order);
+    }
+
+    let mut activate = None;
+    table.body(|body| {
+        body.rows(22.0, rows.len(), |mut row| {
+            let index = row.index();
+            let item = &rows[index];
+            let selected = explorer.selected.contains(&item.key);
+            row.set_selected(selected);
+            let text = if selected { SELECT_TEXT } else { INK };
+            let (icon, tint) = glyph(item.kind, selected);
+            // The icon lives in its own unclipped cell. Clipping the name text
+            // was also clipping the SVG down to an empty square.
+            row.col(|ui| {
+                ui.add_space(8.0);
+                icons::show(ui, icon, tint, 16.0);
+            });
+            row.col(|ui| {
+                ui.add_space(4.0);
+                cell_text(ui, &item.name, text);
+            });
+            row.col(|ui| {
+                ui.add_space(6.0);
+                cell_text(ui, &size_text(item), text);
+            });
+            row.col(|ui| {
+                ui.add_space(6.0);
+                cell_text(ui, &item.type_label, text);
+            });
+            row.col(|ui| {
+                ui.add_space(6.0);
+                cell_text(ui, &modified_text(item), text);
+            });
+            // `row.response` is the union of every cell, including the empty
+            // padding, because the labels and icons do not take the pointer.
+            let response = row.response();
+            if response.double_clicked() {
+                activate = Some(index);
+            } else if response.clicked() {
+                let modifiers = response.ctx.input(|input| input.modifiers);
+                explorer.click(index, rows, modifiers);
+            }
+        });
+    });
+    activate
+}
+
+fn header_clicked(
+    header: &mut egui_extras::TableRow<'_, '_>,
+    label: &str,
+    active: bool,
+    order: SortOrder,
+) -> bool {
+    let (_, response) = header.col(|ui| {
+        ui.add_space(6.0);
+        ui.strong(label);
+        if active {
+            ui.add_space(6.0);
+            sort_mark(ui, order);
+        }
+    });
+    response.clicked()
+}
+
+/// Small triangle. The default font has no ▲ glyph, which was drawing as an empty box.
+fn sort_mark(ui: &mut egui::Ui, order: SortOrder) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(9.0, 8.0), egui::Sense::empty());
+    let color = INK;
+    let points = match order {
+        SortOrder::Asc => vec![
+            egui::pos2(rect.center().x, rect.top()),
+            rect.right_bottom(),
+            rect.left_bottom(),
+        ],
+        SortOrder::Desc => vec![
+            rect.left_top(),
+            rect.right_top(),
+            egui::pos2(rect.center().x, rect.bottom()),
+        ],
+    };
+    ui.painter().add(egui::Shape::convex_polygon(
+        points,
+        color,
+        egui::Stroke::NONE,
+    ));
+}
+
+fn cell_text(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
+    ui.add(egui::Label::new(egui::RichText::new(text).color(color)).sense(egui::Sense::empty()));
+}
+
+fn glyph(kind: RowKind, selected: bool) -> (Icon, egui::Color32) {
+    let (icon, tint) = match kind {
+        RowKind::Parent | RowKind::Directory => (Icon::Folder, FOLDER),
+        RowKind::Archive => (Icon::FileArchive, OPEN),
+        RowKind::Symlink => (Icon::Link, MUTED),
+        RowKind::File => (Icon::File, MUTED),
+    };
+    if selected {
+        (icon, SELECT_TEXT)
+    } else {
+        (icon, tint)
+    }
+}
+
+fn size_text(row: &Row) -> String {
+    if matches!(row.kind, RowKind::Directory | RowKind::Parent) {
+        String::new()
+    } else {
+        row.size.map(|size| size.to_string()).unwrap_or_default()
+    }
+}
+
+fn modified_text(row: &Row) -> String {
+    row.modified.map(model::format_modified).unwrap_or_default()
+}

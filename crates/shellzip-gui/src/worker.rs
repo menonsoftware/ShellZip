@@ -7,6 +7,8 @@ use std::sync::mpsc::Sender;
 
 use shellzip_core::{Entry, Error, ProgressSink};
 
+use crate::explorer::Row;
+
 /// Byte counters the window reads each frame.
 pub struct SharedProgress {
     label: Mutex<String>,
@@ -71,12 +73,25 @@ impl ProgressSink for SharedProgress {
 pub enum Outcome {
     /// A listing is ready to show.
     Listed {
+        /// Bumped when the user navigates, so a slow listing cannot overwrite a newer place.
+        generation: u64,
         /// Archive that was opened.
         path: PathBuf,
         /// Format label, such as `ZIP` or `TAR.GZ`.
         format: String,
         /// Members in archive order.
         entries: Vec<Entry>,
+    },
+    /// One filesystem folder, read off the UI thread.
+    Directory {
+        /// Matches [`Outcome::Listed`] so an older folder read is ignored.
+        generation: u64,
+        /// Folder that was read.
+        path: PathBuf,
+        /// Immediate children. `..` is not included.
+        rows: Vec<Row>,
+        /// Set when the directory could not be read.
+        error: Option<String>,
     },
     /// The job finished and `summary` can go in the status line.
     Finished(String),
