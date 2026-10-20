@@ -3,7 +3,7 @@
 //! Source: <https://lucide.dev/icons/>. The SVG files and their ISC license
 //! live in `assets/lucide/`.
 
-use egui::{Color32, Vec2};
+use egui::{Color32, Rect, Sense, Vec2};
 
 /// Icons used by the window.
 #[derive(Clone, Copy)]
@@ -32,6 +32,8 @@ pub enum Icon {
     Loader,
     /// Dismiss.
     X,
+    /// Leave the current folder.
+    ArrowUp,
 }
 
 impl Icon {
@@ -49,6 +51,7 @@ impl Icon {
             Self::Link => "bytes://lucide/link.svg",
             Self::Loader => "bytes://lucide/loader-circle.svg",
             Self::X => "bytes://lucide/x.svg",
+            Self::ArrowUp => "bytes://lucide/arrow-up.svg",
         }
     }
 
@@ -66,13 +69,68 @@ impl Icon {
             Self::Link => include_bytes!("../assets/lucide/link.svg"),
             Self::Loader => include_bytes!("../assets/lucide/loader-circle.svg"),
             Self::X => include_bytes!("../assets/lucide/x.svg"),
+            Self::ArrowUp => include_bytes!("../assets/lucide/arrow-up.svg"),
         }
     }
 }
 
-/// Draw `icon` at `size` points.
+/// Every icon, so the SVG textures can be created before the file table asks for them.
+pub const ALL: [Icon; 13] = [
+    Icon::FolderOpen,
+    Icon::FolderDown,
+    Icon::CircleCheck,
+    Icon::Plus,
+    Icon::File,
+    Icon::Folder,
+    Icon::FileArchive,
+    Icon::TriangleAlert,
+    Icon::Archive,
+    Icon::Link,
+    Icon::Loader,
+    Icon::X,
+    Icon::ArrowUp,
+];
+
+/// Rasterize the icons once, at the same pixel size the painter requests.
+///
+/// A table sizing pass otherwise asks for a different SVG size every frame and
+/// the loader draws its failure mark instead of the glyph.
+pub fn warm(ctx: &egui::Context) {
+    let mut pending = false;
+    for icon in ALL {
+        for points in [16.0, 28.0] {
+            pending |= !raster_ready(ctx, icon, points);
+        }
+    }
+    if pending {
+        ctx.request_repaint();
+    }
+}
+
+fn raster_ready(ctx: &egui::Context, icon: Icon, points: f32) -> bool {
+    let pixels = (ctx.pixels_per_point() * points).round().max(1.0) as u32;
+    let loaded = image(icon, Color32::WHITE, points).source(ctx).load(
+        ctx,
+        egui::TextureOptions::LINEAR,
+        egui::load::SizeHint::Size {
+            width: pixels,
+            height: pixels,
+            maintain_aspect_ratio: false,
+        },
+    );
+    matches!(loaded, Ok(egui::load::TexturePoll::Ready { .. }))
+}
+
+/// Draw `icon` at `size` points. The widget does not take clicks, so a table row can.
 pub fn show(ui: &mut egui::Ui, icon: Icon, tint: Color32, size: f32) {
-    ui.add(image(icon, tint, size));
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::empty());
+    image(icon, tint, size).paint_at(ui, rect);
+}
+
+/// Draw `icon` inside `rect`.
+pub fn paint(ui: &mut egui::Ui, icon: Icon, tint: Color32, rect: Rect) {
+    let size = rect.width().min(rect.height());
+    image(icon, tint, size).paint_at(ui, rect);
 }
 
 /// Spin the loader. Callers should keep requesting repaints while work is running.
@@ -86,4 +144,6 @@ fn image(icon: Icon, tint: Color32, size: f32) -> egui::Image<'static> {
     egui::Image::from_bytes(icon.uri(), icon.bytes())
         .tint(tint)
         .fit_to_exact_size(Vec2::splat(size))
+        .sense(Sense::empty())
+        .show_loading_spinner(false)
 }

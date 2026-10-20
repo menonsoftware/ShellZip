@@ -1,8 +1,9 @@
 //! ShellZip desktop window.
 
 mod app;
+mod chrome;
+mod explorer;
 mod icons;
-mod panels;
 mod theme;
 mod worker;
 
