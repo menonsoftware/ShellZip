@@ -1,0 +1,15 @@
+---
+description: ShellZip Rust conventions
+globs: crates/**/*.rs
+alwaysApply: false
+---
+
+# ShellZip Rust
+
+- `shellzip-core` is UI-free. Front ends (`szip`, `shellzip`) call it; they do not reimplement archive I/O.
+- No `unsafe` (workspace lint forbids it). No `unwrap` or `expect` outside tests.
+- Library paths return `shellzip_core::Error` with a RAR-compatible `exit_code`.
+- Stream file bytes through a fixed buffer. Do not read an entry into a `Vec` to compress or extract it.
+- Archive entry names go through `safe_path` before any create, write, or symlink.
+- New format work stays behind the `ArchiveWriter` / `ArchiveReader` traits and `ops`.
+- Run `cargo fmt` and `cargo clippy --all-targets -- -D warnings` before finishing.

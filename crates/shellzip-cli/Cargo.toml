@@ -1,0 +1,30 @@
+[package]
+name = "shellzip-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "szip command-line archive manager"
+
+[[bin]]
+name = "szip"
+path = "src/main.rs"
+
+[dependencies]
+anstream = "0.6"
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+console = "0.15"
+indicatif = "0.17"
+shellzip-core = { path = "../shellzip-core" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[lints]
+workspace = true
