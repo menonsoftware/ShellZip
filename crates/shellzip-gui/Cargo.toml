@@ -1,0 +1,21 @@
+[package]
+name = "shellzip-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "ShellZip desktop archive manager"
+
+[[bin]]
+name = "shellzip"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.32"
+egui = "0.32"
+egui_extras = { version = "0.32", features = ["all_loaders"] }
+rfd = "0.15"
+shellzip-core = { path = "../shellzip-core" }
+
+[lints]
+workspace = true
