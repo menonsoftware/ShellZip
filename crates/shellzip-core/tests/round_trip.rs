@@ -192,6 +192,51 @@ fn byte_cap_stops_extraction() {
 }
 
 #[test]
+fn adding_to_an_existing_zip_keeps_the_other_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let keep = tmp.path().join("keep.txt");
+    let replace = tmp.path().join("replace.txt");
+    fs::write(&keep, b"keep").unwrap();
+    fs::write(&replace, b"old").unwrap();
+    let archive = tmp.path().join("bundle.zip");
+    add(
+        &archive,
+        &[keep, replace.clone()],
+        &opts_fast(),
+        &NopProgress,
+    )
+    .unwrap();
+
+    fs::write(&replace, b"new").unwrap();
+    let extra = tmp.path().join("extra.txt");
+    fs::write(&extra, b"extra").unwrap();
+    add(&archive, &[replace, extra], &opts_fast(), &NopProgress).unwrap();
+
+    let out = tmp.path().join("out");
+    extract_all(&archive, &out);
+    assert_eq!(fs::read(out.join("keep.txt")).unwrap(), b"keep");
+    assert_eq!(fs::read(out.join("replace.txt")).unwrap(), b"new");
+    assert_eq!(fs::read(out.join("extra.txt")).unwrap(), b"extra");
+
+    let only = tmp.path().join("only.txt");
+    fs::write(&only, b"only").unwrap();
+    let mut opts = opts_fast();
+    opts.force = true;
+    add(&archive, &[only], &opts, &NopProgress).unwrap();
+    let (_opened, entries) = list(&archive).unwrap();
+    assert!(entries.iter().any(|entry| entry.path.ends_with("only.txt")));
+    assert!(!entries.iter().any(|entry| entry.path.ends_with("keep.txt")));
+}
+
+#[test]
+fn existing_tar_is_left_in_place_without_force() {
+    let (tmp, archive) = pack_tree("tar");
+    let src = tmp.path().join("src");
+    let err = add(&archive, &[src], &opts_fast(), &NopProgress).unwrap_err();
+    assert!(err.to_string().contains("already exists"), "{err}");
+}
+
+#[test]
 fn rar_signature_is_recognized_and_refused() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("sample.rar");

@@ -22,8 +22,8 @@ pub const SELECT: Color32 = Color32::from_rgb(0, 120, 215);
 pub const SELECT_TEXT: Color32 = Color32::WHITE;
 /// Toolbar and row hover.
 pub const HOVER: Color32 = Color32::from_rgb(229, 241, 251);
-/// Folder glyph.
-pub const FOLDER: Color32 = Color32::from_rgb(214, 158, 36);
+/// Filled directory icon. A gold outline reads as brown at 16 px.
+pub const FOLDER: Color32 = Color32::from_rgb(255, 196, 24);
 /// Add toolbar glyph.
 pub const ADD: Color32 = Color32::from_rgb(0, 112, 204);
 /// Extract toolbar glyph.

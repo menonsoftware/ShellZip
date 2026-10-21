@@ -4,6 +4,7 @@ use std::fs;
 use std::io::Write;
 use std::process::Command;
 
+use predicates::prelude::*;
 use predicates::str::contains;
 
 fn szip() -> assert_cmd::Command {
@@ -50,6 +51,43 @@ fn add_list_test_extract_round_trip() {
         .assert()
         .success();
     assert_eq!(fs::read(out.join("src/hello.txt")).unwrap(), b"hello");
+}
+
+#[test]
+fn add_to_an_existing_zip_keeps_previous_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let first = tmp.path().join("first.txt");
+    let second = tmp.path().join("second.txt");
+    fs::write(&first, b"one").unwrap();
+    fs::write(&second, b"two").unwrap();
+    let archive = tmp.path().join("notes.zip");
+    szip()
+        .args([
+            "a",
+            "-m",
+            "1",
+            archive.to_str().unwrap(),
+            first.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("created"));
+    szip()
+        .args([
+            "a",
+            "-m",
+            "1",
+            archive.to_str().unwrap(),
+            second.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("updated"));
+    szip()
+        .args(["l", archive.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("first.txt").and(contains("second.txt")));
 }
 
 #[test]

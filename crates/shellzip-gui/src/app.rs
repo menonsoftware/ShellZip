@@ -212,6 +212,8 @@ impl ShellZipApp {
         };
         let level = self.options.level;
         let method = self.options.method;
+        // Adding into an existing ZIP keeps its other files. `-y` still replaces from the CLI.
+        let update_zip = existing_zip(&dest);
         let generation = self.next_generation();
         let progress = Arc::clone(&self.progress);
         self.begin_job();
@@ -220,7 +222,7 @@ impl ShellZipApp {
             let opts = CompressOpts {
                 level,
                 zip_method: method,
-                force: true,
+                force: !update_zip,
                 ..CompressOpts::default()
             };
             let report = add(&dest, &files, &opts, progress.as_ref())?;
@@ -813,6 +815,14 @@ fn starting_folder() -> PathBuf {
         }
     }
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn existing_zip(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
 }
 
 fn folder_title(path: &Path) -> String {

@@ -13,6 +13,9 @@ mod tar;
 mod zip;
 
 /// Builds one archive on disk. The destination is replaced only after [`Self::finish`].
+///
+/// An existing ZIP is updated: [`Self::retain_existing`] copies members that this
+/// run does not replace. Other formats still require `force` before a replace.
 pub trait ArchiveWriter {
     /// Add a regular file. `src` must yield exactly `meta.size` bytes.
     fn add_file(&mut self, rel: &Path, src: &mut dyn Read, meta: &EntryMeta) -> Result<(), Error>;
@@ -20,6 +23,13 @@ pub trait ArchiveWriter {
     fn add_dir(&mut self, rel: &Path, meta: &EntryMeta) -> Result<(), Error>;
     /// Add a symlink. `target` is stored as text, not followed.
     fn add_symlink(&mut self, rel: &Path, target: &Path, meta: &EntryMeta) -> Result<(), Error>;
+    /// Keep destination members whose names are not in `replacing`.
+    ///
+    /// Called before any `add_*`. Formats that cannot update an existing file ignore it.
+    fn retain_existing(&mut self, replacing: &[String]) -> Result<(), Error> {
+        let _ = replacing;
+        Ok(())
+    }
     /// Flush, close, and move the temporary file onto `path`. Returns the archive size.
     fn finish(self: Box<Self>) -> Result<u64, Error>;
 }
@@ -56,16 +66,26 @@ pub(crate) fn prepare_output(
     path: &Path,
     force: bool,
 ) -> Result<(PathBuf, std::io::BufWriter<std::fs::File>), Error> {
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        crate::fs::safe_path::ensure_dir(parent)?;
-    }
     if path.exists() && !force {
         return Err(Error::Usage(format!(
             "archive `{}` already exists; pass -y to replace it",
             path.display()
         )));
+    }
+    prepare_temp(path)
+}
+
+/// Create the temporary file beside `path` without checking whether `path` exists.
+///
+/// ZIP updates write here, then commit over the existing archive after its other
+/// members have been copied.
+pub(crate) fn prepare_temp(
+    path: &Path,
+) -> Result<(PathBuf, std::io::BufWriter<std::fs::File>), Error> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        crate::fs::safe_path::ensure_dir(parent)?;
     }
     let tmp = temp_beside(path);
     let file = std::fs::File::create(&tmp)

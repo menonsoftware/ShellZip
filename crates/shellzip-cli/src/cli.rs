@@ -27,7 +27,7 @@ pub struct Cli {
 /// `szip` commands implemented in this milestone.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Add files to a new archive. The extension selects the format.
+    /// Add files to an archive. An existing ZIP keeps its other files unless `-y` is passed.
     #[command(name = "a")]
     Add(AddArgs),
     /// Extract an archive, recreating directories.
@@ -53,7 +53,7 @@ pub enum Command {
 /// `szip a <archive> <files…>`.
 #[derive(Debug, Parser)]
 pub struct AddArgs {
-    /// Archive to create. `.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.zst`, `.tzst`, `.gz`, `.zst`.
+    /// Archive to create or update. `.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.zst`, `.tzst`, `.gz`, `.zst`.
     pub archive: PathBuf,
     /// Files and directories to pack.
     #[arg(required = true)]
@@ -85,7 +85,7 @@ pub struct AddArgs {
     /// Compress every ZIP member, including the usual already-compressed types.
     #[arg(long = "no-store-list")]
     pub no_store_list: bool,
-    /// Replace an existing archive file.
+    /// Replace an existing archive instead of updating a ZIP.
     #[arg(short = 'y', long = "yes")]
     pub yes: bool,
 }

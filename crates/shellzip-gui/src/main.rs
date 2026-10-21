@@ -1,4 +1,8 @@
 //! ShellZip desktop window.
+//!
+//! The Windows executable does not open a console window.
+
+#![cfg_attr(all(not(test), target_os = "windows"), windows_subsystem = "windows")]
 
 mod app;
 mod chrome;

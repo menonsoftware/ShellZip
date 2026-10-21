@@ -15,7 +15,9 @@ use crate::options::{
 };
 use crate::progress::{ProgressReader, ProgressSink};
 
-/// Pack `inputs` into a new archive at `dest`. The format comes from the extension.
+/// Pack `inputs` into `dest`. The format comes from the extension.
+///
+/// An existing ZIP keeps members this call does not replace, unless `opts.force` is set.
 pub fn add(
     dest: &Path,
     inputs: &[PathBuf],
@@ -31,6 +33,8 @@ pub fn add(
     let total = planned.iter().map(|item| item.meta.size).sum();
     progress.begin(&format!("add {}", dest.display()), total);
     let mut writer = archiver::create_from_path(dest, opts)?;
+    let replacing: Vec<String> = planned.iter().map(|item| item.rel.clone()).collect();
+    writer.retain_existing(&replacing)?;
     let mut entries = 0u64;
     let mut bytes = 0u64;
     for item in &planned {

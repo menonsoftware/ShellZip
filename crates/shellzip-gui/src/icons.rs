@@ -1,9 +1,26 @@
-//! Lucide icons, recolored so egui can tint `stroke="#000000"`.
+//! Lucide icons. egui tints by multiplying, so a black shape stays black.
+//! The folder file is white and picks up [`crate::theme::FOLDER`].
 //!
 //! Source: <https://lucide.dev/icons/>. The SVG files and their ISC license
 //! live in `assets/lucide/`.
+//!
+//! Each icon is rasterized once at [`MASTER_POINTS`] and then scaled. A table
+//! sizing pass otherwise asks for a new SVG size every frame and the loader
+//! draws its failure mark above the file list.
 
 use egui::{Color32, Rect, Sense, Vec2};
+
+/// File-list row glyph.
+pub const SIZE_ROW: f32 = 16.0;
+/// Toolbar glyph.
+pub const SIZE_TOOL: f32 = 28.0;
+/// Status-line glyph.
+pub const SIZE_STATUS: f32 = 14.0;
+/// Sort and address-bar caret.
+pub const SIZE_CARET: Vec2 = Vec2::new(9.0, 8.0);
+
+/// One raster size for every icon. Painting scales this texture.
+const MASTER_POINTS: f32 = 32.0;
 
 /// Icons used by the window.
 #[derive(Clone, Copy)]
@@ -34,6 +51,15 @@ pub enum Icon {
     X,
     /// Leave the current folder.
     ArrowUp,
+}
+
+/// Up or down triangle, painted so we do not depend on font glyphs.
+#[derive(Clone, Copy)]
+pub enum Caret {
+    /// Sort ascending, or the address-bar parent list.
+    Up,
+    /// Sort descending.
+    Down,
 }
 
 impl Icon {
@@ -91,59 +117,117 @@ pub const ALL: [Icon; 13] = [
     Icon::ArrowUp,
 ];
 
-/// Rasterize the icons once, at the same pixel size the painter requests.
+/// Rasterize the icons once, at the master pixel size.
 ///
-/// A table sizing pass otherwise asks for a different SVG size every frame and
-/// the loader draws its failure mark instead of the glyph.
+/// Returns immediately when a texture is still loading; the next frame paints
+/// the glyph instead of the loader failure mark.
 pub fn warm(ctx: &egui::Context) {
     let mut pending = false;
     for icon in ALL {
-        for points in [16.0, 28.0] {
-            pending |= !raster_ready(ctx, icon, points);
-        }
+        pending |= sized_texture(ctx, icon).is_none();
     }
     if pending {
         ctx.request_repaint();
     }
 }
 
-fn raster_ready(ctx: &egui::Context, icon: Icon, points: f32) -> bool {
-    let pixels = (ctx.pixels_per_point() * points).round().max(1.0) as u32;
-    let loaded = image(icon, Color32::WHITE, points).source(ctx).load(
-        ctx,
-        egui::TextureOptions::LINEAR,
-        egui::load::SizeHint::Size {
-            width: pixels,
-            height: pixels,
-            maintain_aspect_ratio: false,
-        },
-    );
-    matches!(loaded, Ok(egui::load::TexturePoll::Ready { .. }))
-}
-
 /// Draw `icon` at `size` points. The widget does not take clicks, so a table row can.
 pub fn show(ui: &mut egui::Ui, icon: Icon, tint: Color32, size: f32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::empty());
-    image(icon, tint, size).paint_at(ui, rect);
+    paint(ui, icon, tint, rect);
 }
 
-/// Draw `icon` inside `rect`.
+/// Draw `icon` inside `rect`. Skips the frame when the texture is not ready.
 pub fn paint(ui: &mut egui::Ui, icon: Icon, tint: Color32, rect: Rect) {
-    let size = rect.width().min(rect.height());
-    image(icon, tint, size).paint_at(ui, rect);
+    let Some(image) = tinted(ui.ctx(), icon, tint, rect.size()) else {
+        return;
+    };
+    image.paint_at(ui, rect);
 }
 
 /// Spin the loader. Callers should keep requesting repaints while work is running.
 pub fn show_spinning(ui: &mut egui::Ui, tint: Color32, size: f32) {
     let angle = ui.input(|input| input.time) as f32;
-    ui.add(image(Icon::Loader, tint, size).rotate(angle, Vec2::splat(0.5)));
+    if let Some(image) = tinted(ui.ctx(), Icon::Loader, tint, Vec2::splat(size)) {
+        ui.add(image.rotate(angle, Vec2::splat(0.5)));
+    } else {
+        ui.allocate_exact_size(Vec2::splat(size), Sense::empty());
+    }
     ui.ctx().request_repaint();
 }
 
-fn image(icon: Icon, tint: Color32, size: f32) -> egui::Image<'static> {
-    egui::Image::from_bytes(icon.uri(), icon.bytes())
-        .tint(tint)
-        .fit_to_exact_size(Vec2::splat(size))
+/// Allocate [`SIZE_CARET`] and paint a triangle.
+pub fn caret(ui: &mut egui::Ui, caret: Caret, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(SIZE_CARET, Sense::empty());
+    paint_caret(ui, caret, color, rect);
+}
+
+/// Draw a filled triangle in `rect`.
+pub fn paint_caret(ui: &mut egui::Ui, caret: Caret, color: Color32, rect: Rect) {
+    let points = match caret {
+        Caret::Up => vec![
+            egui::pos2(rect.center().x, rect.top()),
+            rect.right_bottom(),
+            rect.left_bottom(),
+        ],
+        Caret::Down => vec![
+            rect.left_top(),
+            rect.right_top(),
+            egui::pos2(rect.center().x, rect.bottom()),
+        ],
+    };
+    ui.painter().add(egui::Shape::convex_polygon(
+        points,
+        color,
+        egui::Stroke::NONE,
+    ));
+}
+
+fn tinted(
+    ctx: &egui::Context,
+    icon: Icon,
+    tint: Color32,
+    size: Vec2,
+) -> Option<egui::Image<'static>> {
+    let texture = sized_texture(ctx, icon)?;
+    Some(
+        egui::Image::from_texture(texture)
+            .tint(tint)
+            .fit_to_exact_size(size)
+            .sense(Sense::empty())
+            .show_loading_spinner(false),
+    )
+}
+
+fn sized_texture(ctx: &egui::Context, icon: Icon) -> Option<egui::load::SizedTexture> {
+    let pixels = (ctx.pixels_per_point() * MASTER_POINTS).round().max(1.0) as u32;
+    match egui::Image::from_bytes(icon.uri(), icon.bytes())
         .sense(Sense::empty())
         .show_loading_spinner(false)
+        .source(ctx)
+        .load(
+            ctx,
+            egui::TextureOptions::LINEAR,
+            egui::load::SizeHint::Size {
+                width: pixels,
+                height: pixels,
+                maintain_aspect_ratio: false,
+            },
+        ) {
+        Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Icon;
+
+    #[test]
+    fn folder_svg_is_white_so_the_yellow_tint_shows() {
+        let svg = std::str::from_utf8(Icon::Folder.bytes()).expect("folder svg is utf-8");
+        assert!(svg.contains("fill=\"#ffffff\""));
+        assert!(svg.contains("stroke=\"#ffffff\""));
+        assert!(!svg.contains("#000000"));
+    }
 }

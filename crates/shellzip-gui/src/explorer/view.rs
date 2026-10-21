@@ -4,9 +4,10 @@ use std::collections::HashSet;
 
 use egui_extras::{Column, TableBuilder};
 
+use super::appearance;
 use super::model::{self, Row, RowKind, SortColumn, SortOrder};
-use crate::icons::{self, Icon};
-use crate::theme::{FOLDER, INK, MUTED, OPEN, SELECT_TEXT};
+use crate::icons::{self, Caret};
+use crate::theme::{INK, SELECT_TEXT};
 
 /// Selection and sort for the file pane.
 #[derive(Debug, Default)]
@@ -204,12 +205,12 @@ pub fn show(
             let selected = explorer.selected.contains(&item.key);
             row.set_selected(selected);
             let text = if selected { SELECT_TEXT } else { INK };
-            let (icon, tint) = glyph(item.kind, selected);
+            let (icon, tint) = appearance::row_glyph(item.kind, selected);
             // The icon lives in its own unclipped cell. Clipping the name text
             // was also clipping the SVG down to an empty square.
             row.col(|ui| {
                 ui.add_space(8.0);
-                icons::show(ui, icon, tint, 16.0);
+                icons::show(ui, icon, tint, icons::SIZE_ROW);
             });
             row.col(|ui| {
                 ui.add_space(4.0);
@@ -252,51 +253,21 @@ fn header_clicked(
         ui.strong(label);
         if active {
             ui.add_space(6.0);
-            sort_mark(ui, order);
+            icons::caret(
+                ui,
+                match order {
+                    SortOrder::Asc => Caret::Up,
+                    SortOrder::Desc => Caret::Down,
+                },
+                INK,
+            );
         }
     });
     response.clicked()
 }
 
-/// Small triangle. The default font has no ▲ glyph, which was drawing as an empty box.
-fn sort_mark(ui: &mut egui::Ui, order: SortOrder) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(9.0, 8.0), egui::Sense::empty());
-    let color = INK;
-    let points = match order {
-        SortOrder::Asc => vec![
-            egui::pos2(rect.center().x, rect.top()),
-            rect.right_bottom(),
-            rect.left_bottom(),
-        ],
-        SortOrder::Desc => vec![
-            rect.left_top(),
-            rect.right_top(),
-            egui::pos2(rect.center().x, rect.bottom()),
-        ],
-    };
-    ui.painter().add(egui::Shape::convex_polygon(
-        points,
-        color,
-        egui::Stroke::NONE,
-    ));
-}
-
 fn cell_text(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
     ui.add(egui::Label::new(egui::RichText::new(text).color(color)).sense(egui::Sense::empty()));
-}
-
-fn glyph(kind: RowKind, selected: bool) -> (Icon, egui::Color32) {
-    let (icon, tint) = match kind {
-        RowKind::Parent | RowKind::Directory => (Icon::Folder, FOLDER),
-        RowKind::Archive => (Icon::FileArchive, OPEN),
-        RowKind::Symlink => (Icon::Link, MUTED),
-        RowKind::File => (Icon::File, MUTED),
-    };
-    if selected {
-        (icon, SELECT_TEXT)
-    } else {
-        (icon, tint)
-    }
 }
 
 fn size_text(row: &Row) -> String {
