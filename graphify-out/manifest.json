@@ -12,16 +12,16 @@
     "semantic_hash": "aff365c3a12fc8a9a4450a4e4049cd87"
   },
   "crates/shellzip-cli/src/cli.rs": {
-    "mtime": 1792523407.8726747,
-    "seen": 1792524039.735925,
-    "ast_hash": "d5349185a0d3f34ddd2097187eb9ffa0",
-    "semantic_hash": "d5349185a0d3f34ddd2097187eb9ffa0"
+    "mtime": 1792554725.330327,
+    "seen": 1792554877.9009373,
+    "ast_hash": "6c76f48b3e40aa39fdde9fdb1cda529b",
+    "semantic_hash": ""
   },
   "crates/shellzip-cli/src/commands/add.rs": {
-    "mtime": 1792523407.8736746,
-    "seen": 1792524039.7359273,
-    "ast_hash": "c059f4160bb8a3eaa02f04cd6dd6acf7",
-    "semantic_hash": "c059f4160bb8a3eaa02f04cd6dd6acf7"
+    "mtime": 1792554727.0221925,
+    "seen": 1792554877.9009385,
+    "ast_hash": "158423c5a663011b68b378d086855912",
+    "semantic_hash": ""
   },
   "crates/shellzip-cli/src/commands/extract.rs": {
     "mtime": 1792523407.8736746,
@@ -60,10 +60,10 @@
     "semantic_hash": "f9a3dd5b67a08e0a52612a1579055166"
   },
   "crates/shellzip-cli/tests/cli.rs": {
-    "mtime": 1792523609.614781,
-    "seen": 1792524039.73594,
-    "ast_hash": "b0983580bdf2e6ce32c02f8bacc29866",
-    "semantic_hash": "b0983580bdf2e6ce32c02f8bacc29866"
+    "mtime": 1792554807.6668286,
+    "seen": 1792554877.9009447,
+    "ast_hash": "e4a53f5877c021fcb0575be7929f9664",
+    "semantic_hash": ""
   },
   "crates/shellzip-core/Cargo.toml": {
     "mtime": 1792522914.0848906,
@@ -72,10 +72,10 @@
     "semantic_hash": "e3c1297a7027ad13bd59d3cc394b5dd2"
   },
   "crates/shellzip-core/src/archiver/mod.rs": {
-    "mtime": 1792523542.4371715,
-    "seen": 1792524039.7359438,
-    "ast_hash": "9eebbc5dc21c33a8bcec8f6edaf0d3b8",
-    "semantic_hash": "9eebbc5dc21c33a8bcec8f6edaf0d3b8"
+    "mtime": 1792554721.8946,
+    "seen": 1792554877.9009461,
+    "ast_hash": "9b7ea21880075d05c963abab572b8de5",
+    "semantic_hash": ""
   },
   "crates/shellzip-core/src/archiver/stream.rs": {
     "mtime": 1792523407.8936746,
@@ -90,10 +90,10 @@
     "semantic_hash": "46d5fd75549a9144c759031dae7f3cc7"
   },
   "crates/shellzip-core/src/archiver/zip.rs": {
-    "mtime": 1792523585.473032,
-    "seen": 1792524039.7359483,
-    "ast_hash": "edb6765442bd8e367d752b3ca3d46e7a",
-    "semantic_hash": "edb6765442bd8e367d752b3ca3d46e7a"
+    "mtime": 1792554737.5957837,
+    "seen": 1792554877.9009485,
+    "ast_hash": "94675beba4e600377d707c1a5a0e35c8",
+    "semantic_hash": ""
   },
   "crates/shellzip-core/src/crypto.rs": {
     "mtime": 1792522092.1316671,
@@ -180,16 +180,16 @@
     "semantic_hash": "ad3bc3558fb3168640a37946e4b05ec7"
   },
   "crates/shellzip-core/src/ops.rs": {
-    "mtime": 1792523546.2269733,
-    "seen": 1792524039.7359712,
-    "ast_hash": "68afa53f7950df863ca15e6fc342a330",
-    "semantic_hash": "68afa53f7950df863ca15e6fc342a330"
+    "mtime": 1792554723.670681,
+    "seen": 1792554877.900959,
+    "ast_hash": "b5d9eedffd3b28a1df998faacae3e1a0",
+    "semantic_hash": ""
   },
   "crates/shellzip-core/src/options.rs": {
-    "mtime": 1792523524.3992398,
-    "seen": 1792524039.7359731,
-    "ast_hash": "6f92b02f28eef40f6d544ab8ffb1903f",
-    "semantic_hash": "6f92b02f28eef40f6d544ab8ffb1903f"
+    "mtime": 1792554722.526372,
+    "seen": 1792554877.9009595,
+    "ast_hash": "ef53f9c412f84b9f536ad68597030e82",
+    "semantic_hash": ""
   },
   "crates/shellzip-core/src/progress.rs": {
     "mtime": 1792522087.453444,
@@ -198,10 +198,10 @@
     "semantic_hash": "d3fb2708dae60ef756322d6df99702ca"
   },
   "crates/shellzip-core/tests/round_trip.rs": {
-    "mtime": 1792523728.0793977,
-    "seen": 1792524039.7359762,
-    "ast_hash": "c2fdca0033ccdefe056bdedf940978ce",
-    "semantic_hash": "c2fdca0033ccdefe056bdedf940978ce"
+    "mtime": 1792554741.816917,
+    "seen": 1792554877.900961,
+    "ast_hash": "651eec4dba47a0acb86718c1ec75ee78",
+    "semantic_hash": ""
   },
   "crates/shellzip-gui/Cargo.toml": {
     "mtime": 1792523684.8211358,
@@ -210,27 +210,27 @@
     "semantic_hash": "e90eed550a8d7227b696f1c28c5f0897"
   },
   "crates/shellzip-gui/src/app.rs": {
-    "mtime": 1792527442.381921,
-    "seen": 1792527502.0730186,
-    "ast_hash": "f2fa722bd87043afa4febe31b400bcc4",
+    "mtime": 1792554710.2589717,
+    "seen": 1792554877.9009624,
+    "ast_hash": "21cbbbe551a02f64b9331b7b517fb430",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/icons.rs": {
-    "mtime": 1792527481.6777544,
-    "seen": 1792527502.0730295,
-    "ast_hash": "e9f87917dc048067d635e534aced26e5",
+    "mtime": 1792554813.2393239,
+    "seen": 1792554877.900968,
+    "ast_hash": "8c8903d225f3ea97f8a1e4aee1c6e266",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/main.rs": {
-    "mtime": 1792526200.6364594,
-    "seen": 1792526565.7904868,
-    "ast_hash": "6b3c9ab57865646b6baddb8442548681",
+    "mtime": 1792554784.0311942,
+    "seen": 1792554877.900969,
+    "ast_hash": "a29a92168ec80fea13081f8f7bfe7869",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/theme.rs": {
-    "mtime": 1792527441.9728124,
-    "seen": 1792527502.0730326,
-    "ast_hash": "bd13b610c84afbc863aba6d03ba9244f",
+    "mtime": 1792553411.4167585,
+    "seen": 1792553505.0858078,
+    "ast_hash": "3ac47f534b4a62d0e12643204c9f50ef",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/worker.rs": {
@@ -240,9 +240,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/chrome.rs": {
-    "mtime": 1792526407.6132247,
-    "seen": 1792526565.7904744,
-    "ast_hash": "cc6f77f744ee673722fec6e37023a5a8",
+    "mtime": 1792554708.2513666,
+    "seen": 1792554877.9009633,
+    "ast_hash": "4f4633f6836092353fe39d3b48ad69f3",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/explorer/listing.rs": {
@@ -252,9 +252,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/explorer/mod.rs": {
-    "mtime": 1792526525.127477,
-    "seen": 1792526565.7904792,
-    "ast_hash": "4a2cee732872d531fd1f746b586be061",
+    "mtime": 1792553422.478499,
+    "seen": 1792553505.0858042,
+    "ast_hash": "3dec4715f8f848701aa4873e0a1a4816",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/explorer/model.rs": {
@@ -264,9 +264,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/explorer/view.rs": {
-    "mtime": 1792527483.242718,
-    "seen": 1792527502.0730278,
-    "ast_hash": "1d699ac26c7e57899460ad6f67376587",
+    "mtime": 1792553431.0582547,
+    "seen": 1792553505.085806,
+    "ast_hash": "cda567d7ce61723e31b10faddebbfda5",
     "semantic_hash": ""
   },
   ".github/workflows/ci.yml": {
@@ -330,9 +330,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/assets/lucide/folder.svg": {
-    "mtime": 1792522075.962759,
-    "seen": 1792526565.7905056,
-    "ast_hash": "644e8c876426efc0eb5175ae093e5f22",
+    "mtime": 1792554706.6538236,
+    "seen": 1792554877.9009783,
+    "ast_hash": "5c5df5001e082fe8b569c626680e9101",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/assets/lucide/link.svg": {
@@ -363,6 +363,12 @@
     "mtime": 1792522075.964759,
     "seen": 1792526565.7905126,
     "ast_hash": "dee5e803af97a620c5df8d38ada476ed",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-gui/src/explorer/appearance.rs": {
+    "mtime": 1792553422.3699274,
+    "seen": 1792553505.0858023,
+    "ast_hash": "5a47fbe450eef2b5f67dc495f0867ced",
     "semantic_hash": ""
   }
 }

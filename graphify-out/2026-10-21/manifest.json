@@ -210,15 +210,15 @@
     "semantic_hash": "e90eed550a8d7227b696f1c28c5f0897"
   },
   "crates/shellzip-gui/src/app.rs": {
-    "mtime": 1792526409.404951,
-    "seen": 1792526565.7904718,
-    "ast_hash": "f191ebd7a847a3083006837cbfc91c82",
+    "mtime": 1792527442.381921,
+    "seen": 1792527502.0730186,
+    "ast_hash": "f2fa722bd87043afa4febe31b400bcc4",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/icons.rs": {
-    "mtime": 1792525962.2402756,
-    "seen": 1792526565.790485,
-    "ast_hash": "0bac23ec9f69c0888eabebb86f3e51f3",
+    "mtime": 1792553448.3894186,
+    "seen": 1792553505.0858064,
+    "ast_hash": "0bd5ccb8de4fd672ec284889422c1bfd",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/main.rs": {
@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/theme.rs": {
-    "mtime": 1792526363.2507463,
-    "seen": 1792526565.7904885,
-    "ast_hash": "21e83abc59887f17296fb3c72b871c02",
+    "mtime": 1792553411.4167585,
+    "seen": 1792553505.0858078,
+    "ast_hash": "3ac47f534b4a62d0e12643204c9f50ef",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/worker.rs": {
@@ -240,9 +240,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/chrome.rs": {
-    "mtime": 1792526407.6132247,
-    "seen": 1792526565.7904744,
-    "ast_hash": "cc6f77f744ee673722fec6e37023a5a8",
+    "mtime": 1792553444.5620093,
+    "seen": 1792553505.085801,
+    "ast_hash": "dd97e2d2611b872eb18f288554f197b5",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/explorer/listing.rs": {
@@ -252,9 +252,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/explorer/mod.rs": {
-    "mtime": 1792526525.127477,
-    "seen": 1792526565.7904792,
-    "ast_hash": "4a2cee732872d531fd1f746b586be061",
+    "mtime": 1792553422.478499,
+    "seen": 1792553505.0858042,
+    "ast_hash": "3dec4715f8f848701aa4873e0a1a4816",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/explorer/model.rs": {
@@ -264,9 +264,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/explorer/view.rs": {
-    "mtime": 1792526520.315125,
-    "seen": 1792526565.7904832,
-    "ast_hash": "07c43c70783a2083d77c05508f2a0d28",
+    "mtime": 1792553431.0582547,
+    "seen": 1792553505.085806,
+    "ast_hash": "cda567d7ce61723e31b10faddebbfda5",
     "semantic_hash": ""
   },
   ".github/workflows/ci.yml": {
@@ -330,9 +330,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/assets/lucide/folder.svg": {
-    "mtime": 1792522075.962759,
-    "seen": 1792526565.7905056,
-    "ast_hash": "644e8c876426efc0eb5175ae093e5f22",
+    "mtime": 1792553411.6601157,
+    "seen": 1792553505.0858169,
+    "ast_hash": "3064a44c0fb0ecf19c51e4eb27936bef",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/assets/lucide/link.svg": {
@@ -363,6 +363,12 @@
     "mtime": 1792522075.964759,
     "seen": 1792526565.7905126,
     "ast_hash": "dee5e803af97a620c5df8d38ada476ed",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-gui/src/explorer/appearance.rs": {
+    "mtime": 1792553422.3699274,
+    "seen": 1792553505.0858023,
+    "ast_hash": "5a47fbe450eef2b5f67dc495f0867ced",
     "semantic_hash": ""
   }
 }

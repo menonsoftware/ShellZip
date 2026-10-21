@@ -1,12 +1,8 @@
 {
   "2": "walk.rs",
-  "3": "extractor/tar.rs",
-  "5": "policy.rs",
   "6": "stream.rs",
-  "7": "ui.rs",
   "9": "EntryMeta",
   "10": "archiver/zip.rs",
-  "12": "ops.rs",
   "14": "round_trip.rs",
   "15": "add.rs",
   "18": "Error",

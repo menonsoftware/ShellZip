@@ -1,12 +1,17 @@
 //! ZIP writer. Level 0 and already-compressed extensions are stored.
+//!
+//! An existing ZIP is updated: members that this run does not replace are copied
+//! into the new file, then the new members are appended. `force` still replaces
+//! the archive.
 
+use std::collections::HashSet;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipWriter};
+use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use super::{ArchiveWriter, commit_output, copy_in, prepare_output};
+use super::{ArchiveWriter, commit_output, copy_in, prepare_output, prepare_temp};
 use crate::entry::{EntryMeta, dos_parts};
 use crate::error::Error;
 use crate::options::{CompressOpts, ZipMethod};
@@ -15,6 +20,8 @@ pub struct ZipArchiver {
     inner: Option<ZipWriter<io::BufWriter<std::fs::File>>>,
     tmp: std::path::PathBuf,
     final_path: std::path::PathBuf,
+    /// Existing archive to copy from before new members are added.
+    source: Option<std::path::PathBuf>,
     committed: bool,
     buf: Vec<u8>,
     opts: CompressOpts,
@@ -22,11 +29,17 @@ pub struct ZipArchiver {
 
 impl ZipArchiver {
     pub fn create(path: &Path, opts: &CompressOpts) -> Result<Self, Error> {
-        let (tmp, file) = prepare_output(path, opts.force)?;
+        let update = path.is_file() && !opts.force;
+        let (tmp, file) = if update {
+            prepare_temp(path)?
+        } else {
+            prepare_output(path, opts.force)?
+        };
         Ok(Self {
             inner: Some(ZipWriter::new(file)),
             tmp,
             final_path: path.to_path_buf(),
+            source: update.then(|| path.to_path_buf()),
             committed: false,
             buf: Vec::new(),
             opts: opts.clone(),
@@ -84,7 +97,34 @@ impl ArchiveWriter for ZipArchiver {
             .map_err(Error::from)
     }
 
+    fn retain_existing(&mut self, replacing: &[String]) -> Result<(), Error> {
+        let Some(source) = self.source.take() else {
+            return Ok(());
+        };
+        let replacing: HashSet<String> = replacing.iter().map(|name| member_key(name)).collect();
+        let file = std::fs::File::open(&source)
+            .map_err(|err| Error::io(format!("open {}", source.display()), err))?;
+        let mut archive = ZipArchive::new(file).map_err(|err| {
+            Error::Archive(format!("cannot add to `{}`: {err}", source.display()))
+        })?;
+        let mut copied = HashSet::new();
+        for index in 0..archive.len() {
+            let entry = archive.by_index(index)?;
+            let key = member_key(entry.name());
+            if key.is_empty() || replacing.contains(&key) || !copied.insert(key) {
+                continue;
+            }
+            self.writer()?.raw_copy_file(entry)?;
+        }
+        Ok(())
+    }
+
     fn finish(mut self: Box<Self>) -> Result<u64, Error> {
+        if self.source.is_some() {
+            return Err(Error::Archive(
+                "refusing to replace an existing zip without keeping its entries".to_string(),
+            ));
+        }
         let writer = self
             .inner
             .take()
@@ -128,6 +168,14 @@ fn options_for(
 
 fn rel_name(rel: &Path) -> String {
     crate::entry::to_archive_path(rel)
+}
+
+/// Archive name used to decide whether a new member replaces an old one.
+fn member_key(name: &str) -> String {
+    name.trim()
+        .trim_start_matches("./")
+        .trim_end_matches(['/', '\\'])
+        .replace('\\', "/")
 }
 
 fn target_text(target: &Path) -> String {

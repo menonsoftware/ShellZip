@@ -97,7 +97,7 @@ pub struct CompressOpts {
     pub includes: Vec<String>,
     /// Exclude globs (`-x`).
     pub excludes: Vec<String>,
-    /// Replace an existing archive file.
+    /// Replace an existing archive. When false, an existing ZIP is updated.
     pub force: bool,
 }
 

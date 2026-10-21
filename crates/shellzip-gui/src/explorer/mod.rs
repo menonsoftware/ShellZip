@@ -5,6 +5,7 @@
 //! once in [`model::ArchiveIndex`], so changing folders does not rescan the
 //! listing.
 
+mod appearance;
 mod listing;
 mod model;
 mod view;
