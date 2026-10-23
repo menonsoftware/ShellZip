@@ -1,0 +1,48 @@
+---
+description: Rust testing conventions — where unit, integration, and CLI tests live; naming; table-driven cases; fixtures; faking through traits; required edge cases for archive code
+globs: crates/**/*.rs
+alwaysApply: false
+---
+
+# Testing
+
+## Where tests go
+
+- Unit: `#[cfg(test)] mod tests { use super::*; ... }` at the bottom of the file under test (private items reachable).
+- Integration: `crates/<crate>/tests/<scenario>.rs`, one scenario per file, public API only (`round_trip.rs`).
+- CLI end-to-end: `crates/shellzip-cli/tests/cli.rs` with `assert_cmd` + `predicates`; assert exit code and stdout/stderr text.
+- Fixtures: build them in `tempfile::tempdir()` inside the test. Commit binaries under `fixtures/` only when produced by an external tool, with SHA-256 in `fixtures/SHA256SUMS` checked by the test.
+
+## Writing tests
+
+- Name = behaviour, snake_case, no `test_` prefix: `rejects_escape_and_reserved`, `add_to_an_existing_zip_keeps_previous_files`.
+- One behaviour per test. A round-trip is add → list → test → extract → byte compare.
+- `unwrap` / `expect` are fine in tests.
+- Table-driven for many inputs: loop over a slice of cases and put the case in the assertion message.
+- Platform-specific behaviour: `#[cfg(unix)]` / `#[cfg(windows)]` on the test. `#[ignore]` is not a fix.
+- New behaviour ships with a test; a bug fix ships with the test that failed before the fix.
+
+```rust
+#[test]
+fn detects_magic_bytes() {
+    let cases: &[(&[u8], Format)] = &[
+        (b"PK\x03\x04", Format::Zip),
+        (b"\x1f\x8b", Format::Gz),
+    ];
+    for (bytes, want) in cases {
+        assert_eq!(detect_bytes(bytes), Some(*want), "input {bytes:?}");
+    }
+}
+```
+
+## Fakes over mocks
+
+- `ProgressSink` → `NopProgress` or a counting fake; `Read` / `Write` → `std::io::Cursor<Vec<u8>>`; prompts → a closure `ConflictDecider`.
+- If a dependency has no trait boundary, add one at the seam before testing around it. Never use global state to inject behaviour.
+- `mockall` only when a hand-written fake would be unwieldy.
+
+## Edge cases archive code must cover
+
+Empty file, empty dir, unicode names, zip-slip names (`../evil`, `/etc/passwd`, `C:\evil`, `dir/CON.txt`), symlink escaping dest, overwrite modes, wrong password → exit 11, interruption leaves no partial file.
+
+Run `cargo test --workspace` before finishing; `cargo test -p <crate> <name>` while iterating. Patterns for `proptest` and `insta` are in the `rust-testing` skill.

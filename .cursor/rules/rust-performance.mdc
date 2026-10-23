@@ -1,0 +1,47 @@
+---
+description: Rust performance — measure first, streaming I/O, allocation discipline, zero-cost abstractions, inlining and release-profile placement, lazy loading
+globs: crates/**/*.rs
+alwaysApply: false
+---
+
+# Performance
+
+## Measure first
+
+- Clear and correct first. Optimize only with a benchmark or flamegraph that shows the hot spot (`rust-performance` skill).
+- Targets from `docs/Rust_MVP_Plan.md`: 1 GB tree round-trip under 100 MB RSS; 8-thread ZIP creation ≥ 4× single-thread.
+
+## I/O
+
+- Stream: `io::copy` or a fixed `[u8; 64 * 1024]` buffer between `Read` and `Write`. Never a `Vec<u8>` holding a whole entry.
+- Wrap files in `BufReader` / `BufWriter`; encoders are flushed in `finish()`, never left to `Drop`.
+- Compose writers as `Box<dyn Write>` (`File | GzEncoder | zstd::Encoder`) rather than duplicating code paths per compression.
+- One pass over the bytes: hash and count while copying with adapters (`ProgressReader`, a `HashWriter`).
+
+## Allocation
+
+- Reuse buffers across entries; allocate outside loops; `with_capacity` when the size is known.
+- Avoid `format!` in hot loops — `write!` into an existing `String`.
+- `Box` for single-owner heap data, `Rc` for shared single-thread, `Arc` across threads. Don't `Arc<Mutex<_>>` what a channel can move.
+- Chain iterators and return `impl Iterator` instead of collecting intermediate `Vec`s; iterators, closures, and generics are zero-cost.
+
+```rust
+// ❌ BAD: allocates on every call
+fn ext(p: &Path) -> String {
+    p.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default()
+}
+
+// ✅ GOOD
+fn ext(p: &Path) -> Option<&str> { p.extension()?.to_str() }
+```
+
+## Compiler and profiles
+
+- `#[inline]` only on tiny cross-crate helpers that a profile shows as un-inlined frames. Never blanket-annotate.
+- Release tuning (`lto`, `codegen-units = 1`, `strip`) belongs in the workspace root `[profile.release]`; size-sensitive binaries (SFX stub) get a `minisize` profile with `opt-level = "z"` and `panic = "abort"`.
+- `dyn Trait` at the API boundary; generics inside hot loops. Monomorphizing everything costs compile time and binary size for no gain.
+
+## Lazy loading
+
+- Open archives lazily: list headers without decoding payloads; decode an entry only when it is extracted, tested, or previewed.
+- The GUI reads directories and listings on the worker thread and paints from the last snapshot; nothing blocks the frame.

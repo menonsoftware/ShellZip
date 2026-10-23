@@ -11,17 +11,27 @@ use zip::ZipArchive;
 use super::policy::{Budget, Destination, destination, symlink_destination, write_atomic};
 use crate::entry::{Entry, EntryKind};
 use crate::error::Error;
-use crate::hash::CrcWriter;
+use crate::hash::{Blake2spWriter, CrcWriter};
 use crate::options::{ConflictDecider, ExtractOpts, ExtractReport, TestReport};
 use crate::progress::{ProgressReader, ProgressSink};
+use zip::HasZipMetadata;
 
 /// List every ZIP member. Symlink targets are read when they are small.
-pub fn list_zip(path: &Path) -> Result<Vec<Entry>, Error> {
+///
+/// `hash` streams each file payload through BLAKE2sp.
+pub fn list_zip(path: &Path, hash: bool) -> Result<Vec<Entry>, Error> {
     let mut archive = open_zip(path)?;
     let mut entries = Vec::with_capacity(archive.len());
     for index in 0..archive.len() {
         let mut file = archive.by_index(index).map_err(|err| annotate(err, path))?;
-        entries.push(entry_from(&mut file)?);
+        let mut entry = entry_from(&mut file)?;
+        if hash && entry.kind == EntryKind::File && !entry.encrypted {
+            let mut blake = Blake2spWriter::new();
+            std::io::copy(&mut file, &mut blake)
+                .map_err(|err| Error::io(entry.path.clone(), err))?;
+            entry.blake2sp = Some(blake.finish());
+        }
+        entries.push(entry);
     }
     Ok(entries)
 }
@@ -222,9 +232,19 @@ fn entry_from(file: &mut zip::read::ZipFile<'_, File>) -> Result<Entry, Error> {
         mode: file.unix_mode(),
         crc32: Some(file.crc32()),
         method: Some(method_name(file.compression())),
+        host_os: Some(host_label(&format!("{:?}", file.get_metadata().system))),
+        blake2sp: None,
         link_target,
         encrypted: file.encrypted(),
     })
+}
+
+fn host_label(system: &str) -> String {
+    match system {
+        "Dos" => "DOS".to_string(),
+        "Unix" => "Unix".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn method_name(method: zip::CompressionMethod) -> String {

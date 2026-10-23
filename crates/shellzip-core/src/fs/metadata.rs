@@ -21,6 +21,7 @@ pub fn capture(path: &Path, kind: EntryKind) -> Result<EntryMeta, Error> {
         },
         modified: meta.modified().ok(),
         mode: mode_bits(&meta, kind),
+        size_known: true,
     })
 }
 

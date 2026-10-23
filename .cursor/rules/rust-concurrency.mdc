@@ -1,0 +1,50 @@
+---
+description: Rust concurrency — choosing channels, atomics, Mutex, RwLock, Arc, rayon; cancellation; lock discipline; the GUI worker-thread rule
+globs: crates/**/*.rs
+alwaysApply: false
+---
+
+# Concurrency
+
+## Pick the primitive
+
+| Need | Use |
+|---|---|
+| Hand one result back | `std::sync::mpsc` (`worker::spawn` → `Outcome`) |
+| Counters read every frame | `AtomicU64`, `Ordering::Relaxed` |
+| Small shared string/struct | `Mutex<T>`, guard held for one statement |
+| Many readers, rare writers | `RwLock<T>` |
+| Data-parallel per-entry work | `rayon` pool sized by `--threads` (cap 64) |
+| Stop a running job | `Arc<AtomicBool>` polled per buffer → return `Error::Interrupted` |
+
+- Shared ownership across threads is `Arc<T>`; `Rc` / `RefCell` never cross a thread.
+- Anything crossing threads must be `Send + Sync`. `ProgressSink: Send + Sync` is part of its contract and implementations must be cheap and non-blocking.
+- Never hold a `Mutex` guard across I/O, a channel send, or another lock. Lock, copy out, unlock.
+- Recover poisoned locks: `lock().unwrap_or_else(|p| p.into_inner())`.
+- Prefer moving data through channels over sharing it; use `std::thread::scope` when borrows are enough.
+
+```rust
+// ❌ BAD: guard held during I/O
+let mut g = state.lock().unwrap();
+g.bytes += io::copy(&mut r, &mut w)?;
+
+// ✅ GOOD
+let n = io::copy(&mut r, &mut w)?;
+state.done.fetch_add(n, Ordering::Relaxed);
+```
+
+## GUI thread rule
+
+- The `eframe` update loop only paints and reads snapshots. Archive I/O, directory reads, and listings run through `worker::spawn` and return as `Outcome` messages.
+- Tag results with a `generation` counter so a slow job cannot overwrite a newer navigation.
+
+## Parallel compression (ZIP)
+
+- Workers compress entries to temp pieces; one writer merges in input order with `raw_copy_file`. Output bytes must match the single-thread path.
+- Bounded in-flight work: memory ≈ `threads × chunk`, never an unbounded queue of finished pieces.
+
+## Deadlocks and races
+
+- Acquire locks in one fixed order; keep critical sections tiny.
+- No spin-waits; use channels, `Condvar`, or `recv_timeout`.
+- `async` / `await` is not used in this workspace. Do not add an executor for I/O-bound CLI work; threads and channels are sufficient.

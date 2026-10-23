@@ -229,6 +229,7 @@ fn synthesize_parents(items: &mut Vec<Planned>) {
                         size: 0,
                         modified: item.meta.modified,
                         mode: 0o755,
+                        size_known: true,
                     },
                     link_target: None,
                 });

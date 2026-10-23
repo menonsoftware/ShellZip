@@ -18,6 +18,10 @@ pub enum Compression {
     Gzip,
     /// zstd frame.
     Zstd,
+    /// xz / lzma2 stream.
+    Xz,
+    /// bzip2 stream.
+    Bzip2,
 }
 
 /// Container identified from bytes.
@@ -58,6 +62,8 @@ impl Format {
             Self::Tar(Compression::None) => "TAR".to_string(),
             Self::Tar(Compression::Gzip) => "TAR.GZ".to_string(),
             Self::Tar(Compression::Zstd) => "TAR.ZST".to_string(),
+            Self::Tar(Compression::Xz) => "TAR.XZ".to_string(),
+            Self::Tar(Compression::Bzip2) => "TAR.BZ2".to_string(),
             Self::Gzip => "GZIP".to_string(),
             Self::Zstd => "ZSTD".to_string(),
             Self::Xz => "XZ".to_string(),
@@ -72,7 +78,7 @@ impl Format {
     /// Formats this milestone can list, test, and extract.
     pub fn is_supported(&self) -> bool {
         match self {
-            Self::Zip | Self::Tar(_) | Self::Gzip | Self::Zstd => true,
+            Self::Zip | Self::Tar(_) | Self::Gzip | Self::Zstd | Self::Xz | Self::Bzip2 => true,
             Self::Sfx { inner, .. } => matches!(inner.as_ref(), Self::Zip),
             _ => false,
         }
@@ -98,9 +104,17 @@ pub fn format_from_extension(path: &Path) -> Result<Format, Error> {
         Format::Gzip
     } else if name.ends_with(".zst") {
         Format::Zstd
+    } else if name.ends_with(".tar.xz") || name.ends_with(".txz") {
+        Format::Tar(Compression::Xz)
+    } else if name.ends_with(".tar.bz2") || name.ends_with(".tbz2") {
+        Format::Tar(Compression::Bzip2)
+    } else if name.ends_with(".xz") {
+        Format::Xz
+    } else if name.ends_with(".bz2") {
+        Format::Bzip2
     } else {
         return Err(Error::Usage(format!(
-            "cannot tell archive format from `{name}`; use .zip, .tar, .tar.gz, .tgz, .tar.zst, .tzst, .gz, or .zst"
+            "cannot tell archive format from `{name}`; use .zip, .tar, .tar.gz, .tgz, .tar.zst, .tzst, .gz, .zst, .xz, or .bz2"
         )));
     };
     Ok(format)

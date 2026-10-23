@@ -4,6 +4,7 @@ members = [
     "crates/shellzip-core",
     "crates/shellzip-cli",
     "crates/shellzip-gui",
+    "xtask",
 ]
 default-members = [
     "crates/shellzip-core",

@@ -72,7 +72,7 @@ impl ArchiveWriter for ZipArchiver {
         let copied = copy_in(src, self.writer()?, &mut buf);
         self.buf = buf;
         let copied = copied?;
-        if copied != meta.size {
+        if meta.size_known && copied != meta.size {
             return Err(Error::Archive(format!(
                 "read {} bytes of `{}`, expected {}",
                 copied,
@@ -101,7 +101,10 @@ impl ArchiveWriter for ZipArchiver {
         let Some(source) = self.source.take() else {
             return Ok(());
         };
-        let replacing: HashSet<String> = replacing.iter().map(|name| member_key(name)).collect();
+        let replacing: HashSet<String> = replacing
+            .iter()
+            .map(|name| crate::entry::member_key(name))
+            .collect();
         let file = std::fs::File::open(&source)
             .map_err(|err| Error::io(format!("open {}", source.display()), err))?;
         let mut archive = ZipArchive::new(file).map_err(|err| {
@@ -110,7 +113,7 @@ impl ArchiveWriter for ZipArchiver {
         let mut copied = HashSet::new();
         for index in 0..archive.len() {
             let entry = archive.by_index(index)?;
-            let key = member_key(entry.name());
+            let key = crate::entry::member_key(entry.name());
             if key.is_empty() || replacing.contains(&key) || !copied.insert(key) {
                 continue;
             }
@@ -138,7 +141,7 @@ impl ArchiveWriter for ZipArchiver {
     }
 }
 
-fn method_for(name: &str, opts: &CompressOpts) -> (CompressionMethod, Option<i64>) {
+pub(crate) fn method_for(name: &str, opts: &CompressOpts) -> (CompressionMethod, Option<i64>) {
     if opts.level == 0 || opts.store_exts.stores(name) {
         return (CompressionMethod::Stored, None);
     }
@@ -148,7 +151,7 @@ fn method_for(name: &str, opts: &CompressOpts) -> (CompressionMethod, Option<i64
     }
 }
 
-fn options_for(
+pub(crate) fn options_for(
     meta: &EntryMeta,
     method: CompressionMethod,
     level: Option<i64>,
@@ -157,7 +160,7 @@ fn options_for(
         .compression_method(method)
         .compression_level(level)
         .unix_permissions(meta.mode & 0o777)
-        .large_file(meta.size >= u64::from(u32::MAX));
+        .large_file(!meta.size_known || meta.size >= u64::from(u32::MAX));
     if let Some((year, month, day, hour, minute, second)) = dos_parts(meta.modified)
         && let Ok(stamp) = zip::DateTime::from_date_and_time(year, month, day, hour, minute, second)
     {
@@ -166,16 +169,22 @@ fn options_for(
     Ok(options)
 }
 
-fn rel_name(rel: &Path) -> String {
+pub(crate) fn rel_name(rel: &Path) -> String {
     crate::entry::to_archive_path(rel)
 }
 
-/// Archive name used to decide whether a new member replaces an old one.
-fn member_key(name: &str) -> String {
-    name.trim()
-        .trim_start_matches("./")
-        .trim_end_matches(['/', '\\'])
-        .replace('\\', "/")
+impl ZipArchiver {
+    /// Copy the single compressed member in `reader` into this archive.
+    pub(crate) fn merge_compressed<R: Read + std::io::Seek>(
+        &mut self,
+        reader: R,
+    ) -> Result<(), Error> {
+        let mut archive = ZipArchive::new(reader)?;
+        let file = archive
+            .by_index(0)
+            .map_err(|err| Error::Archive(format!("compressed piece: {err}")))?;
+        self.writer()?.raw_copy_file(file).map_err(Error::from)
+    }
 }
 
 fn target_text(target: &Path) -> String {

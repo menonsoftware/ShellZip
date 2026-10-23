@@ -7,6 +7,18 @@ use crate::error::Error;
 /// Called when an extracted file already exists.
 pub type ConflictDecider<'a> = dyn Fn(&Path) -> Result<ConflictChoice, Error> + 'a;
 
+/// How `szip a`, `u`, and `f` treat an existing ZIP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UpdateMode {
+    /// Replace members with the same name and add the rest.
+    #[default]
+    Add,
+    /// Add new members and replace a member only when the source is newer.
+    Update,
+    /// Replace a member only when it already exists and the source is newer.
+    Freshen,
+}
+
 /// ZIP compression method selected with `--method`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ZipMethod {
@@ -78,7 +90,7 @@ impl StoreList {
     }
 }
 
-/// Settings for `szip a`.
+/// Settings for `szip a`, `u`, and `f`.
 #[derive(Debug, Clone)]
 pub struct CompressOpts {
     /// `-m` level, 0 (store) through 5 (maximum).
@@ -99,6 +111,14 @@ pub struct CompressOpts {
     pub excludes: Vec<String>,
     /// Replace an existing archive. When false, an existing ZIP is updated.
     pub force: bool,
+    /// How an existing ZIP is merged. Ignored when [`Self::force`] is set.
+    pub update: UpdateMode,
+    /// Worker threads. `0` uses [`std::thread::available_parallelism`], capped at 64.
+    pub threads: u16,
+    /// Zstd window log (`--long`). `None` follows the total input size.
+    pub zstd_long: Option<u32>,
+    /// Uncompressed input bytes, used to pick the zstd window. `None` means unknown.
+    pub input_bytes: Option<u64>,
 }
 
 impl Default for CompressOpts {
@@ -113,9 +133,16 @@ impl Default for CompressOpts {
             includes: Vec::new(),
             excludes: Vec::new(),
             force: false,
+            update: UpdateMode::Add,
+            threads: 0,
+            zstd_long: None,
+            input_bytes: None,
         }
     }
 }
+
+/// Hard cap on `--threads`, matching the observed WinRAR limit.
+pub const MAX_THREADS: usize = 64;
 
 impl CompressOpts {
     /// Deflate level for `-m`.
@@ -150,6 +177,36 @@ impl CompressOpts {
             4 => 7,
             _ => 9,
         }
+    }
+
+    /// Threads to use, at least 1 and at most [`MAX_THREADS`].
+    pub fn thread_count(&self) -> usize {
+        let requested = if self.threads == 0 {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+        } else {
+            usize::from(self.threads)
+        };
+        requested.clamp(1, MAX_THREADS)
+    }
+
+    /// Zstd `windowLog`. A 16 KiB input gets log 17 (128 KiB). Unknown size uses 8 MiB.
+    ///
+    /// `--long` overrides the choice and may go up to 31. The automatic range is 14..=27.
+    pub fn zstd_window_log(&self) -> u32 {
+        if let Some(log) = self.zstd_long {
+            return log.clamp(10, 31);
+        }
+        let Some(total) = self.input_bytes else {
+            return 23;
+        };
+        if total == 0 {
+            return 14;
+        }
+        let target = total.saturating_mul(8).max(16 * 1024);
+        let log = 63 - target.leading_zeros();
+        log.clamp(14, 27)
     }
 }
 
@@ -235,6 +292,26 @@ pub struct TestReport {
     pub encrypted: Vec<String>,
 }
 
+/// Options for `szip l` and `szip lt`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ListOpts {
+    /// Hash each file payload with BLAKE2sp-256 (`-htb`).
+    pub blake2sp: bool,
+}
+
+/// Summary of `szip d`.
+#[derive(Debug, Clone)]
+pub struct DeleteReport {
+    /// Archive that was rewritten.
+    pub path: PathBuf,
+    /// Members removed.
+    pub removed: u64,
+    /// Members kept.
+    pub kept: u64,
+    /// Archive size after the rewrite.
+    pub packed_bytes: u64,
+}
+
 impl TestReport {
     /// Exit code: `0` ok, `3` bad checksum, `11` encrypted and otherwise intact.
     pub fn exit_code(&self) -> i32 {
@@ -245,5 +322,27 @@ impl TestReport {
         } else {
             0
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shrinks_zstd_window_for_small_inputs() {
+        let mut opts = CompressOpts {
+            input_bytes: Some(16 * 1024),
+            ..CompressOpts::default()
+        };
+        assert_eq!(opts.zstd_window_log(), 17, "16 KiB → 128 KiB window");
+        opts.input_bytes = Some(0);
+        assert_eq!(opts.zstd_window_log(), 14, "empty input");
+        opts.input_bytes = None;
+        assert_eq!(opts.zstd_window_log(), 23, "unknown size");
+        opts.zstd_long = Some(30);
+        assert_eq!(opts.zstd_window_log(), 30, "--long");
+        opts.threads = 10_000;
+        assert_eq!(opts.thread_count(), MAX_THREADS);
     }
 }

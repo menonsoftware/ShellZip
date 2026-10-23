@@ -1,0 +1,45 @@
+---
+description: Rust idioms — ownership and borrowing, when to clone, immutability by default, interior mutability, newtypes and enums, anti-patterns that fail review
+globs: crates/**/*.rs
+alwaysApply: false
+---
+
+# Idiomatic Rust
+
+## Ownership and borrowing
+
+- Parameters: `&str`, `&Path`, `&[T]`, `&dyn Trait`. Take `String` / `PathBuf` / `Vec<T>` only when the function stores the value.
+- Return owned values; the caller decides whether to borrow.
+- `clone()` only when a borrow cannot work. A `.clone()` inside a loop needs a comment.
+- `impl Into<String>` / `impl AsRef<Path>` on constructors that store; keep internal helpers monomorphic.
+
+```rust
+// ❌ BAD: forces every caller to allocate
+fn label(name: String) -> String
+
+// ✅ GOOD
+fn label(name: &str) -> String
+```
+
+## State
+
+- Immutable by default: compute, then bind. `let mut` only in the scope that mutates.
+- Interior mutability only across a real boundary: `Cell` / `RefCell` single-thread, `Mutex` / `RwLock` / atomics across threads (`worker::SharedProgress`). Never `RefCell` to dodge the borrow checker.
+- No global mutable state (`static mut`, `lazy_static` with a `Mutex`); pass state explicitly so it can be faked in tests.
+
+## Types
+
+- Newtypes for values with invariants (`Password`, `StoreList`) instead of bare `String` / `Vec`.
+- `enum` + exhaustive `match` instead of boolean flags: `Overwrite::{Always, Never, Rename}`, not `overwrite: bool, rename: bool`.
+- Option structs implement `Default`; callers use struct-update syntax: `CompressOpts { level: 1, ..Default::default() }`. Use a builder only when construction has steps that can fail.
+- Collections: `Vec` by default, `HashMap` / `HashSet` for lookup, `BTreeMap` / `BTreeSet` when order matters (listings, snapshots).
+- Pattern vocabulary when designing: Strategy = trait object chosen at runtime (`ArchiveWriter` per format); Factory = `create(path, fmt, opts) -> Box<dyn ArchiveWriter>`; Observer = `ProgressSink`.
+
+## Anti-patterns that fail review
+
+- `unwrap` / `expect` outside tests; `unsafe` anywhere (workspace forbids it).
+- `#[allow(clippy::...)]` without a same-line reason.
+- `as` casts between integer widths on untrusted values — use `try_from`.
+- `to_string_lossy()` on a path that is later used to open or create a file.
+- Ignoring compiler warnings or suppressing them crate-wide.
+- Optimizing before measuring (see `rust-performance` skill).

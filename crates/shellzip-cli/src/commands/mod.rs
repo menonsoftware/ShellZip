@@ -1,13 +1,17 @@
 //! Command implementations. Each one calls `shellzip_core` and prints a summary.
 
 mod add;
+mod delete;
 mod extract;
 mod list;
+mod print;
 mod test;
 
 pub use add::add;
+pub use delete::delete;
 pub use extract::extract;
-pub use list::list;
+pub use list::{list, list_technical};
+pub use print::print_entry;
 pub use test::test;
 
 use shellzip_core::ProgressSink;

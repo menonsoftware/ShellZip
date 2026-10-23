@@ -17,11 +17,20 @@ thiserror = "2"
 tracing = "0.1"
 walkdir = "2"
 zip = { version = "2", default-features = false, features = ["deflate", "zstd", "time"] }
-zstd = "0.13"
+zstd = { version = "0.13", features = ["zstdmt"] }
 zeroize = "1"
+rayon = "1.12.0"
+blake2s_simd = "1.0.5"
+xz2 = { version = "0.1.7", default-features = false, features = ["static"] }
+bzip2 = "0.6.1"
 
 [dev-dependencies]
+criterion = { version = "0.8.2", features = ["html_reports"] }
 tempfile = "3"
+
+[[bench]]
+name = "zip_threads"
+harness = false
 
 [lints]
 workspace = true

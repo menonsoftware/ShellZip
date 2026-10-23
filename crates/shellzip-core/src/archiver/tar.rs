@@ -73,10 +73,19 @@ impl TarArchiver {
             Compression::Gzip => {
                 CompWriter::Gzip(GzEncoder::new(file, GzLevel::new(opts.gzip_level())))
             }
-            Compression::Zstd => CompWriter::Zstd(
-                zstd::stream::write::Encoder::new(file, opts.zstd_level())
-                    .map_err(|err| Error::io("zstd encoder", err))?,
-            ),
+            Compression::Zstd => {
+                let mut encoder = zstd::stream::write::Encoder::new(file, opts.zstd_level())
+                    .map_err(|err| Error::io("zstd encoder", err))?;
+                super::zstd_tune::tune(&mut encoder, opts)?;
+                CompWriter::Zstd(encoder)
+            }
+            Compression::Xz | Compression::Bzip2 => {
+                return Err(Error::Unsupported {
+                    format: "compressed tar".to_string(),
+                    detail: "creating xz and bzip2 is not supported; this build extracts them"
+                        .to_string(),
+                });
+            }
         };
         Ok(Self {
             builder: Some(Builder::new(comp)),
@@ -98,6 +107,12 @@ impl Drop for TarArchiver {
 
 impl ArchiveWriter for TarArchiver {
     fn add_file(&mut self, rel: &Path, src: &mut dyn Read, meta: &EntryMeta) -> Result<(), Error> {
+        if !meta.size_known {
+            return Err(Error::Usage(
+                "tar stores the member size in the header, so the input length must be known"
+                    .to_string(),
+            ));
+        }
         let mut header = header_for(meta, EntryType::Regular);
         header.set_size(meta.size);
         let builder = self

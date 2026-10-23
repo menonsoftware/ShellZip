@@ -1,0 +1,37 @@
+---
+description: Rust error handling — Result/Option, the ? operator, the shellzip_core::Error enum and exit codes, no unwrap in production code, checked arithmetic
+globs: crates/**/*.rs
+alwaysApply: false
+---
+
+# Error handling
+
+- Fallible → `Result<T, Error>`; absent-but-fine → `Option<T>`. Never signal failure with a sentinel, empty string, or `-1`.
+- Propagate with `?`. Match only to add context, recover, or map to a more specific variant.
+- `panic!`, `unwrap`, `expect`, and `v[i]` on untrusted lengths are for tests only. Production code uses `?`, `get()`, `ok_or`, `unwrap_or_else`.
+
+## Library crate (`shellzip-core`)
+
+- One `thiserror` enum: `shellzip_core::Error`. Add a variant when callers need to branch; don't stuff distinguishable cases into `Archive(String)`.
+- Every variant maps to a RAR-compatible code in `Error::exit_code()`; update the table in the `error.rs` module doc when adding one.
+- Wrap OS errors with `Error::io(context, source)` where context is the action and path: `format!("create directory {}", dir.display())`.
+- Display text is shown to users: no passwords, no internal state, no `{:?}` dumps.
+- `From<ExternalError> for Error` impls live in `error.rs` so call sites stay `?`.
+
+```rust
+// ❌ BAD: panics, no context
+let f = File::open(path).unwrap();
+
+// ✅ GOOD
+let f = File::open(path).map_err(|e| Error::io(format!("open {}", path.display()), e))?;
+```
+
+## Binary crates (`szip`, `shellzip`)
+
+- `main` is one line: `std::process::exit(cli::run())`. `run()` prints `szip: {err}` to stderr and returns `err.exit_code()`; clap usage errors return 7.
+- GUI: errors become `Outcome::Failed(err.to_string())` on the worker thread. The UI thread never panics on a job result.
+- Poisoned locks are recovered, not unwrapped: `mutex.lock().unwrap_or_else(|p| p.into_inner())`.
+
+## Checked arithmetic
+
+Sizes, counts, and offsets read from an archive are attacker-controlled. Use `checked_add` / `checked_mul` / `u64::try_from` and return `Error::Archive(...)` on overflow. `as` casts between integer widths are not allowed on such values.
