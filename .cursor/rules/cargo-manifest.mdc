@@ -1,0 +1,56 @@
+---
+description: Cargo.toml conventions — workspace inheritance, lints, minimal dependency features, dev-dependencies, feature flags, binaries, profiles only at the root
+globs: **/Cargo.toml
+alwaysApply: false
+---
+
+# Cargo manifests
+
+## Member crates inherit the workspace
+
+```toml
+[package]
+name = "shellzip-<name>"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "One line, no trailing period"
+
+[lints]
+workspace = true   # unsafe_code = "forbid", clippy::all = warn
+```
+
+- Add new members to `[workspace] members` and, if they should build by default, `default-members`.
+- `rust-version` and `edition` are set once at the workspace root; never override per crate.
+
+## Dependencies
+
+- Minimal and explicit: `default-features = false` plus the features used, e.g. `zip = { version = "2", default-features = false, features = ["deflate", "zstd", "time"] }`.
+- Once two members share a dependency, move it to `[workspace.dependencies]` and reference it with `name.workspace = true`.
+- Test-only crates belong in `[dev-dependencies]` (`tempfile`, `assert_cmd`, `predicates`, `proptest`, `insta`, `criterion`).
+- Members reference each other by path: `shellzip-core = { path = "../shellzip-core" }`.
+- Licenses: MIT / Apache-2.0 / BSD-compatible only; no GPL-only crates.
+- Edit with `cargo add` / `cargo rm`. `Cargo.lock` is committed and never edited by hand.
+
+## Features
+
+- Optional formats and heavy deps are features: `rar = ["dep:unrar"]`, `sevenz = ["dep:sevenz-rust2"]`. Features are additive and must not change behaviour of code paths that don't use them.
+- Keep `default` small; document each feature in the crate-level `//!` docs.
+
+## Binaries and profiles
+
+- Name binaries explicitly: `[[bin]] name = "szip" path = "src/main.rs"`.
+- Profiles live only in the root `Cargo.toml`:
+
+```toml
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.minisize]      # SFX stub and other size-sensitive bins
+inherits = "release"
+opt-level = "z"
+panic = "abort"
+```

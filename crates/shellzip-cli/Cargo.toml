@@ -18,10 +18,12 @@ console = "0.15"
 indicatif = "0.17"
 shellzip-core = { path = "../shellzip-core" }
 tracing = "0.1"
+tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 assert_cmd = "2"
+insta = { version = "1.49.0", features = ["filters"] }
 predicates = "3"
 tempfile = "3"
 zip = { version = "2", default-features = false, features = ["deflate"] }

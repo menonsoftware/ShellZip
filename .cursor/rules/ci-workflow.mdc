@@ -1,0 +1,33 @@
+---
+description: CI and Makefile conventions — required gate steps, OS matrix, toolchain, caching, keeping ci.yml and make ci in lockstep
+globs: .github/workflows/*.yml,Makefile
+alwaysApply: false
+---
+
+# CI
+
+`.github/workflows/ci.yml` and the Makefile `ci` target must run the same steps. A new gate goes in both.
+
+## Required steps, in order
+
+1. `cargo fmt --all -- --check`
+2. `cargo clippy --workspace --all-targets -- -D warnings`
+3. `cargo test --workspace`
+4. When added: `cargo doc --workspace --no-deps` with `RUSTDOCFLAGS=-D warnings`, `cargo deny check`, `cargo audit`
+
+## Matrix and toolchain
+
+- `windows-latest` and `ubuntu-latest`, `fail-fast: false`. Add `macos-latest` only when a Mac-specific code path exists.
+- `dtolnay/rust-toolchain@stable` with `components: rustfmt, clippy`; the repo pins `stable` in `rust-toolchain.toml`. Do not hard-code a version in the workflow.
+- Cache `~/.cargo/registry`, `~/.cargo/git`, and `target` keyed on `hashFiles('**/Cargo.lock')` — `Swatinem/rust-cache@v2` does exactly this.
+- Linux GUI builds need the GTK/X11/Wayland dev packages listed in the workflow; keep that apt list next to the `eframe` version and update both together.
+
+## Release builds
+
+- `cargo build --workspace --release --locked`; upload `szip` and `shellzip` per OS as artifacts.
+- Never `--allow-dirty` or skip `--locked` in release jobs.
+
+## Makefile
+
+- Every target wraps one cargo invocation and honours `CARGO_FLAGS`.
+- Document each new target in `help`.

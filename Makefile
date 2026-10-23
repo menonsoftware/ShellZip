@@ -20,7 +20,7 @@ PKG_CORE := shellzip-core
 	run run-release gui gui-release \
 	test test-cli test-core \
 	check clippy lint fmt fmt-check doc \
-	clean ci install install-gui help
+	clean ci install install-gui bench help
 
 all: build
 
@@ -91,6 +91,10 @@ install:
 install-gui:
 	$(CARGO) install --path crates/$(PKG_GUI) --locked --force
 
+# Release timings for ZIP threads, plus 7z/Rar when they are on PATH.
+bench:
+	$(CARGO) run --release -p xtask -- bench
+
 help:
 	@echo ShellZip Makefile
 	@echo   make / make build     Debug workspace build
@@ -109,4 +113,5 @@ help:
 	@echo   make ci               fmt-check + clippy + test
 	@echo   make install          cargo install szip
 	@echo   make install-gui      cargo install shellzip
+	@echo   make bench            Release ZIP timings into docs/BENCH.md
 	@echo   make clean            cargo clean

@@ -1,15 +1,15 @@
-//! Command line for `szip a`, `x`, `e`, `l`, and `t`.
+//! Command line for `szip`.
 
 use std::path::PathBuf;
 
 use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
-use shellzip_core::{CompressOpts, Error, Overwrite, StoreList, ZipMethod};
+use shellzip_core::{CompressOpts, Error, Overwrite, StoreList, UpdateMode, ZipMethod};
 
 use crate::commands::{self, Shared};
 use crate::ui;
 
-/// Create and extract ZIP, tar, gzip, and zstd archives.
+/// Create and extract ZIP, tar, gzip, zstd, xz, and bzip2 archives.
 #[derive(Debug, Parser)]
 #[command(name = "szip", version, about, propagate_version = true)]
 pub struct Cli {
@@ -19,17 +19,32 @@ pub struct Cli {
     /// More logging. Repeat for a wider trace.
     #[arg(short, long, global = true, action = ArgAction::Count)]
     pub verbose: u8,
-    /// Hide progress. Repeat to hide the summary as well. `l` still prints.
+    /// Hide progress. Repeat to hide the summary as well. `l` and `lt` still print.
     #[arg(short, long, global = true, action = ArgAction::Count)]
     pub quiet: u8,
+    /// Append a tracing log to FILE (`-ilog`).
+    #[arg(long = "ilog", value_name = "FILE", global = true)]
+    pub ilog: Option<PathBuf>,
+    /// Also write the tracing log to stderr. With `-ilog`, stderr is used only when this is set.
+    #[arg(long = "ierr", global = true)]
+    pub ierr: bool,
 }
 
-/// `szip` commands implemented in this milestone.
+/// `szip` commands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Add files to an archive. An existing ZIP keeps its other files unless `-y` is passed.
     #[command(name = "a")]
     Add(AddArgs),
+    /// Add files that are new or newer than the archived copy. ZIP only.
+    #[command(name = "u")]
+    Update(AddArgs),
+    /// Replace archived files only when the source is newer. ZIP only.
+    #[command(name = "f")]
+    Freshen(AddArgs),
+    /// Delete ZIP members that match a mask.
+    #[command(name = "d")]
+    Delete(DeleteArgs),
     /// Extract an archive, recreating directories.
     #[command(name = "x")]
     Extract(ExtractArgs),
@@ -39,6 +54,12 @@ pub enum Command {
     /// List archive members.
     #[command(name = "l")]
     List(ArchiveArgs),
+    /// Technical list: size, packed, ratio, time, attributes, CRC32, method, and host OS.
+    #[command(name = "lt")]
+    ListTechnical(ListArgs),
+    /// Write one member to stdout.
+    #[command(name = "p")]
+    Print(PrintArgs),
     /// Test checksums and declared sizes.
     #[command(name = "t")]
     Test(ArchiveArgs),
@@ -56,7 +77,7 @@ pub struct AddArgs {
     /// Archive to create or update. `.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.zst`, `.tzst`, `.gz`, `.zst`.
     pub archive: PathBuf,
     /// Files and directories to pack.
-    #[arg(required = true)]
+    #[arg(required_unless_present = "stdin")]
     pub files: Vec<PathBuf>,
     /// Compression level, 0 (store) through 5 (maximum).
     #[arg(short = 'm', long = "level", default_value_t = 3, value_parser = clap::value_parser!(u8).range(0..=5))]
@@ -85,9 +106,58 @@ pub struct AddArgs {
     /// Compress every ZIP member, including the usual already-compressed types.
     #[arg(long = "no-store-list")]
     pub no_store_list: bool,
-    /// Replace an existing archive instead of updating a ZIP.
+    /// Replace an existing archive instead of updating a ZIP. Only for `a`.
     #[arg(short = 'y', long = "yes")]
     pub yes: bool,
+    /// Worker threads for ZIP entries and for zstd. Default is the CPU count, capped at 64.
+    #[arg(long = "threads", value_name = "N", value_parser = clap::value_parser!(u16).range(1..=64))]
+    pub threads: Option<u16>,
+    /// Zstd window log, from 10 to 31. Default follows the total input size.
+    #[arg(long = "long", value_name = "LOG2", value_parser = clap::value_parser!(u32).range(10..=31))]
+    pub long_window: Option<u32>,
+    /// Read one member from stdin instead of a file path.
+    ///
+    /// `--stdin` stores it as `stdin`. `--stdin=NAME` stores `NAME` (`-siNAME` is the same switch).
+    /// `.gz` and `.zst` are streamed. `.tar`, `.tar.gz`, and `.tar.zst` copy stdin to a temporary
+    /// file first, because the tar header stores the size. `.zip` is written to a seekable
+    /// temporary file; ZIP local headers record sizes, so a pipe is not a ZIP destination.
+    #[arg(
+        long = "stdin",
+        value_name = "NAME",
+        num_args = 0..=1,
+        default_missing_value = "stdin",
+        require_equals = true
+    )]
+    pub stdin: Option<String>,
+}
+
+/// `szip d <archive> <masks…>`.
+#[derive(Debug, Parser)]
+pub struct DeleteArgs {
+    /// ZIP archive to rewrite.
+    pub archive: PathBuf,
+    /// Names or globs to remove (`*.log`, `dir/file.txt`).
+    #[arg(required = true)]
+    pub masks: Vec<String>,
+}
+
+/// `szip lt`.
+#[derive(Debug, Parser)]
+pub struct ListArgs {
+    /// Archive to read.
+    pub archive: PathBuf,
+    /// BLAKE2sp-256 of each file payload.
+    #[arg(long = "htb")]
+    pub htb: bool,
+}
+
+/// `szip p <archive> [member]`.
+#[derive(Debug, Parser)]
+pub struct PrintArgs {
+    /// Archive to read.
+    pub archive: PathBuf,
+    /// Member to write. Omit when the archive has a single file.
+    pub file: Option<String>,
 }
 
 /// `szip x` and `szip e`.
@@ -174,7 +244,7 @@ impl From<OverwriteArg> for Overwrite {
 
 /// Parse arguments, run one command, and return the process exit code.
 pub fn run() -> i32 {
-    let cli = match Cli::try_parse() {
+    let cli = match Cli::try_parse_from(normalize_args(std::env::args())) {
         Ok(cli) => cli,
         Err(err) => {
             let code = if err.exit_code() == 0 { 0 } else { 7 };
@@ -182,14 +252,22 @@ pub fn run() -> i32 {
             return code;
         }
     };
-    init_tracing(cli.verbose);
-    match dispatch(&cli) {
+    let guard = match init_tracing(&cli) {
+        Ok(guard) => guard,
+        Err(err) => {
+            anstream::eprintln!("szip: {err}");
+            return err.exit_code();
+        }
+    };
+    let code = match dispatch(&cli) {
         Ok(code) => code,
         Err(err) => {
             anstream::eprintln!("szip: {err}");
             err.exit_code()
         }
-    }
+    };
+    drop(guard);
+    code
 }
 
 fn dispatch(cli: &Cli) -> Result<i32, Error> {
@@ -198,10 +276,15 @@ fn dispatch(cli: &Cli) -> Result<i32, Error> {
         sink: ui::sink(cli.quiet),
     };
     match &cli.command {
-        Command::Add(args) => commands::add(args, &shared),
+        Command::Add(args) => commands::add(args, UpdateMode::Add, &shared),
+        Command::Update(args) => commands::add(args, UpdateMode::Update, &shared),
+        Command::Freshen(args) => commands::add(args, UpdateMode::Freshen, &shared),
+        Command::Delete(args) => commands::delete(args, &shared),
         Command::Extract(args) => commands::extract(args, false, &shared),
         Command::ExtractFlat(args) => commands::extract(args, true, &shared),
         Command::List(args) => commands::list(args),
+        Command::ListTechnical(args) => commands::list_technical(args),
+        Command::Print(args) => commands::print_entry(args),
         Command::Test(args) => commands::test(args, &shared),
         Command::Complete { shell } => {
             let mut cmd = Cli::command();
@@ -211,10 +294,20 @@ fn dispatch(cli: &Cli) -> Result<i32, Error> {
     }
 }
 
-pub(crate) fn compress_opts(args: &AddArgs) -> Result<CompressOpts, Error> {
+pub(crate) fn compress_opts(args: &AddArgs, update: UpdateMode) -> Result<CompressOpts, Error> {
     if args.store_ext.is_some() && args.no_store_list {
         return Err(Error::Usage(
             "pass either --store-ext or --no-store-list".to_string(),
+        ));
+    }
+    if update != UpdateMode::Add && args.yes {
+        return Err(Error::Usage(
+            "-y replaces the archive and is only valid with `szip a`".to_string(),
+        ));
+    }
+    if args.stdin.is_some() && !args.files.is_empty() {
+        return Err(Error::Usage(
+            "do not pass files together with --stdin".to_string(),
         ));
     }
     let store_exts = if args.no_store_list {
@@ -236,6 +329,10 @@ pub(crate) fn compress_opts(args: &AddArgs) -> Result<CompressOpts, Error> {
         includes: args.include.clone(),
         excludes: args.exclude.clone(),
         force: args.yes,
+        update,
+        threads: args.threads.unwrap_or(0),
+        zstd_long: args.long_window,
+        input_bytes: None,
     })
 }
 
@@ -270,15 +367,109 @@ pub(crate) fn overwrite_mode(args: &ExtractArgs) -> Result<Overwrite, Error> {
     Ok(args.overwrite.into())
 }
 
-fn init_tracing(verbose: u8) {
-    let filter = match verbose {
+fn init_tracing(cli: &Cli) -> Result<Option<tracing_appender::non_blocking::WorkerGuard>, Error> {
+    let filter = match cli.verbose {
         0 => "warn",
         1 => "shellzip_core=debug,warn",
         _ => "debug",
     };
-    let _ = tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
+    let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
-        .try_init();
+        .with_ansi(false);
+    let Some(path) = &cli.ilog else {
+        let _ = builder.with_writer(std::io::stderr).try_init();
+        return Ok(None);
+    };
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| Error::io(format!("create {}", parent.display()), err))?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|err| Error::io(format!("open {}", path.display()), err))?;
+    let (writer, guard) = tracing_appender::non_blocking(file);
+    if cli.ierr {
+        use tracing_subscriber::fmt::writer::MakeWriterExt;
+        let _ = builder.with_writer(writer.and(std::io::stderr)).try_init();
+    } else {
+        let _ = builder.with_writer(writer).try_init();
+    }
+    Ok(Some(guard))
+}
+
+/// Accept WinRAR-style switches (`-ilog=`, `-ierr`, `-htb`, `-siNAME`, `-mtN`, `-long=`).
+fn normalize_args(args: impl Iterator<Item = String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for arg in args {
+        if let Some(rest) = arg.strip_prefix("-ilog=") {
+            out.push(format!("--ilog={rest}"));
+        } else if arg == "-ilog" {
+            out.push("--ilog".to_string());
+        } else if arg == "-ierr" {
+            out.push("--ierr".to_string());
+        } else if arg == "-htb" {
+            out.push("--htb".to_string());
+        } else if arg == "-si" {
+            out.push("--stdin".to_string());
+        } else if let Some(name) = arg.strip_prefix("-si")
+            && !name.is_empty()
+            && !name.starts_with('-')
+        {
+            out.push(format!("--stdin={name}"));
+        } else if let Some(rest) = arg.strip_prefix("-mt")
+            && (rest.is_empty() || rest.chars().all(|ch| ch.is_ascii_digit()))
+        {
+            if rest.is_empty() {
+                out.push("--threads".to_string());
+            } else {
+                out.push(format!("--threads={rest}"));
+            }
+        } else if arg == "-long" {
+            out.push("--long".to_string());
+        } else if let Some(rest) = arg.strip_prefix("-long=") {
+            out.push(format!("--long={rest}"));
+        } else {
+            out.push(arg);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewrites_winrar_switches() {
+        let args = [
+            "szip",
+            "a",
+            "-sihello.txt",
+            "-mt4",
+            "-ilog=run.log",
+            "-ierr",
+            "-htb",
+            "-long=27",
+        ]
+        .into_iter()
+        .map(str::to_string);
+        assert_eq!(
+            normalize_args(args),
+            [
+                "szip",
+                "a",
+                "--stdin=hello.txt",
+                "--threads=4",
+                "--ilog=run.log",
+                "--ierr",
+                "--htb",
+                "--long=27",
+            ]
+        );
+    }
 }

@@ -568,6 +568,8 @@ mod tests {
             mode: None,
             crc32: None,
             method: None,
+            host_os: None,
+            blake2sp: None,
             link_target: None,
             encrypted: false,
         }

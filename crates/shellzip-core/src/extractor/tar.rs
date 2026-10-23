@@ -12,7 +12,7 @@ use super::policy::{Budget, Destination, destination, symlink_destination, write
 use crate::detect::{Compression, prefix_is_tar};
 use crate::entry::{Entry, EntryKind};
 use crate::error::Error;
-use crate::hash::CrcWriter;
+use crate::hash::{Blake2spWriter, CrcWriter};
 use crate::options::{ConflictDecider, ExtractOpts, ExtractReport, TestReport};
 use crate::progress::{ProgressReader, ProgressSink};
 
@@ -39,8 +39,8 @@ pub fn payload_is_tar(path: &Path, compression: Compression) -> Result<bool, Err
     Ok(prefix_is_tar(&prefix[..filled]))
 }
 
-/// List a tar stream.
-pub fn list_tar(path: &Path, compression: Compression) -> Result<Vec<Entry>, Error> {
+/// List a tar stream. `hash` computes CRC32 and BLAKE2sp while reading each file.
+pub fn list_tar(path: &Path, compression: Compression, hash: bool) -> Result<Vec<Entry>, Error> {
     let mut archive = Archive::new(open_input(path, compression)?);
     let mut entries = Vec::new();
     for entry in archive
@@ -48,7 +48,22 @@ pub fn list_tar(path: &Path, compression: Compression) -> Result<Vec<Entry>, Err
         .map_err(|err| Error::io(format!("read {}", path.display()), err))?
     {
         let mut entry = entry.map_err(|err| Error::io(format!("read {}", path.display()), err))?;
-        entries.push(tar_entry(&mut entry)?);
+        let mut listed = tar_entry(&mut entry)?;
+        if hash && listed.kind == EntryKind::File {
+            let mut crc = CrcWriter::new();
+            let mut blake = Blake2spWriter::new();
+            {
+                let mut fan = Fanout {
+                    left: &mut crc,
+                    right: &mut blake,
+                };
+                std::io::copy(&mut entry, &mut fan)
+                    .map_err(|err| Error::io(listed.path.clone(), err))?;
+            }
+            listed.crc32 = Some(crc.crc());
+            listed.blake2sp = Some(blake.finish());
+        }
+        entries.push(listed);
     }
     Ok(entries)
 }
@@ -176,13 +191,33 @@ pub fn extract_tar(
     Ok(report)
 }
 
-/// List one gzip or zstd member.
-pub fn list_single(path: &Path, compression: Compression) -> Result<Vec<Entry>, Error> {
+/// List one compressed stream. `hash` decodes it to fill CRC32 and BLAKE2sp.
+pub fn list_single(path: &Path, compression: Compression, hash: bool) -> Result<Vec<Entry>, Error> {
     let name = single_name(path, compression)?;
-    let size = match compression {
-        Compression::Gzip => gzip_isize(path),
-        Compression::Zstd => zstd_content_size(path),
-        Compression::None => None,
+    let (size, crc32, blake2sp) = if hash {
+        let mut input = open_input(path, compression)?;
+        let mut crc = CrcWriter::new();
+        let mut blake = Blake2spWriter::new();
+        {
+            let mut fan = Fanout {
+                left: &mut crc,
+                right: &mut blake,
+            };
+            std::io::copy(&mut input, &mut fan).map_err(|err| Error::io(name.clone(), err))?;
+        }
+        (Some(crc.bytes), Some(crc.crc()), Some(blake.finish()))
+    } else {
+        let size = match compression {
+            Compression::Gzip => gzip_isize(path),
+            Compression::Zstd => zstd_content_size(path),
+            Compression::None | Compression::Xz | Compression::Bzip2 => None,
+        };
+        let crc32 = if compression == Compression::Gzip {
+            gzip_crc(path)
+        } else {
+            None
+        };
+        (size, crc32, None)
     };
     Ok(vec![Entry {
         path: name,
@@ -191,15 +226,10 @@ pub fn list_single(path: &Path, compression: Compression) -> Result<Vec<Entry>, 
         packed_size: std::fs::metadata(path).ok().map(|meta| meta.len()),
         modified: None,
         mode: None,
-        crc32: None,
-        method: Some(
-            match compression {
-                Compression::Gzip => "gzip",
-                Compression::Zstd => "zstd",
-                Compression::None => "store",
-            }
-            .to_string(),
-        ),
+        crc32,
+        method: Some(method_name(compression).to_string()),
+        host_os: None,
+        blake2sp,
         link_target: None,
         encrypted: false,
     }])
@@ -340,6 +370,8 @@ fn tar_entry(entry: &mut tar::Entry<'_, Input>) -> Result<Entry, Error> {
         mode: entry.header().mode().ok(),
         crc32: None,
         method: None,
+        host_os: Some("Unix".to_string()),
+        blake2sp: None,
         link_target,
         encrypted: false,
     })
@@ -370,6 +402,8 @@ fn open_input(path: &Path, compression: Compression) -> Result<Input, Error> {
             zstd::stream::read::Decoder::new(reader)
                 .map_err(|err| Error::io(format!("zstd {}", path.display()), err))?,
         ),
+        Compression::Xz => Box::new(xz2::read::XzDecoder::new(reader)),
+        Compression::Bzip2 => Box::new(bzip2::read::BzDecoder::new(reader)),
     };
     Ok(Input(boxed))
 }
@@ -418,6 +452,28 @@ fn gzip_filename(path: &Path) -> Result<Option<String>, Error> {
         return Ok(None);
     }
     Ok(String::from_utf8(bytes[start..index].to_vec()).ok())
+}
+
+fn method_name(compression: Compression) -> &'static str {
+    match compression {
+        Compression::Gzip => "gzip",
+        Compression::Zstd => "zstd",
+        Compression::Xz => "xz",
+        Compression::Bzip2 => "bzip2",
+        Compression::None => "store",
+    }
+}
+
+fn gzip_crc(path: &Path) -> Option<u32> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = File::open(path).ok()?;
+    if file.metadata().ok()?.len() < 8 {
+        return None;
+    }
+    file.seek(SeekFrom::End(-8)).ok()?;
+    let mut buf = [0u8; 4];
+    std::io::Read::read_exact(&mut file, &mut buf).ok()?;
+    Some(u32::from_le_bytes(buf))
 }
 
 fn gzip_isize(path: &Path) -> Option<u64> {
@@ -552,5 +608,66 @@ impl Write for Fanout<'_> {
     fn flush(&mut self) -> std::io::Result<()> {
         self.left.flush()?;
         self.right.flush()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use super::*;
+
+    #[test]
+    fn extracts_xz_bzip2_and_tar_xz() {
+        let tmp = tempfile::tempdir().unwrap();
+        let xz_path = tmp.path().join("hello.xz");
+        {
+            let file = File::create(&xz_path).unwrap();
+            let mut enc = xz2::write::XzEncoder::new(file, 6);
+            enc.write_all(b"hello xz").unwrap();
+            enc.finish().unwrap();
+        }
+        let bz_path = tmp.path().join("hello.bz2");
+        {
+            let file = File::create(&bz_path).unwrap();
+            let mut enc = bzip2::write::BzEncoder::new(file, bzip2::Compression::fast());
+            enc.write_all(b"hello bz2").unwrap();
+            enc.finish().unwrap();
+        }
+        let tar_xz = tmp.path().join("bundle.tar.xz");
+        {
+            let mut plain = Vec::new();
+            {
+                let mut builder = tar::Builder::new(&mut plain);
+                let mut header = tar::Header::new_gnu();
+                header.set_size(5);
+                header.set_mode(0o644);
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, "note.txt", &b"hello"[..])
+                    .unwrap();
+                builder.finish().unwrap();
+            }
+            let file = File::create(&tar_xz).unwrap();
+            let mut enc = xz2::write::XzEncoder::new(file, 6);
+            enc.write_all(&plain).unwrap();
+            enc.finish().unwrap();
+        }
+
+        let xz_out = tmp.path().join("xz");
+        let bz_out = tmp.path().join("bz");
+        let tar_out = tmp.path().join("tar");
+        for (archive, dir, rel, bytes) in [
+            (&xz_path, &xz_out, "hello", &b"hello xz"[..]),
+            (&bz_path, &bz_out, "hello", &b"hello bz2"[..]),
+            (&tar_xz, &tar_out, "note.txt", &b"hello"[..]),
+        ] {
+            std::fs::create_dir(dir).unwrap();
+            let mut opts = crate::ExtractOpts::new(dir);
+            opts.overwrite = crate::Overwrite::Always;
+            crate::extract(archive, &opts, None, &crate::NopProgress).unwrap();
+            assert_eq!(std::fs::read(dir.join(rel)).unwrap(), bytes, "{rel}");
+            crate::test(archive, &crate::NopProgress).unwrap();
+        }
     }
 }

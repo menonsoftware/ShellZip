@@ -187,3 +187,114 @@ fn reads_a_zip_from_compress_archive() {
         .success();
     assert_eq!(fs::read(out.join("note.txt")).unwrap(), b"from-powershell");
 }
+
+#[test]
+fn stdin_print_update_and_delete() {
+    let tmp = tempfile::tempdir().unwrap();
+    let archive = tmp.path().join("in.tar.zst");
+    szip()
+        .args(["a", "--stdin=note.txt", archive.to_str().unwrap()])
+        .write_stdin(b"piped")
+        .assert()
+        .success()
+        .stdout(contains("created"));
+    szip()
+        .args(["p", archive.to_str().unwrap(), "note.txt"])
+        .assert()
+        .success()
+        .stdout(b"piped".as_slice());
+
+    let zip = tmp.path().join("notes.zip");
+    let first = tmp.path().join("a.txt");
+    let second = tmp.path().join("b.txt");
+    fs::write(&first, b"one").unwrap();
+    fs::write(&second, b"two").unwrap();
+    szip()
+        .args([
+            "a",
+            "-m",
+            "0",
+            zip.to_str().unwrap(),
+            first.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    szip()
+        .args([
+            "u",
+            "-m",
+            "0",
+            zip.to_str().unwrap(),
+            second.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("updated"));
+    szip()
+        .args(["d", zip.to_str().unwrap(), "b.txt"])
+        .assert()
+        .success()
+        .stdout(contains("deleted 1"));
+    szip()
+        .args(["l", zip.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("a.txt"))
+        .stdout(predicates::str::contains("b.txt").not());
+}
+
+#[test]
+fn technical_listing_layout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("hello.txt");
+    fs::write(&file, b"hello").unwrap();
+    let archive = tmp.path().join("notes.zip");
+    szip()
+        .args([
+            "a",
+            "-m",
+            "0",
+            archive.to_str().unwrap(),
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let output = szip()
+        .args(["lt", "--htb", archive.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    let body = text.split_once('\n').map(|(_, rest)| rest).unwrap_or(&text);
+    insta::with_settings!({
+        filters => vec![
+            (r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", "[time]"),
+            (r"[dl-][0-7]{4}", "[attrs]"),
+        ]
+    }, {
+        insta::assert_snapshot!(body);
+    });
+}
+
+#[test]
+fn log_file_receives_debug_events() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("a.txt");
+    fs::write(&file, b"a").unwrap();
+    let archive = tmp.path().join("a.zip");
+    let log = tmp.path().join("run.log");
+    szip()
+        .args([
+            "-v",
+            &format!("--ilog={}", log.display()),
+            "a",
+            "-m",
+            "0",
+            archive.to_str().unwrap(),
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let text = fs::read_to_string(&log).unwrap();
+    assert!(text.contains("archive written"), "log was {text:?}");
+}

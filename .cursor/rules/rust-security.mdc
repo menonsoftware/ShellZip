@@ -1,0 +1,48 @@
+---
+description: Rust security — untrusted archive input, path traversal, size and ratio limits, checked arithmetic, secrets handling, no shell-outs, safe file creation
+globs: crates/**/*.rs
+alwaysApply: false
+---
+
+# Security
+
+Archive bytes, entry names, declared sizes, and user-supplied paths are untrusted input.
+
+## Input validation
+
+- Every entry name goes through `fs::safe_path::safe_rel` then `safe_join` before `create`, `write`, `set_permissions`, or `symlink`. Symlink targets go through `symlink_stays_inside`.
+- Whitelist, don't blacklist: accept `Component::Normal` only; reject absolute paths, drive letters, `..`, control characters, NTFS reserved names, trailing dots and spaces.
+- Validate declared sizes before allocating or writing: cap per-entry and total uncompressed size, cap compression ratio (zip bombs), fail with `Error::Archive`.
+- `checked_*` arithmetic and `try_from` on anything read from a header. Index slices with `get()`.
+- Bound entry-name length, entry count, and directory depth.
+
+```rust
+// ❌ BAD: zip-slip
+let dest = out_dir.join(entry.name());
+
+// ✅ GOOD
+let rel = safe_rel(entry.name())?;
+let dest = safe_join(out_dir, &rel)?;
+```
+
+## Resource limits (DoS)
+
+- Stream through a fixed buffer; never `read_to_end` an entry.
+- Bound thread count (`--threads`, cap 64) and per-thread scratch memory.
+- Honour `Error::Interrupted` so cancellation stops work promptly and leaves no partial file (temp + rename).
+
+## Secrets
+
+- Passwords live only in the `Password` newtype (`zeroize` on drop). Never in `Debug` / `Display`, logs, `tracing` fields, error text, process titles, or panic messages.
+- Sources: prompt, `SZIP_PASSWORD`, or a file. Never hard-coded, never a real value in `--help` examples or tests committed to the repo.
+
+## Process and filesystem
+
+- No `std::process::Command` built from user-supplied strings. If an external tool is unavoidable, pass arguments as a slice; never go through a shell.
+- Create files with `create_new` or temp-then-rename; `safe_path::ensure_dir` refuses to traverse an existing symlink — keep that property.
+- Restore only safe permission bits; never apply setuid / setgid / world-writable from an archive.
+
+## Crypto and transport (when added)
+
+- ZIP encryption is AES-256 AE-2 via the `zip` crate's `aes-crypto` feature; key derivation is Argon2id or PBKDF2. Never implement primitives by hand.
+- Any network code uses TLS with certificate validation on; no `danger_accept_invalid_certs`.

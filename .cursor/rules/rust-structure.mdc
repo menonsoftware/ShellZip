@@ -1,0 +1,47 @@
+---
+description: Rust code organization — workspace layout, one module per file, visibility and re-exports, trait boundaries between components
+globs: crates/**/*.rs
+alwaysApply: false
+---
+
+# Code organization
+
+## Layout
+
+```
+crates/<name>/
+├── Cargo.toml            # inherits [workspace.package] and [lints]
+├── src/lib.rs | main.rs  # crate root: `mod` declarations + `pub use` surface
+├── src/<module>.rs       # one module per file, snake_case; src/<module>/mod.rs when it has children
+├── src/bin/<tool>.rs     # extra executables (optional)
+├── tests/<scenario>.rs   # integration tests, one scenario per file
+├── benches/<name>.rs     # criterion benchmarks (optional)
+└── examples/<name>.rs    # runnable usage for library crates (optional)
+```
+
+- Archive logic lives in `shellzip-core`; `shellzip-cli` and `shellzip-gui` are thin front ends.
+- New `szip` subcommand → `crates/shellzip-cli/src/commands/<verb>.rs`. New format → `archiver/` or `extractor/` behind the existing traits.
+
+## Modules and visibility
+
+- Declare modules private in `lib.rs` and re-export the public surface with `pub use`, so callers write `shellzip_core::Entry`, never `shellzip_core::entry::Entry`.
+- Default private; `pub(crate)` for cross-module helpers; `pub` only for documented API.
+- Every file starts with a `//!` line saying what it owns. Every `pub` item has a `///` doc comment.
+- `use` blocks: std, then external crates, then `crate::`, separated by blank lines.
+
+```rust
+// lib.rs
+mod detect;                                   // src/detect.rs
+pub use detect::{Format, detect_file};
+
+// detect.rs
+//! Magic-byte sniffing for archive formats.
+/// Sniff `path` and return its format.
+pub fn detect_file(path: &Path) -> Result<Format> { /* ... */ }
+```
+
+## Components talk through traits
+
+- Boundaries are traits: `ArchiveReader`, `ArchiveWriter`, `ProgressSink`, `ConflictDecider`. Depend on `&dyn Trait` or generics, not on a front end's concrete types, so parts can be swapped and faked in tests.
+- Platform differences live in one small `#[cfg(windows)]` / `#[cfg(unix)]` function (see `safe_path::extend_long_path`), never scattered across callers.
+- Optional formats and heavy dependencies sit behind Cargo features (`rar`, `sevenz`).

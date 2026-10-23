@@ -37,6 +37,10 @@ pub struct Entry {
     pub crc32: Option<u32>,
     /// Compression method name, when the format stores one per entry.
     pub method: Option<String>,
+    /// Creator host (`Unix`, `DOS`, …), when the format records one.
+    pub host_os: Option<String>,
+    /// BLAKE2sp-256 of the payload, set by `lt -htb`.
+    pub blake2sp: Option<[u8; 32]>,
     /// Symlink target as stored.
     pub link_target: Option<String>,
     /// The member is encrypted. This build can list it but not unpack it.
@@ -63,6 +67,8 @@ pub struct EntryMeta {
     pub modified: Option<SystemTime>,
     /// Permission bits (`0o644` style). File-type bits are not required.
     pub mode: u32,
+    /// When false, writers do not check that the reader produced [`Self::size`] bytes.
+    pub size_known: bool,
 }
 
 /// Render a byte count in binary units.
@@ -96,6 +102,50 @@ pub fn format_time(time: Option<SystemTime>) -> String {
         return "-".to_string();
     };
     local.format("%Y-%m-%d %H:%M").to_string()
+}
+
+/// `d0644` / `l0777` style attributes for a technical listing.
+pub fn format_attrs(kind: EntryKind, mode: Option<u32>) -> String {
+    let kind_ch = match kind {
+        EntryKind::Dir => 'd',
+        EntryKind::Symlink => 'l',
+        EntryKind::File | EntryKind::Other => '-',
+    };
+    match mode {
+        Some(mode) => format!("{kind_ch}{:04o}", mode & 0o7777),
+        None => format!("{kind_ch}----"),
+    }
+}
+
+/// CRC32 as eight uppercase hex digits, or `-`.
+pub fn format_crc(crc: Option<u32>) -> String {
+    match crc {
+        Some(crc) => format!("{crc:08X}"),
+        None => "-".to_string(),
+    }
+}
+
+/// BLAKE2sp-256 as 64 lowercase hex digits, or `-`.
+pub fn format_blake(hash: Option<&[u8; 32]>) -> String {
+    match hash {
+        Some(bytes) => bytes
+            .iter()
+            .fold(String::with_capacity(64), |mut out, byte| {
+                const HEX: &[u8; 16] = b"0123456789abcdef";
+                out.push(char::from(HEX[usize::from(byte >> 4)]));
+                out.push(char::from(HEX[usize::from(byte & 0x0f)]));
+                out
+            }),
+        None => "-".to_string(),
+    }
+}
+
+/// Archive name used to decide whether two members are the same file.
+pub(crate) fn member_key(name: &str) -> String {
+    name.trim()
+        .trim_start_matches("./")
+        .trim_end_matches(['/', '\\'])
+        .replace('\\', "/")
 }
 
 /// Local calendar parts for the ZIP DOS timestamp. Out-of-range values yield `None`.

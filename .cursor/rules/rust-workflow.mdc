@@ -1,0 +1,31 @@
+---
+description: Rust workflow for the ShellZip Cargo workspace — quality gate commands, warnings policy, dependency hygiene, related skills
+alwaysApply: true
+---
+
+# Rust workflow
+
+ShellZip is a Cargo workspace: `crates/shellzip-core` (library), `crates/shellzip-cli` (bin `szip`), `crates/shellzip-gui` (bin `shellzip`). Edition 2024, stable toolchain pinned in `rust-toolchain.toml`, `unsafe_code = "forbid"` and `clippy::all = warn` at the workspace level.
+
+## Before finishing any Rust change
+
+Run the same gate as CI (`make ci` runs all three):
+
+```
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+- Warnings are errors. Fix the cause; `#[allow(...)]` needs a same-line comment saying why.
+- Iterate on one crate with `-p shellzip-core`, finish with `--workspace`.
+
+## Dependencies
+
+- Add with `cargo add <crate> -p <member>`; use `default-features = false` and list only the features you use.
+- Never hand-edit `Cargo.lock`; always commit it.
+- Only MIT / Apache-2.0 / BSD-compatible licenses. Say what a new dependency replaces in the commit message.
+
+## Skills in `.cursor/skills/`
+
+`rust-quality-gate` (fmt/clippy/test loop), `rust-code-review`, `rust-testing`, `rust-scaffold` (new crate/module/command/bench), `rust-performance` (benchmark/profile/size).

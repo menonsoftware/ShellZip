@@ -65,6 +65,19 @@ impl Opened {
         &self.format
     }
 
+    /// Member metadata. When `hash` is set, file payloads are read for BLAKE2sp.
+    pub fn read_entries(&mut self, hash: bool) -> Result<Vec<Entry>, Error> {
+        match &self.format {
+            Format::Zip | Format::Sfx { .. } => zip::list_zip(&self.path, hash),
+            Format::Tar(compression) => tar::list_tar(&self.path, *compression, hash),
+            Format::Gzip => tar::list_single(&self.path, Compression::Gzip, hash),
+            Format::Zstd => tar::list_single(&self.path, Compression::Zstd, hash),
+            Format::Xz => tar::list_single(&self.path, Compression::Xz, hash),
+            Format::Bzip2 => tar::list_single(&self.path, Compression::Bzip2, hash),
+            other => Err(unsupported(other)),
+        }
+    }
+
     /// Extract members selected by `selected` into `opts.output`.
     pub fn extract_to(
         &self,
@@ -96,6 +109,22 @@ impl Opened {
                 selected,
                 progress,
             ),
+            Format::Xz => tar::extract_single(
+                &self.path,
+                Compression::Xz,
+                opts,
+                decide,
+                selected,
+                progress,
+            ),
+            Format::Bzip2 => tar::extract_single(
+                &self.path,
+                Compression::Bzip2,
+                opts,
+                decide,
+                selected,
+                progress,
+            ),
             other => Err(unsupported(other)),
         }
     }
@@ -107,13 +136,7 @@ impl ArchiveReader for Opened {
     }
 
     fn entries(&mut self) -> Result<Vec<Entry>, Error> {
-        match &self.format {
-            Format::Zip | Format::Sfx { .. } => zip::list_zip(&self.path),
-            Format::Tar(compression) => tar::list_tar(&self.path, *compression),
-            Format::Gzip => tar::list_single(&self.path, Compression::Gzip),
-            Format::Zstd => tar::list_single(&self.path, Compression::Zstd),
-            other => Err(unsupported(other)),
-        }
+        self.read_entries(false)
     }
 
     fn extract_entry(
@@ -136,6 +159,14 @@ impl ArchiveReader for Opened {
                 only_first(idx)?;
                 tar::copy_single(&self.path, Compression::Zstd, sink)?
             }
+            Format::Xz => {
+                only_first(idx)?;
+                tar::copy_single(&self.path, Compression::Xz, sink)?
+            }
+            Format::Bzip2 => {
+                only_first(idx)?;
+                tar::copy_single(&self.path, Compression::Bzip2, sink)?
+            }
             other => return Err(unsupported(other)),
         };
         Ok(Verify { bytes, crc32 })
@@ -152,6 +183,8 @@ impl ArchiveReader for Opened {
             Format::Tar(compression) => tar::test_tar(&self.path, *compression, progress),
             Format::Gzip => tar::test_single(&self.path, Compression::Gzip, progress),
             Format::Zstd => tar::test_single(&self.path, Compression::Zstd, progress),
+            Format::Xz => tar::test_single(&self.path, Compression::Xz, progress),
+            Format::Bzip2 => tar::test_single(&self.path, Compression::Bzip2, progress),
             other => Err(unsupported(other)),
         }
     }
@@ -175,6 +208,20 @@ fn resolve(path: &Path) -> Result<Format, Error> {
                 Ok(Format::Tar(Compression::Zstd))
             } else {
                 Ok(Format::Zstd)
+            }
+        }
+        Format::Xz => {
+            if tar::payload_is_tar(path, Compression::Xz)? {
+                Ok(Format::Tar(Compression::Xz))
+            } else {
+                Ok(Format::Xz)
+            }
+        }
+        Format::Bzip2 => {
+            if tar::payload_is_tar(path, Compression::Bzip2)? {
+                Ok(Format::Tar(Compression::Bzip2))
+            } else {
+                Ok(Format::Bzip2)
             }
         }
         Format::Tar(Compression::None) => Ok(Format::Tar(Compression::None)),

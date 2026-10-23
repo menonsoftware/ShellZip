@@ -8,9 +8,11 @@ use crate::entry::EntryMeta;
 use crate::error::Error;
 use crate::options::CompressOpts;
 
+mod parallel;
 mod stream;
 mod tar;
 mod zip;
+mod zstd_tune;
 
 /// Builds one archive on disk. The destination is replaced only after [`Self::finish`].
 ///
@@ -49,12 +51,18 @@ pub fn create(
         )?)),
         Format::Gzip => Ok(Box::new(stream::SingleArchiver::gzip(path, opts)?)),
         Format::Zstd => Ok(Box::new(stream::SingleArchiver::zstd(path, opts)?)),
+        Format::Xz | Format::Bzip2 => Err(Error::Unsupported {
+            format: format.label(),
+            detail: "creating xz and bzip2 is not supported; this build extracts them".to_string(),
+        }),
         other => Err(Error::Unsupported {
             format: other.label(),
             detail: "creating this format is outside the current milestone".to_string(),
         }),
     }
 }
+
+pub(crate) use parallel::add_zip;
 
 /// Writer for the format implied by `path`'s extension.
 pub fn create_from_path(path: &Path, opts: &CompressOpts) -> Result<Box<dyn ArchiveWriter>, Error> {

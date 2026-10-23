@@ -52,13 +52,14 @@ pub struct SingleArchiver {
     committed: bool,
     buf: Vec<u8>,
     written: bool,
+    opts: CompressOpts,
 }
 
 impl SingleArchiver {
     pub fn gzip(path: &Path, opts: &CompressOpts) -> Result<Self, Error> {
         Self::idle(
             path,
-            opts.force,
+            opts,
             Kind::Gzip {
                 level: opts.gzip_level(),
             },
@@ -68,15 +69,15 @@ impl SingleArchiver {
     pub fn zstd(path: &Path, opts: &CompressOpts) -> Result<Self, Error> {
         Self::idle(
             path,
-            opts.force,
+            opts,
             Kind::Zstd {
                 level: opts.zstd_level(),
             },
         )
     }
 
-    fn idle(path: &Path, force: bool, kind: Kind) -> Result<Self, Error> {
-        let (tmp, file) = prepare_output(path, force)?;
+    fn idle(path: &Path, opts: &CompressOpts, kind: Kind) -> Result<Self, Error> {
+        let (tmp, file) = prepare_output(path, opts.force)?;
         Ok(Self {
             stream: Some(Stream::Idle { file, kind }),
             tmp,
@@ -84,6 +85,7 @@ impl SingleArchiver {
             committed: false,
             buf: Vec::new(),
             written: false,
+            opts: opts.clone(),
         })
     }
 
@@ -128,7 +130,7 @@ impl ArchiveWriter for SingleArchiver {
         let copied = copy_in(src, stream, &mut buf);
         self.buf = buf;
         let copied = copied?;
-        if copied != meta.size {
+        if meta.size_known && copied != meta.size {
             return Err(Error::Archive(format!(
                 "read {copied} bytes of `{}`, expected {}",
                 rel.display(),
@@ -201,8 +203,10 @@ impl SingleArchiver {
             Kind::Zstd { level } => {
                 let mut encoder = zstd::stream::write::Encoder::new(file, level)
                     .map_err(|err| Error::io("zstd encoder", err))?;
+                super::zstd_tune::tune(&mut encoder, &self.opts)?;
+                let pledged = meta.size_known.then_some(meta.size);
                 encoder
-                    .set_pledged_src_size(Some(meta.size))
+                    .set_pledged_src_size(pledged)
                     .map_err(|err| Error::io("zstd content size", err))?;
                 Stream::Zstd(encoder)
             }

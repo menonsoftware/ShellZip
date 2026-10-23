@@ -1,0 +1,17 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Developer tasks for ShellZip"
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+shellzip-core = { path = "../crates/shellzip-core" }
+
+[lints]
+workspace = true
