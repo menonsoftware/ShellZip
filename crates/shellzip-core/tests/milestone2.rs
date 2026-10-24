@@ -80,7 +80,7 @@ fn parallel_zip_matches_single_thread_bytes() {
         );
         assert_eq!(fs::read(out.join("src/empty.bin")).unwrap(), b"");
     }
-    test(&multi, &NopProgress).unwrap();
+    test(&multi, None, &NopProgress).unwrap();
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn update_freshen_and_delete_rewrite_zip() {
     update.update = UpdateMode::Update;
     add(&archive, std::slice::from_ref(&old), &update, &NopProgress).unwrap();
     let mut sink = Vec::new();
-    write_member(&archive, Some("a.txt"), &mut sink).unwrap();
+    write_member(&archive, Some("a.txt"), &mut sink, None).unwrap();
     assert_eq!(sink, b"old", "older source must not replace the member");
 
     fs::write(&old, b"fresh").unwrap();
@@ -118,7 +118,7 @@ fn update_freshen_and_delete_rewrite_zip() {
     let (_o, entries) = list(&archive).unwrap();
     assert!(entries.iter().all(|entry| entry.path != "b.txt"));
     sink.clear();
-    write_member(&archive, Some("a.txt"), &mut sink).unwrap();
+    write_member(&archive, Some("a.txt"), &mut sink, None).unwrap();
     assert_eq!(sink, b"fresh");
 
     update.update = UpdateMode::Update;
@@ -145,14 +145,14 @@ fn stdin_streams_zst_and_spools_tar() {
     let mut input = Cursor::new(b"from-stdin".to_vec());
     add_stdin(&zst, "payload.bin", &mut input, &opts(1), &NopProgress).unwrap();
     let mut out = Vec::new();
-    write_member(&zst, None, &mut out).unwrap();
+    write_member(&zst, None, &mut out, None).unwrap();
     assert_eq!(out, b"from-stdin");
 
     let tar = tmp.path().join("in.tar.zst");
     let mut input = Cursor::new(b"tar-body".to_vec());
     add_stdin(&tar, "note.txt", &mut input, &opts(1), &NopProgress).unwrap();
     out.clear();
-    write_member(&tar, Some("note.txt"), &mut out).unwrap();
+    write_member(&tar, Some("note.txt"), &mut out, None).unwrap();
     assert_eq!(out, b"tar-body");
 }
 
@@ -163,7 +163,14 @@ fn technical_list_fills_blake2sp() {
     fs::write(&file, b"foo").unwrap();
     let archive = tmp.path().join("a.zip");
     add(&archive, &[file], &opts(1), &NopProgress).unwrap();
-    let (_o, entries) = list_with(&archive, &ListOpts { blake2sp: true }).unwrap();
+    let (_o, entries) = list_with(
+        &archive,
+        &ListOpts {
+            blake2sp: true,
+            ..ListOpts::default()
+        },
+    )
+    .unwrap();
     let file = entries.iter().find(|entry| entry.path == "a.txt").unwrap();
     let hex: String = file
         .blake2sp

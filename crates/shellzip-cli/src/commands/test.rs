@@ -7,7 +7,11 @@ use crate::cli::ArchiveArgs;
 
 /// Decode every member and report checksum or encryption failures.
 pub fn test(args: &ArchiveArgs, shared: &Shared) -> Result<i32, Error> {
-    let report = test_archive(&args.archive, shared.sink.as_ref())?;
+    let report = test_archive(
+        &args.archive,
+        shared.password.as_ref(),
+        shared.sink.as_ref(),
+    )?;
     for name in &report.checksums {
         anstream::eprintln!("szip: checksum mismatch for `{name}`");
     }

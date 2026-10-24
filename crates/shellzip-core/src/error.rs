@@ -42,8 +42,8 @@ pub enum Error {
         /// Archive-relative name.
         entry: String,
     },
-    /// The archive is encrypted and this build cannot unlock it.
-    #[error("encrypted entry `{0}` requires a password, which is not supported yet")]
+    /// The archive or member is encrypted and no password was supplied.
+    #[error("password required to read `{0}`")]
     Encrypted(String),
     /// Password was supplied and rejected by the format implementation.
     #[error("incorrect password")]

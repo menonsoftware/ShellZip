@@ -100,7 +100,10 @@ impl ShellZipApp {
             return;
         }
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Archives", &["zip", "tar", "gz", "tgz", "zst", "tzst"])
+            .add_filter(
+                "Archives",
+                &["zip", "tar", "gz", "tgz", "zst", "tzst", "rar", "7z"],
+            )
             .pick_file()
         else {
             return;
@@ -171,7 +174,7 @@ impl ShellZipApp {
         self.begin_job();
         let tx = self.tx.clone();
         worker::spawn(tx, move || {
-            let report = test(&archive, progress.as_ref())?;
+            let report = test(&archive, None, progress.as_ref())?;
             let code = report.exit_code();
             if code == 0 {
                 Ok(Outcome::Finished(format!("OK, {} entries", report.entries)))

@@ -55,6 +55,15 @@ pub fn create(
             format: format.label(),
             detail: "creating xz and bzip2 is not supported; this build extracts them".to_string(),
         }),
+        Format::Rar4 | Format::Rar5 => Err(Error::Unsupported {
+            format: format.label(),
+            detail: "RAR creation is not implemented; the UnRAR licence allows extraction only"
+                .to_string(),
+        }),
+        Format::SevenZ => Err(Error::Unsupported {
+            format: format.label(),
+            detail: "creating 7z is not implemented; this build extracts it".to_string(),
+        }),
         other => Err(Error::Unsupported {
             format: other.label(),
             detail: "creating this format is outside the current milestone".to_string(),

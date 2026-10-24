@@ -112,8 +112,22 @@ pub fn symlink_destination(
     if let Some(parent) = path.parent() {
         ensure_dir(parent)?;
     }
-    symlink_stays_inside(&opts.output, &path, target)?;
+    if opts.allow_unsafe_links {
+        if target.is_empty() || target.chars().any(char::is_control) {
+            return Err(Error::UnsafePath(target.to_string()));
+        }
+    } else {
+        symlink_stays_inside(&opts.output, &path, target)?;
+    }
     Ok(path)
+}
+
+/// Copy the archive zone onto a file that was just written, when `-om` is set.
+pub fn mark_extracted(archive: &Path, dest: &Path, opts: &ExtractOpts) -> Result<(), Error> {
+    if opts.mark_of_the_web {
+        crate::fs::motw::propagate(archive, dest)?;
+    }
+    Ok(())
 }
 
 /// Write `write_body` to a sibling temp file and rename it into place.
@@ -169,6 +183,11 @@ fn renamed(path: &Path) -> PathBuf {
         }
     }
     parent.join(format!("{stem} ({}){ext}", std::process::id()))
+}
+
+#[cfg(feature = "rar")]
+pub(crate) fn stage_path(final_path: &Path) -> PathBuf {
+    partial_path(final_path)
 }
 
 fn partial_path(path: &Path) -> PathBuf {

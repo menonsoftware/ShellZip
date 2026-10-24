@@ -572,6 +572,8 @@ mod tests {
             blake2sp: None,
             link_target: None,
             encrypted: false,
+            solid: false,
+            dictionary: None,
         }
     }
 

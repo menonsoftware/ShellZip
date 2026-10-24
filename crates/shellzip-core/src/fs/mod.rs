@@ -1,6 +1,7 @@
 //! Filesystem helpers used while packing and extracting.
 
 pub mod metadata;
+pub mod motw;
 pub mod safe_path;
 pub mod walk;
 

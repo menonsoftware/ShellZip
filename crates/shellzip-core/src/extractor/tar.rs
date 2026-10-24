@@ -8,7 +8,9 @@ use std::time::UNIX_EPOCH;
 use flate2::read::GzDecoder;
 use tar::{Archive, EntryType};
 
-use super::policy::{Budget, Destination, destination, symlink_destination, write_atomic};
+use super::policy::{
+    Budget, Destination, destination, mark_extracted, symlink_destination, write_atomic,
+};
 use crate::detect::{Compression, prefix_is_tar};
 use crate::entry::{Entry, EntryKind};
 use crate::error::Error;
@@ -163,7 +165,7 @@ pub fn extract_tar(
                 }
             }
             EntryType::Regular | EntryType::Continuous => {
-                extract_regular(
+                if let Some(dest) = extract_regular(
                     &mut entry,
                     &name,
                     opts,
@@ -171,7 +173,10 @@ pub fn extract_tar(
                     &mut budget,
                     &mut report,
                     progress,
-                )?;
+                )? && let Err(err) = mark_extracted(path, &dest, opts)
+                {
+                    report.warnings.push(err.to_string());
+                }
             }
             EntryType::Link => {
                 std::io::copy(&mut entry, &mut std::io::sink())
@@ -232,6 +237,8 @@ pub fn list_single(path: &Path, compression: Compression, hash: bool) -> Result<
         blake2sp,
         link_target: None,
         encrypted: false,
+        solid: false,
+        dictionary: None,
     }])
 }
 
@@ -285,6 +292,9 @@ pub fn extract_single(
                 budget.charge(copied)?;
                 Ok(())
             })?;
+            if let Err(err) = mark_extracted(path, &dest, opts) {
+                report.warnings.push(err.to_string());
+            }
             report.extracted += 1;
         }
     }
@@ -300,13 +310,14 @@ fn extract_regular(
     budget: &mut Budget,
     report: &mut ExtractReport,
     progress: &dyn ProgressSink,
-) -> Result<(), Error> {
+) -> Result<Option<std::path::PathBuf>, Error> {
     let declared = entry.size();
     match destination(name, opts, opts.flat, false, decide)? {
         Destination::Skip => {
             std::io::copy(entry, &mut std::io::sink())
                 .map_err(|err| Error::io(name.to_string(), err))?;
             report.skipped += 1;
+            Ok(None)
         }
         Destination::Write(dest) => {
             let modified = entry
@@ -339,9 +350,9 @@ fn extract_regular(
                 report.warnings.push(err.to_string());
             }
             report.extracted += 1;
+            Ok(Some(dest))
         }
     }
-    Ok(())
 }
 
 fn tar_entry(entry: &mut tar::Entry<'_, Input>) -> Result<Entry, Error> {
@@ -374,6 +385,8 @@ fn tar_entry(entry: &mut tar::Entry<'_, Input>) -> Result<Entry, Error> {
         blake2sp: None,
         link_target,
         encrypted: false,
+        solid: false,
+        dictionary: None,
     })
 }
 
@@ -667,7 +680,7 @@ mod tests {
             opts.overwrite = crate::Overwrite::Always;
             crate::extract(archive, &opts, None, &crate::NopProgress).unwrap();
             assert_eq!(std::fs::read(dir.join(rel)).unwrap(), bytes, "{rel}");
-            crate::test(archive, &crate::NopProgress).unwrap();
+            crate::test(archive, None, &crate::NopProgress).unwrap();
         }
     }
 }

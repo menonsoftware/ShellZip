@@ -1,5 +1,7 @@
 //! ZIP writer. Level 0 and already-compressed extensions are stored.
 //!
+//! A password selects AES-256 in WinZip AE-2 form. File names stay in the clear.
+//!
 //! An existing ZIP is updated: members that this run does not replace are copied
 //! into the new file, then the new members are appended. `force` still replaces
 //! the archive.
@@ -66,8 +68,7 @@ impl ArchiveWriter for ZipArchiver {
     fn add_file(&mut self, rel: &Path, src: &mut dyn Read, meta: &EntryMeta) -> Result<(), Error> {
         let name = rel_name(rel);
         let (method, level) = method_for(&name, &self.opts);
-        let options = options_for(meta, method, level)?;
-        self.writer()?.start_file(name, options)?;
+        self.start_with(name, meta, method, level)?;
         let mut buf = std::mem::take(&mut self.buf);
         let copied = copy_in(src, self.writer()?, &mut buf);
         self.buf = buf;
@@ -84,14 +85,20 @@ impl ArchiveWriter for ZipArchiver {
     }
 
     fn add_dir(&mut self, rel: &Path, meta: &EntryMeta) -> Result<(), Error> {
-        let options = options_for(meta, CompressionMethod::Stored, None)?;
+        let options = options_for(meta, CompressionMethod::Stored, None, None)?;
         self.writer()?
             .add_directory(rel_name(rel), options)
             .map_err(Error::from)
     }
 
     fn add_symlink(&mut self, rel: &Path, target: &Path, meta: &EntryMeta) -> Result<(), Error> {
-        let options = options_for(meta, CompressionMethod::Stored, None)?;
+        let secret = self.opts.password.clone();
+        let options = options_for(
+            meta,
+            CompressionMethod::Stored,
+            None,
+            secret.as_ref().map(crate::crypto::Password::expose),
+        )?;
         self.writer()?
             .add_symlink(rel_name(rel), target_text(target), options)
             .map_err(Error::from)
@@ -151,11 +158,12 @@ pub(crate) fn method_for(name: &str, opts: &CompressOpts) -> (CompressionMethod,
     }
 }
 
-pub(crate) fn options_for(
+pub(crate) fn options_for<'a>(
     meta: &EntryMeta,
     method: CompressionMethod,
     level: Option<i64>,
-) -> Result<SimpleFileOptions, Error> {
+    password: Option<&'a str>,
+) -> Result<zip::write::FileOptions<'a, ()>, Error> {
     let mut options = SimpleFileOptions::default()
         .compression_method(method)
         .compression_level(level)
@@ -166,7 +174,31 @@ pub(crate) fn options_for(
     {
         options = options.last_modified_time(stamp);
     }
+    if let Some(password) = password {
+        return Ok(options.with_aes_encryption(zip::AesMode::Aes256, password));
+    }
     Ok(options)
+}
+
+impl ZipArchiver {
+    fn start_with(
+        &mut self,
+        name: String,
+        meta: &EntryMeta,
+        method: CompressionMethod,
+        level: Option<i64>,
+    ) -> Result<(), Error> {
+        let secret = self.opts.password.clone();
+        let options = options_for(
+            meta,
+            method,
+            level,
+            secret.as_ref().map(crate::crypto::Password::expose),
+        )?;
+        self.writer()?
+            .start_file(name, options)
+            .map_err(Error::from)
+    }
 }
 
 pub(crate) fn rel_name(rel: &Path) -> String {

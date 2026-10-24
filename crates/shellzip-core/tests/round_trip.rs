@@ -47,7 +47,7 @@ fn extract_all(archive: &Path, output: &Path) {
 fn round_trip_zip_tar_and_compressed_tar() {
     for ext in ["zip", "tar", "tar.gz", "tgz", "tar.zst", "tzst"] {
         let (tmp, archive) = pack_tree(ext);
-        let report = test(&archive, &NopProgress).unwrap();
+        let report = test(&archive, None, &NopProgress).unwrap();
         assert_eq!(report.exit_code(), 0, "{ext}");
         let (_opened, entries) = list(&archive).unwrap();
         assert!(
@@ -111,7 +111,7 @@ fn single_file_gzip_and_zstd_round_trip() {
             &NopProgress,
         )
         .unwrap();
-        test(&archive, &NopProgress).unwrap();
+        test(&archive, None, &NopProgress).unwrap();
         let out = tmp.path().join(format!("out-{ext}"));
         extract_all(&archive, &out);
         assert_eq!(fs::read(out.join("notes.txt")).unwrap(), b"plain");
@@ -237,12 +237,15 @@ fn existing_tar_is_left_in_place_without_force() {
 }
 
 #[test]
-fn rar_signature_is_recognized_and_refused() {
+fn rar_signature_is_recognized_and_not_created() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("sample.rar");
     fs::write(&path, b"Rar!\x1a\x07\x01\x00rest").unwrap();
-    let err = list(&path).unwrap_err();
-    assert!(matches!(err, Error::Unsupported { .. }));
+    let src = tmp.path().join("hello.txt");
+    fs::write(&src, b"hello").unwrap();
+    let err = add(&path, &[src], &opts_fast(), &NopProgress).unwrap_err();
+    assert!(matches!(err, Error::Unsupported { .. }), "{err}");
+    assert!(err.to_string().contains("UnRAR"), "{err}");
 }
 
 #[test]

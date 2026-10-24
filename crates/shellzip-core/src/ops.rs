@@ -46,6 +46,18 @@ pub fn add(
             "update and freshen only rewrite ZIP archives".to_string(),
         ));
     }
+    if opts.password.is_some() && !matches!(format, Format::Zip) {
+        return Err(Error::Usage(
+            "passwords encrypt ZIP file contents only; names stay visible, and other formats are not encrypted"
+                .to_string(),
+        ));
+    }
+    if opts.password.is_some() && dest.is_file() && !opts.force {
+        return Err(Error::Usage(
+            "pass -y to replace a ZIP when encrypting; an update would leave older members unchanged"
+                .to_string(),
+        ));
+    }
     let mut planned = walk::plan(inputs, opts, Some(dest))?;
     if opts.update != UpdateMode::Add && !opts.force && dest.is_file() {
         let index = zip_mtimes(dest)?;
@@ -65,6 +77,7 @@ pub fn add(
     opts.input_bytes = Some(total);
     progress.begin(&format!("add {}", dest.display()), total);
     let packed_bytes = if matches!(format, Format::Zip)
+        && opts.password.is_none()
         && opts.thread_count() > 1
         && planned.iter().any(|item| item.kind == EntryKind::File)
     {
@@ -139,20 +152,25 @@ pub fn list_with(
     path: &Path,
     opts: &ListOpts,
 ) -> Result<(Opened, Vec<crate::entry::Entry>), Error> {
-    let mut opened = Opened::open(path)?;
+    let mut opened = Opened::open_with(path, opts.password.clone())?;
     let entries = opened.read_entries(opts.blake2sp)?;
     Ok((opened, entries))
 }
 
 /// Write one member to `sink`. `name` is required when the archive has several files.
-pub fn write_member(path: &Path, name: Option<&str>, sink: &mut dyn Write) -> Result<u64, Error> {
-    let mut opened = Opened::open(path)?;
+pub fn write_member(
+    path: &Path,
+    name: Option<&str>,
+    sink: &mut dyn Write,
+    password: Option<&crate::crypto::Password>,
+) -> Result<u64, Error> {
+    let mut opened = Opened::open_with(path, password.cloned())?;
     let entries = opened.entries()?;
     let index = match name {
         Some(name) => find_member(&entries, name)?,
         None => only_file(&entries)?,
     };
-    let verify = opened.extract_entry(index, sink, None)?;
+    let verify = opened.extract_entry(index, sink, password)?;
     Ok(verify.bytes)
 }
 
@@ -244,7 +262,13 @@ pub fn extract(
     decide: Option<&ConflictDecider<'_>>,
     progress: &dyn ProgressSink,
 ) -> Result<ExtractReport, Error> {
-    let opened = Opened::open(path)?;
+    #[cfg(not(windows))]
+    if opts.mark_of_the_web {
+        return Err(Error::Usage(
+            "mark-of-the-web (-om) is only written on Windows".to_string(),
+        ));
+    }
+    let opened = Opened::open_with(path, opts.password.clone())?;
     let filter = name_filter(opts)?;
     let report = opened.extract_to(opts, decide, &filter, progress)?;
     if report.extracted == 0 && report.skipped == 0 && filter_is_restrictive(opts) {
@@ -254,9 +278,13 @@ pub fn extract(
 }
 
 /// Test every member of `path`.
-pub fn test(path: &Path, progress: &dyn ProgressSink) -> Result<TestReport, Error> {
-    let mut opened = Opened::open(path)?;
-    opened.test(progress, None)
+pub fn test(
+    path: &Path,
+    password: Option<&crate::crypto::Password>,
+    progress: &dyn ProgressSink,
+) -> Result<TestReport, Error> {
+    let mut opened = Opened::open_with(path, password.cloned())?;
+    opened.test(progress, password)
 }
 
 /// Open an archive for indexed reads.

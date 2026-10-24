@@ -35,15 +35,15 @@ pub enum Format {
     Gzip,
     /// zstd frame that is not a tar.
     Zstd,
-    /// xz stream. Recognized only.
+    /// xz stream.
     Xz,
-    /// bzip2 stream. Recognized only.
+    /// bzip2 stream.
     Bzip2,
-    /// RAR 4.x. Recognized only.
+    /// RAR 4.x. Extracted when the `rar` feature is enabled.
     Rar4,
-    /// RAR 5. Recognized only.
+    /// RAR 5. Extracted when the `rar` feature is enabled.
     Rar5,
-    /// 7z signature. Recognized only.
+    /// 7z signature. Extracted when the `sevenz` feature is enabled.
     SevenZ,
     /// Executable stub with an archive payload at `offset`.
     Sfx {
@@ -75,12 +75,22 @@ impl Format {
         }
     }
 
-    /// Formats this milestone can list, test, and extract.
+    /// Formats this build can list, test, and extract.
     pub fn is_supported(&self) -> bool {
         match self {
             Self::Zip | Self::Tar(_) | Self::Gzip | Self::Zstd | Self::Xz | Self::Bzip2 => true,
             Self::Sfx { inner, .. } => matches!(inner.as_ref(), Self::Zip),
-            _ => false,
+            Self::Rar4 | Self::Rar5 => cfg!(feature = "rar"),
+            Self::SevenZ => cfg!(feature = "sevenz"),
+        }
+    }
+
+    /// Formats that can take a password. Tar and single-file streams cannot.
+    pub fn accepts_password(&self) -> bool {
+        match self {
+            Self::Zip | Self::Rar4 | Self::Rar5 | Self::SevenZ => true,
+            Self::Sfx { inner, .. } => inner.accepts_password(),
+            Self::Tar(_) | Self::Gzip | Self::Zstd | Self::Xz | Self::Bzip2 => false,
         }
     }
 }
@@ -112,9 +122,13 @@ pub fn format_from_extension(path: &Path) -> Result<Format, Error> {
         Format::Xz
     } else if name.ends_with(".bz2") {
         Format::Bzip2
+    } else if name.ends_with(".rar") {
+        Format::Rar5
+    } else if name.ends_with(".7z") {
+        Format::SevenZ
     } else {
         return Err(Error::Usage(format!(
-            "cannot tell archive format from `{name}`; use .zip, .tar, .tar.gz, .tgz, .tar.zst, .tzst, .gz, .zst, .xz, or .bz2"
+            "cannot tell archive format from `{name}`; use .zip, .tar, .tar.gz, .tgz, .tar.zst, .tzst, .gz, .zst, .xz, .bz2, .rar, or .7z"
         )));
     };
     Ok(format)
@@ -370,6 +384,14 @@ mod tests {
             format_from_extension(Path::new("a.tzst")).unwrap(),
             Format::Tar(Compression::Zstd)
         );
-        assert!(format_from_extension(Path::new("a.rar")).is_err());
+        assert_eq!(
+            format_from_extension(Path::new("a.rar")).unwrap(),
+            Format::Rar5
+        );
+        assert_eq!(
+            format_from_extension(Path::new("a.7z")).unwrap(),
+            Format::SevenZ
+        );
+        assert!(format_from_extension(Path::new("a.cab")).is_err());
     }
 }

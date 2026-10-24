@@ -124,7 +124,13 @@ fn compress_file(
     let mut reader = ProgressReader::new(file, progress);
     let name = rel_name(Path::new(&item.rel));
     let (method, level) = method_for(&name, opts);
-    let options = options_for(&item.meta, method, level)?;
+    let secret = opts.password.clone();
+    let options = options_for(
+        &item.meta,
+        method,
+        level,
+        secret.as_ref().map(crate::crypto::Password::expose),
+    )?;
     let mut buf = Vec::new();
     if item.meta.size < MEMORY_LIMIT {
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));

@@ -2,5 +2,5 @@
 source: crates/shellzip-cli/tests/cli.rs
 expression: body
 ---
-Name                           Size     Packed  Ratio  Modified          Attrs   CRC32     BLAKE2sp                                                          Method    Host
-hello.txt                         5          5   100%  [time]  [attrs]   3610A686  223dfe42565ddf97210b34a384860b603717d5c63c1872c9fc99f1b15de6631b  store     Unix
+Name                           Size     Packed  Ratio  Modified          Attrs   CRC32     BLAKE2sp                                                          Method    Host      Flags
+hello.txt                         5          5   100%  [time]  [attrs]   3610A686  223dfe42565ddf97210b34a384860b603717d5c63c1872c9fc99f1b15de6631b  store     Unix      -

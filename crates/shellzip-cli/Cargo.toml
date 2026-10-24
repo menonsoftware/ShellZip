@@ -16,7 +16,9 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 console = "0.15"
 indicatif = "0.17"
-shellzip-core = { path = "../shellzip-core" }
+rpassword = "7.5.4"
+zeroize = "1"
+shellzip-core = { path = "../shellzip-core", features = ["rar", "sevenz"] }
 tracing = "0.1"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

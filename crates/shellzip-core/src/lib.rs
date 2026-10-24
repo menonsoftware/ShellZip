@@ -1,8 +1,9 @@
 //! ShellZip archive core.
 //!
 //! The library packs and unpacks ZIP, tar, tar.gz, tar.zst, gzip, and zstd,
-//! and extracts xz and bzip2. RAR and 7z are recognized and rejected until a
-//! later milestone. Passwords are rejected the same way.
+//! and extracts xz and bzip2. ZIP contents can be encrypted with AES-256 AE-2.
+//! Names stay visible: ZIP cannot hide them. RAR and 7z extraction are optional
+//! features (`rar`, `sevenz`). This crate never creates RAR archives.
 //!
 //! File bytes are copied through a fixed buffer. Entry names are checked
 //! before anything is created on disk.
@@ -63,8 +64,9 @@ pub fn write_member(
     path: &std::path::Path,
     name: Option<&str>,
     sink: &mut dyn std::io::Write,
+    password: Option<&Password>,
 ) -> Result<u64> {
-    ops::write_member(path, name, sink)
+    ops::write_member(path, name, sink, password)
 }
 
 /// Remove ZIP members that match `masks`.
@@ -101,8 +103,12 @@ pub fn extract(
 }
 
 /// Decode every member and verify checksums or sizes.
-pub fn test(path: &std::path::Path, progress: &dyn ProgressSink) -> Result<TestReport> {
-    ops::test(path, progress)
+pub fn test(
+    path: &std::path::Path,
+    password: Option<&Password>,
+    progress: &dyn ProgressSink,
+) -> Result<TestReport> {
+    ops::test(path, password, progress)
 }
 
 /// Open `path` for indexed reads.
