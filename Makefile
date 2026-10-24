@@ -19,6 +19,13 @@ PKG_CORE := shellzip-core
 PKG_SFX := shellzip-sfx
 BIN_SFX := shellzip-sfx
 
+# `make release` leaves szip, shellzip, and the size-optimized stub together.
+ifeq ($(OS),Windows_NT)
+COPY_RELEASE_SFX = powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path 'target/release' | Out-Null; Copy-Item -Force 'target/minisize/shellzip-sfx.exe' 'target/release/shellzip-sfx.exe'"
+else
+COPY_RELEASE_SFX = mkdir -p target/release && cp -f target/minisize/shellzip-sfx target/release/shellzip-sfx
+endif
+
 .PHONY: all build release build-cli build-gui build-core \
 	release-cli release-gui release-sfx \
 	run run-release gui gui-release \
@@ -41,6 +48,7 @@ release-gui:
 	$(CARGO) build --release -p $(PKG_GUI) $(CARGO_FLAGS)
 
 release-sfx: build-sfx
+	$(COPY_RELEASE_SFX)
 
 build-cli:
 	$(CARGO) build -p $(PKG_CLI) $(CARGO_FLAGS)
@@ -119,7 +127,7 @@ help:
 	@echo   make release          Release CLI, GUI, and size-optimized SFX
 	@echo   make release-cli      Release build of szip
 	@echo   make release-gui      Release build of the desktop app
-	@echo   make release-sfx      Size-optimized SFX stub
+	@echo   make release-sfx      Size-optimized SFX stub, copied into target/release
 	@echo   make build-cli        Build szip only
 	@echo   make build-gui        Build the desktop app
 	@echo   make build-sfx        Build the size-optimized SFX stub
