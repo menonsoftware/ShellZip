@@ -81,6 +81,7 @@ pub fn test_zip(
     progress.begin(&format!("test {}", path.display()), total);
     let mut report = TestReport::default();
     for index in 0..archive.len() {
+        crate::progress::ensure_running(progress)?;
         let file = archive
             .by_index_raw(index)
             .map_err(|err| annotate(err, path))?;
@@ -154,6 +155,7 @@ pub fn extract_zip(
     let mut report = ExtractReport::default();
     let mut budget = Budget::new(opts.max_bytes);
     for index in chosen {
+        crate::progress::ensure_running(progress)?;
         let file = archive
             .by_index_raw(index)
             .map_err(|err| annotate(err, path))?;
@@ -282,9 +284,10 @@ pub fn extract_zip_index(
     Ok((hasher.bytes, hasher.crc()))
 }
 
-fn open_zip(path: &Path) -> Result<ZipArchive<File>, Error> {
-    let file =
-        File::open(path).map_err(|err| Error::io(format!("open {}", path.display()), err))?;
+type Source = crate::sfx::Section<File>;
+
+fn open_zip(path: &Path) -> Result<ZipArchive<Source>, Error> {
+    let file = crate::sfx::open_section(path)?;
     ZipArchive::new(file).map_err(|err| annotate(err, path))
 }
 
@@ -295,7 +298,7 @@ fn annotate(err: zip::result::ZipError, path: &Path) -> Error {
     }
 }
 
-fn entry_from(file: &mut zip::read::ZipFile<'_, File>) -> Result<Entry, Error> {
+fn entry_from(file: &mut zip::read::ZipFile<'_, Source>) -> Result<Entry, Error> {
     let path = file.name().trim_end_matches('/').to_string();
     let kind = if file.is_symlink() {
         EntryKind::Symlink

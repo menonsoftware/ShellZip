@@ -140,6 +140,9 @@ pub fn detect_bytes(bytes: &[u8]) -> Option<Format> {
         return Some(format);
     }
     if bytes.len() >= 2 && &bytes[..2] == b"MZ" {
+        if let Some(format) = sfx_from_trailer(bytes) {
+            return Some(format);
+        }
         return find_embedded(bytes).map(|(offset, inner)| Format::Sfx {
             offset: offset as u64,
             inner: Box::new(inner),
@@ -160,6 +163,16 @@ pub fn detect_file(path: &Path) -> Result<Format, Error> {
         return Ok(format);
     }
     if n >= 2 && &head[..2] == b"MZ" {
+        match crate::sfx::locate(path) {
+            Ok(Some(trailer)) => {
+                return Ok(Format::Sfx {
+                    offset: trailer.archive_offset,
+                    inner: Box::new(Format::Zip),
+                });
+            }
+            Ok(None) => {}
+            Err(err) => return Err(err),
+        }
         if let Some((offset, inner)) = find_embedded(&head[..n]) {
             return Ok(Format::Sfx {
                 offset: offset as u64,
@@ -209,6 +222,19 @@ fn detect_header(bytes: &[u8]) -> Option<Format> {
         return Some(Format::Tar(Compression::None));
     }
     None
+}
+
+fn sfx_from_trailer(bytes: &[u8]) -> Option<Format> {
+    let trailer = crate::sfx::trailer_from_bytes(bytes)?;
+    let offset = usize::try_from(trailer.archive_offset).ok()?;
+    let inner = detect_header(bytes.get(offset..)?)?;
+    if !matches!(inner, Format::Zip) {
+        return None;
+    }
+    Some(Format::Sfx {
+        offset: trailer.archive_offset,
+        inner: Box::new(inner),
+    })
 }
 
 fn find_embedded(bytes: &[u8]) -> Option<(usize, Format)> {
@@ -357,6 +383,26 @@ mod tests {
                 assert_eq!(*inner, Format::Zip);
             }
             other => panic!("expected sfx zip, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trailer_offset_wins_over_an_earlier_signature() {
+        let mut bytes = b"MZPK\x03\x04".to_vec();
+        bytes.resize(32, 0);
+        bytes.extend_from_slice(b"PK\x03\x04");
+        let trailer = crate::sfx::SfxTrailer {
+            archive_offset: 32,
+            archive_len: 4,
+            flags: 0,
+        };
+        bytes.extend_from_slice(&trailer.encode());
+        match detect_bytes(&bytes) {
+            Some(Format::Sfx { offset, inner }) => {
+                assert_eq!(offset, 32);
+                assert_eq!(*inner, Format::Zip);
+            }
+            other => panic!("expected trailer sfx, got {other:?}"),
         }
     }
 

@@ -29,6 +29,66 @@ pub fn add(
     opts: &CompressOpts,
     progress: &dyn ProgressSink,
 ) -> Result<AddReport, Error> {
+    add_inner(dest, Some(dest), inputs, opts, progress)
+}
+
+/// Pack `inputs` into a temporary ZIP and wrap it as a self-extractor at `dest`.
+///
+/// The walk skips `dest`, so an existing package in the input tree is not stored.
+///
+/// # Errors
+///
+/// Returns [`Error::Usage`] when `opts.update` is not [`UpdateMode::Add`].
+/// Other failures match [`add`].
+pub fn add_sfx(
+    dest: &Path,
+    stub: &Path,
+    inputs: &[PathBuf],
+    opts: &CompressOpts,
+    progress: &dyn ProgressSink,
+) -> Result<AddReport, Error> {
+    if opts.update != UpdateMode::Add {
+        return Err(Error::Usage(
+            "--sfx is only valid when creating an archive".to_string(),
+        ));
+    }
+    let scratch = scratch_zip(dest);
+    let _ = std::fs::remove_file(&scratch);
+    let mut opts = opts.clone();
+    opts.force = true;
+    let result = (|| {
+        let report = add_inner(&scratch, Some(dest), inputs, &opts, progress)?;
+        let packed_bytes = crate::sfx::build(dest, stub, &scratch)?;
+        Ok(AddReport {
+            path: dest.to_path_buf(),
+            entries: report.entries,
+            bytes: report.bytes,
+            packed_bytes,
+        })
+    })();
+    let _ = std::fs::remove_file(&scratch);
+    result
+}
+
+fn scratch_zip(dest: &Path) -> PathBuf {
+    // Parallel `szip a --sfx` calls must not share one temp ZIP. The counter
+    // only makes the file name unique.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let name = dest
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "archive".to_string());
+    std::env::temp_dir().join(format!(".{name}.{}.{id}.szip-sfx.zip", std::process::id()))
+}
+
+fn add_inner(
+    dest: &Path,
+    skip: Option<&Path>,
+    inputs: &[PathBuf],
+    opts: &CompressOpts,
+    progress: &dyn ProgressSink,
+) -> Result<AddReport, Error> {
     if opts.level > 5 {
         return Err(Error::Usage(
             "compression level must be 0 through 5".to_string(),
@@ -58,7 +118,7 @@ pub fn add(
                 .to_string(),
         ));
     }
-    let mut planned = walk::plan(inputs, opts, Some(dest))?;
+    let mut planned = walk::plan(inputs, opts, skip)?;
     if opts.update != UpdateMode::Add && !opts.force && dest.is_file() {
         let index = zip_mtimes(dest)?;
         planned.retain(|item| keep_member(item, opts.update, &index));
@@ -114,6 +174,7 @@ fn write_sequential(
     let replacing: Vec<String> = planned.iter().map(|item| item.rel.clone()).collect();
     writer.retain_existing(&replacing)?;
     for item in planned {
+        crate::progress::ensure_running(progress)?;
         progress.begin_entry(&item.rel, item.meta.size);
         let rel = Path::new(&item.rel);
         match item.kind {

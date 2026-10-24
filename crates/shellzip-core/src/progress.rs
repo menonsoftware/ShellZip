@@ -12,6 +12,23 @@ pub trait ProgressSink: Send + Sync {
     fn end_entry(&self);
     /// A human-readable note that is not an error.
     fn message(&self, text: &str);
+    /// `true` when the caller asked the job to stop.
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+/// Stop when the sink has been cancelled.
+///
+/// # Errors
+///
+/// Returns [`crate::Error::Interrupted`] after a cancel request.
+pub fn ensure_running(progress: &dyn ProgressSink) -> Result<(), crate::Error> {
+    if progress.is_cancelled() {
+        Err(crate::Error::Interrupted)
+    } else {
+        Ok(())
+    }
 }
 
 /// Discards every progress event. Used by tests and quiet mode.
@@ -41,6 +58,12 @@ impl<'a, R> ProgressReader<'a, R> {
 
 impl<R: std::io::Read> std::io::Read for ProgressReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.progress.is_cancelled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "interrupted",
+            ));
+        }
         let n = self.inner.read(buf)?;
         if n > 0 {
             self.progress.advance(n as u64);

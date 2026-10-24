@@ -51,7 +51,9 @@ fn row_for(name: &str, item: &std::fs::DirEntry) -> Row {
         name: name.to_string(),
         kind,
         size,
+        packed: None,
         modified,
+        crc32: None,
         key: path.display().to_string(),
         target: Target::Path(path),
     }

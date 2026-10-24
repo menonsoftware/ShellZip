@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 
 use shellzip_core::{Entry, Error, ProgressSink};
@@ -15,6 +15,7 @@ pub struct SharedProgress {
     entry: Mutex<String>,
     done: AtomicU64,
     total: AtomicU64,
+    stop: AtomicBool,
 }
 
 impl SharedProgress {
@@ -25,6 +26,7 @@ impl SharedProgress {
             entry: Mutex::new(String::new()),
             done: AtomicU64::new(0),
             total: AtomicU64::new(0),
+            stop: AtomicBool::new(false),
         }
     }
 
@@ -34,6 +36,12 @@ impl SharedProgress {
         *lock(&self.entry) = String::new();
         self.done.store(0, Ordering::Relaxed);
         self.total.store(0, Ordering::Relaxed);
+        self.stop.store(false, Ordering::Relaxed);
+    }
+
+    /// Ask the running job to stop. The next read returns [`Error::Interrupted`].
+    pub fn request_cancel(&self) {
+        self.stop.store(true, Ordering::Relaxed);
     }
 
     /// Current label, member name, bytes done, and total bytes.
@@ -66,6 +74,10 @@ impl ProgressSink for SharedProgress {
 
     fn message(&self, text: &str) {
         *lock(&self.label) = text.to_string();
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.stop.load(Ordering::Relaxed)
     }
 }
 
@@ -104,6 +116,7 @@ pub fn spawn(tx: Sender<Outcome>, job: impl FnOnce() -> Result<Outcome, Error> +
     std::thread::spawn(move || {
         let outcome = match job() {
             Ok(outcome) => outcome,
+            Err(Error::Interrupted) => Outcome::Finished("cancelled".to_string()),
             Err(err) => Outcome::Failed(err.to_string()),
         };
         let _ = tx.send(outcome);

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use shellzip_core::{
-    CompressOpts, Entry, ExtractOpts, Overwrite, ZipMethod, add, extract, format_bytes, list, test,
+    CompressOpts, Entry, ExtractOpts, add, delete, extract, format_bytes, format_crc, list, test,
 };
 
 use crate::chrome::{self, AddressEvent, MenuCommand, PackSettings, ToolCommand};
@@ -44,7 +44,10 @@ pub struct ShellZipApp {
     busy: bool,
     loaded: bool,
     about: bool,
+    info: Option<String>,
+    pending_delete: Option<Vec<String>>,
     options: PackSettings,
+    saved: PackSettings,
     generation: u64,
     progress: Arc<SharedProgress>,
     tx: Sender<Outcome>,
@@ -52,14 +55,27 @@ pub struct ShellZipApp {
 }
 
 impl ShellZipApp {
-    /// Install image loaders, apply the file-manager theme, and list the desktop.
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    /// Install image loaders, apply the file-manager theme, and list `launch` or the desktop.
+    pub fn new(cc: &eframe::CreationContext<'_>, launch: Option<PathBuf>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
         let (tx, rx) = mpsc::channel();
-        let path = starting_folder();
+        let launch = launch.filter(|path| path.exists());
+        let open_file = launch.as_ref().is_some_and(|path| path.is_file());
+        let path = match &launch {
+            Some(path) if path.is_dir() => path.clone(),
+            Some(path) => path
+                .parent()
+                .filter(|parent| parent.is_dir())
+                .map(Path::to_path_buf)
+                .unwrap_or_else(starting_folder),
+            None => starting_folder(),
+        };
         let generation = 1;
-        spawn_directory(tx.clone(), path.clone(), generation);
+        let options = crate::settings::load();
+        if !open_file {
+            spawn_directory(tx.clone(), path.clone(), generation);
+        }
         let mut app = Self {
             place: Place::Folder {
                 path: path.clone(),
@@ -75,18 +91,19 @@ impl ShellZipApp {
             busy: false,
             loaded: false,
             about: false,
-            options: PackSettings {
-                level: 3,
-                method: ZipMethod::Deflate,
-                overwrite: Overwrite::Never,
-                flat: false,
-            },
+            info: None,
+            pending_delete: None,
+            options,
+            saved: options,
             generation,
             progress: Arc::new(SharedProgress::new()),
             tx,
             rx,
         };
         app.rebuild_view();
+        if let Some(path) = launch.filter(|path| path.is_file()) {
+            app.start_list(path);
+        }
         app
     }
 
@@ -102,7 +119,9 @@ impl ShellZipApp {
         let Some(path) = rfd::FileDialog::new()
             .add_filter(
                 "Archives",
-                &["zip", "tar", "gz", "tgz", "zst", "tzst", "rar", "7z"],
+                &[
+                    "zip", "tar", "gz", "tgz", "zst", "tzst", "rar", "7z", "exe", "sfx",
+                ],
             )
             .pick_file()
         else {
@@ -202,6 +221,13 @@ impl ShellZipApp {
         if files.is_empty() {
             return;
         }
+        self.pack_files(files);
+    }
+
+    fn pack_files(&mut self, files: Vec<PathBuf>) {
+        if self.busy || files.is_empty() {
+            return;
+        }
         let Some(dest) = rfd::FileDialog::new()
             .add_filter("ZIP", &["zip"])
             .add_filter("tar", &["tar"])
@@ -243,6 +269,100 @@ impl ShellZipApp {
                 ))),
             }
         });
+    }
+
+    fn request_delete(&mut self) {
+        if self.busy {
+            return;
+        }
+        let (format, path) = match &self.place {
+            Place::Archive { format, path, .. } => (format.clone(), path.clone()),
+            Place::Folder { .. } => {
+                self.error = Some("Open a ZIP to delete members.".to_string());
+                return;
+            }
+        };
+        if format != "ZIP" {
+            self.error = Some("Delete only rewrites ZIP archives.".to_string());
+            return;
+        }
+        let Some(names) = self.member_filter(&path) else {
+            self.error = Some("Select the members to delete.".to_string());
+            return;
+        };
+        if names.is_empty() {
+            self.error = Some("Select the members to delete.".to_string());
+            return;
+        }
+        self.pending_delete = Some(names);
+    }
+
+    fn run_delete(&mut self) {
+        let Some(names) = self.pending_delete.take() else {
+            return;
+        };
+        let Place::Archive { path, .. } = &self.place else {
+            return;
+        };
+        let archive = path.clone();
+        let generation = self.next_generation();
+        let progress = Arc::clone(&self.progress);
+        self.begin_job();
+        let tx = self.tx.clone();
+        worker::spawn(tx, move || {
+            let report = delete(&archive, &names, progress.as_ref())?;
+            match list(&archive) {
+                Ok((opened, entries)) => Ok(Outcome::Listed {
+                    generation,
+                    path: archive,
+                    format: opened.detected().label(),
+                    entries,
+                }),
+                Err(err) => Ok(Outcome::Finished(format!(
+                    "deleted {} ({err})",
+                    report.removed
+                ))),
+            }
+        });
+    }
+
+    fn show_info(&mut self) {
+        self.info = Some(self.info_text());
+    }
+
+    fn info_text(&self) -> String {
+        let mut lines = Vec::new();
+        match &self.place {
+            Place::Folder { path, .. } => {
+                lines.push(format!("Folder: {}", path.display()));
+            }
+            Place::Archive {
+                path,
+                format,
+                members,
+                ..
+            } => {
+                lines.push(format!("{format}: {}", path.display()));
+                lines.push(format!("{} members", members.len()));
+            }
+        }
+        for row in &self.view {
+            if row.kind == RowKind::Parent || !self.explorer.is_selected(&row.key) {
+                continue;
+            }
+            lines.push(String::new());
+            lines.push(row.name.clone());
+            if let Some(size) = row.size {
+                lines.push(format!("Size: {}", format_bytes(size)));
+            }
+            if let Some(packed) = row.packed {
+                lines.push(format!("Packed: {}", format_bytes(packed)));
+            }
+            if row.crc32.is_some() {
+                lines.push(format!("CRC32: {}", format_crc(row.crc32)));
+            }
+        }
+        lines.join("\n")
     }
 
     fn begin_job(&mut self) {
@@ -517,6 +637,24 @@ impl ShellZipApp {
         }
     }
 
+    fn can_delete(&self) -> bool {
+        if self.busy {
+            return false;
+        }
+        let Place::Archive { format, .. } = &self.place else {
+            return false;
+        };
+        format == "ZIP"
+            && self
+                .view
+                .iter()
+                .any(|row| row.kind != RowKind::Parent && self.explorer.is_selected(&row.key))
+    }
+
+    fn inside_archive(&self) -> bool {
+        matches!(self.place, Place::Archive { .. })
+    }
+
     fn archive_ready(&self) -> bool {
         match &self.place {
             Place::Archive { .. } => true,
@@ -650,6 +788,8 @@ impl ShellZipApp {
             MenuCommand::SelectAll => self.explorer.select_all(&self.view),
             MenuCommand::SelectNone => self.explorer.clear_selection(),
             MenuCommand::About => self.about = true,
+            MenuCommand::Delete => self.request_delete(),
+            MenuCommand::Info => self.show_info(),
             MenuCommand::Exit => {}
         }
     }
@@ -659,7 +799,8 @@ impl ShellZipApp {
             ToolCommand::Add => self.create_archive(),
             ToolCommand::Extract => self.extract_archive(),
             ToolCommand::Test => self.test_archive(),
-            ToolCommand::Open => self.open_archive(),
+            ToolCommand::Delete => self.request_delete(),
+            ToolCommand::Info => self.show_info(),
         }
     }
 
@@ -703,17 +844,28 @@ impl ShellZipApp {
                 .filter_map(|file| file.path.clone())
                 .collect()
         });
-        let Some(path) = dropped.into_iter().next() else {
+        if dropped.is_empty() {
             return;
-        };
-        if path.is_dir() {
-            self.open_folder(path);
-        } else if is_supported_archive(&path) {
-            self.start_list(path);
-        } else {
-            self.error = Some(format!("{} is not a supported archive", path.display()));
         }
+        if dropped.len() == 1 {
+            let path = &dropped[0];
+            if path.is_dir() {
+                self.open_folder(path.clone());
+                return;
+            }
+            if is_supported_archive(path) || is_sfx_name(path) {
+                self.start_list(path.clone());
+                return;
+            }
+        }
+        self.pack_files(dropped);
     }
+}
+
+fn is_sfx_name(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("sfx"))
 }
 
 impl eframe::App for ShellZipApp {
@@ -739,12 +891,13 @@ impl eframe::App for ShellZipApp {
         }
 
         let archive_ready = self.archive_ready();
+        let can_delete = self.can_delete();
         let busy = self.busy;
         let mut tool_command = None;
         egui::TopBottomPanel::top("toolbar")
             .frame(chrome::bar_frame(6, 2))
             .show(ctx, |ui| {
-                tool_command = chrome::toolbar(ui, busy, archive_ready);
+                tool_command = chrome::toolbar(ui, busy, archive_ready, can_delete);
             });
         if let Some(command) = tool_command {
             self.on_tool(command);
@@ -763,14 +916,28 @@ impl eframe::App for ShellZipApp {
             self.on_address(event);
         }
 
+        let jump_list = self.address_jumps();
+        let mut crumb = None;
+        egui::TopBottomPanel::top("crumbs")
+            .frame(chrome::bar_frame(8, 2))
+            .show_animated(ctx, self.inside_archive(), |ui| {
+                crumb = chrome::breadcrumbs(ui, &jump_list);
+            });
+        if let Some(event) = crumb {
+            self.on_address(event);
+        }
+
         let summary = self.summary();
         let note = self.note().to_string();
         let progress = self.progress.snapshot();
-        let mut dismiss_error = false;
+        let mut status_event = chrome::StatusEvent {
+            dismiss_error: false,
+            cancel: false,
+        };
         egui::TopBottomPanel::bottom("status")
             .frame(chrome::bar_frame(10, 4))
             .show(ctx, |ui| {
-                dismiss_error = chrome::status_bar(
+                status_event = chrome::status_bar(
                     ui,
                     &summary,
                     self.busy,
@@ -779,8 +946,12 @@ impl eframe::App for ShellZipApp {
                     &note,
                 );
             });
-        if dismiss_error {
+        if status_event.dismiss_error {
             self.error = None;
+        }
+        if status_event.cancel {
+            self.progress.request_cancel();
+            self.status = "Cancelling...".to_string();
         }
 
         egui::CentralPanel::default()
@@ -797,6 +968,21 @@ impl eframe::App for ShellZipApp {
             });
 
         chrome::about(ctx, &mut self.about);
+        chrome::info_window(ctx, &mut self.info);
+        let mut delete_count = self.pending_delete.as_ref().map(Vec::len);
+        if chrome::confirm_delete(ctx, &mut delete_count) {
+            self.run_delete();
+        } else if delete_count.is_none() {
+            self.pending_delete = None;
+        }
+        if self.options != self.saved {
+            if let Err(err) = crate::settings::save(&self.options)
+                && self.error.is_none()
+            {
+                self.error = Some(err);
+            }
+            self.saved = self.options;
+        }
         if !submitted {
             self.shortcuts(ctx);
         }

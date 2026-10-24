@@ -8,10 +8,19 @@ mod app;
 mod chrome;
 mod explorer;
 mod icons;
+mod settings;
 mod theme;
 mod worker;
 
 fn main() {
+    let launch = std::env::args()
+        .nth(1)
+        .map(std::path::PathBuf::from)
+        .filter(|path| {
+            path.as_os_str()
+                .to_str()
+                .is_none_or(|text| !text.starts_with('-'))
+        });
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1080.0, 720.0])
@@ -22,7 +31,7 @@ fn main() {
     if let Err(err) = eframe::run_native(
         "ShellZip",
         options,
-        Box::new(|cc| Ok(Box::new(app::ShellZipApp::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(app::ShellZipApp::new(cc, launch)))),
     ) {
         anstream_fallback(&err);
         std::process::exit(1);

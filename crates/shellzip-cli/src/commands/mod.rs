@@ -5,6 +5,7 @@ mod delete;
 mod extract;
 mod list;
 mod print;
+mod sfx;
 mod test;
 
 pub use add::add;
@@ -12,6 +13,7 @@ pub use delete::delete;
 pub use extract::extract;
 pub use list::{list, list_technical};
 pub use print::print_entry;
+pub use sfx::sfx;
 pub use test::test;
 
 use shellzip_core::{Password, ProgressSink};

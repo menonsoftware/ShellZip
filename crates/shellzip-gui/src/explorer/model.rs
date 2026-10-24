@@ -22,6 +22,10 @@ pub enum SortColumn {
     Type,
     /// Modification time.
     Modified,
+    /// Compressed size.
+    Packed,
+    /// CRC32.
+    Crc,
 }
 
 /// Header click direction.
@@ -71,8 +75,12 @@ pub struct Row {
     pub kind: RowKind,
     /// Byte size. Folders leave this empty.
     pub size: Option<u64>,
+    /// Compressed size, when the archive records one.
+    pub packed: Option<u64>,
     /// Modification time, when known.
     pub modified: Option<SystemTime>,
+    /// CRC32 of a file payload, when the archive records one.
+    pub crc32: Option<u32>,
     /// Type column.
     pub type_label: String,
     /// Selection identity.
@@ -88,7 +96,9 @@ impl Row {
             name: "..".to_string(),
             kind: RowKind::Parent,
             size: None,
+            packed: None,
             modified: None,
+            crc32: None,
             type_label: "File folder".to_string(),
             key: PARENT_KEY.to_string(),
             target: Target::Parent,
@@ -323,7 +333,9 @@ struct Partial {
     name: String,
     kind: RowKind,
     size: Option<u64>,
+    packed: Option<u64>,
     modified: Option<SystemTime>,
+    crc32: Option<u32>,
     archive_path: String,
 }
 
@@ -333,6 +345,8 @@ impl Partial {
         if directory {
             self.kind = RowKind::Directory;
             self.size = None;
+            self.packed = None;
+            self.crc32 = None;
             if other.modified.is_some() {
                 self.modified = other.modified;
             }
@@ -344,6 +358,12 @@ impl Partial {
         self.kind = other.kind;
         if other.size.is_some() {
             self.size = other.size;
+        }
+        if other.packed.is_some() {
+            self.packed = other.packed;
+        }
+        if other.crc32.is_some() {
+            self.crc32 = other.crc32;
         }
         if other.modified.is_some() {
             self.modified = other.modified;
@@ -362,7 +382,9 @@ impl Partial {
             name: self.name,
             kind: self.kind,
             size: self.size,
+            packed: self.packed,
             modified: self.modified,
+            crc32: self.crc32,
             type_label,
             key: self.archive_path,
             target,
@@ -416,7 +438,9 @@ fn dir_partial(name: &str, archive_path: String, modified: Option<SystemTime>) -
         name: name.to_string(),
         kind: RowKind::Directory,
         size: None,
+        packed: None,
         modified,
+        crc32: None,
         archive_path,
     }
 }
@@ -437,7 +461,9 @@ fn file_partial(name: &str, archive_path: String, entry: &Entry) -> Partial {
         name: name.to_string(),
         kind,
         size: entry.size,
+        packed: entry.packed_size,
         modified: entry.modified,
+        crc32: entry.crc32,
         archive_path,
     }
 }
@@ -493,6 +519,8 @@ fn compare_column(left: &Row, right: &Row, column: SortColumn) -> Ordering {
         SortColumn::Size => compare_option(left.size, right.size),
         SortColumn::Type => compare_name(&left.type_label, &right.type_label),
         SortColumn::Modified => compare_option(left.modified, right.modified),
+        SortColumn::Packed => compare_option(left.packed, right.packed),
+        SortColumn::Crc => compare_option(left.crc32, right.crc32),
     }
 }
 
@@ -582,7 +610,9 @@ mod tests {
             name: name.to_string(),
             kind,
             size,
+            packed: None,
             modified: None,
+            crc32: None,
             type_label: String::new(),
             key: name.to_string(),
             target: Target::Parent,

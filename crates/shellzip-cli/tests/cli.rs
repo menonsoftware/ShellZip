@@ -441,3 +441,92 @@ fn rar_and_7z_are_not_created() {
             .stderr(contains("not"));
     }
 }
+
+#[test]
+fn sfx_wrap_list_test_extract_and_unwrap() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("hello.txt");
+    fs::write(&src, b"hello-sfx").unwrap();
+    let zip = tmp.path().join("notes.zip");
+    szip()
+        .args(["a", "-m", "0", zip.to_str().unwrap(), src.to_str().unwrap()])
+        .assert()
+        .success();
+    let stub = tmp.path().join("stub.bin");
+    fs::write(&stub, b"MZ-test-stub").unwrap();
+    let sfx = tmp.path().join("notes.exe");
+    szip()
+        .args([
+            "s",
+            "--sfx-stub",
+            stub.to_str().unwrap(),
+            zip.to_str().unwrap(),
+            "-o",
+            sfx.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("created"));
+    szip()
+        .args(["l", sfx.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("hello.txt"));
+    szip()
+        .args(["t", sfx.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("OK"));
+    let out = tmp.path().join("out");
+    szip()
+        .args([
+            "x",
+            "-y",
+            "-o",
+            out.to_str().unwrap(),
+            sfx.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read(out.join("hello.txt")).unwrap(), b"hello-sfx");
+    let back = tmp.path().join("back.zip");
+    szip()
+        .args(["s", sfx.to_str().unwrap(), "-o", back.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("extracted"));
+    szip()
+        .args(["l", back.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("hello.txt"));
+}
+
+#[test]
+fn add_sfx_writes_a_listable_package() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("note.txt");
+    fs::write(&src, b"note").unwrap();
+    let stub = tmp.path().join("stub.bin");
+    fs::write(&stub, b"MZ-stub").unwrap();
+    let dest = tmp.path().join("pack.exe");
+    szip()
+        .args([
+            "a",
+            "-m",
+            "0",
+            "--sfx",
+            "--sfx-stub",
+            stub.to_str().unwrap(),
+            dest.to_str().unwrap(),
+            src.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("created"));
+    szip()
+        .args(["l", dest.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("note.txt"));
+}
