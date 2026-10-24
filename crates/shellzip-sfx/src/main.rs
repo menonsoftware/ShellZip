@@ -1,7 +1,8 @@
 //! `shellzip-sfx` — extract the ZIP appended to this executable.
 //!
 //! Switches: `-s` silent, `-y` replace existing files, `-d <dir>` destination.
-//! Without a console on Windows, questions and the password are dialogs.
+//! Without a console on Windows, a setup window chooses the folder and a
+//! password dialog unlocks an encrypted archive.
 
 #![cfg_attr(all(not(test), target_os = "windows"), windows_subsystem = "windows")]
 
@@ -13,6 +14,7 @@ use shellzip_core::{
 };
 
 mod prompt;
+mod setup;
 
 use prompt::Choice;
 
@@ -45,6 +47,10 @@ fn run() -> Result<i32, Error> {
     let dest = args.dest.unwrap_or(
         std::env::current_dir().map_err(|err| Error::io("find the working directory", err))?,
     );
+    #[cfg(windows)]
+    if gui && !args.silent {
+        return setup::run(&exe, &dest, env_password()?);
+    }
     if !args.silent && !args.yes && prompt::can_ask(gui) {
         let start = prompt::ask(&format!("Extract to {}?", dest.display()), gui, false)?;
         if !matches!(start, Choice::Yes) {
@@ -211,7 +217,8 @@ shellzip-sfx — extract the ZIP stored in this executable
   -d, --dest DIR   extract into DIR (default: the working directory)
   -h, --help       show this help
 
-An encrypted ZIP asks for a password before extracting.
+Opening the file from Explorer shows a window to choose the folder.
+An encrypted archive asks for a password when you press Extract.
 -s reads SZIP_PASSWORD and does not ask."
     );
 }

@@ -96,9 +96,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/crypto.rs": {
-    "mtime": 1792838899.9157503,
-    "seen": 1792841017.3679655,
-    "ast_hash": "38e6daee10a857114b86e2a1cbb58497",
+    "mtime": 1792856414.6131296,
+    "seen": 1792856528.6743062,
+    "ast_hash": "763b85d7681e251c0b926de6bc8e2854",
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/detect.rs": {
@@ -528,15 +528,15 @@
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/src/main.rs": {
-    "mtime": 1792855466.7635348,
-    "seen": 1792855799.4732733,
-    "ast_hash": "9ac63fb9bee563cc51e96ac5c977dbde",
+    "mtime": 1792856427.8576267,
+    "seen": 1792856528.6743367,
+    "ast_hash": "b0ca16d986dda153d48db018616a1269",
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/src/prompt.rs": {
-    "mtime": 1792855748.6420736,
-    "seen": 1792855799.473275,
-    "ast_hash": "df10d657d796877bace96c6fcc53cdca",
+    "mtime": 1792856424.9447787,
+    "seen": 1792856528.6743376,
+    "ast_hash": "511390d6ea79c47b2aa9ccd6106df519",
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/tests/extract.rs": {
