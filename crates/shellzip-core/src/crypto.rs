@@ -24,13 +24,17 @@ pub struct Password(String);
 impl Password {
     /// Take ownership of `value`.
     ///
+    /// A rejected value is wiped before the error is returned. The stored
+    /// password is wiped again when this value is dropped.
+    ///
     /// # Errors
     ///
     /// Returns [`crate::Error::Usage`] when `value` contains a NUL byte.
     /// The RAR binding rejects those, and a NUL is not a useful password.
     pub fn new(value: impl Into<String>) -> crate::Result<Self> {
-        let value = value.into();
+        let mut value = value.into();
         if value.as_bytes().contains(&0) {
+            value.zeroize();
             return Err(crate::Error::Usage(
                 "password cannot contain a NUL byte".to_string(),
             ));
