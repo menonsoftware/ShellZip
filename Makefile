@@ -1,5 +1,6 @@
 # ShellZip — cargo wrappers for the workspace.
 #   make              debug build
+#   make release      CLI + GUI + size-optimized SFX
 #   make run ARGS="l archive.zip"
 #   make gui
 #   make ci
@@ -19,6 +20,7 @@ PKG_SFX := shellzip-sfx
 BIN_SFX := shellzip-sfx
 
 .PHONY: all build release build-cli build-gui build-core \
+	release-cli release-gui release-sfx \
 	run run-release gui gui-release \
 	test test-cli test-core test-sfx build-sfx \
 	check clippy lint fmt fmt-check doc \
@@ -29,8 +31,16 @@ all: build
 build:
 	$(CARGO) build --workspace $(CARGO_FLAGS)
 
-release:
-	$(CARGO) build --workspace --release $(CARGO_FLAGS)
+# CLI + desktop + size-optimized SFX stub (minisize, not --release).
+release: release-cli release-gui release-sfx
+
+release-cli:
+	$(CARGO) build --release -p $(PKG_CLI) $(CARGO_FLAGS)
+
+release-gui:
+	$(CARGO) build --release -p $(PKG_GUI) $(CARGO_FLAGS)
+
+release-sfx: build-sfx
 
 build-cli:
 	$(CARGO) build -p $(PKG_CLI) $(CARGO_FLAGS)
@@ -106,7 +116,10 @@ bench:
 help:
 	@echo ShellZip Makefile
 	@echo   make / make build     Debug workspace build
-	@echo   make release          Release workspace build
+	@echo   make release          Release CLI, GUI, and size-optimized SFX
+	@echo   make release-cli      Release build of szip
+	@echo   make release-gui      Release build of the desktop app
+	@echo   make release-sfx      Size-optimized SFX stub
 	@echo   make build-cli        Build szip only
 	@echo   make build-gui        Build the desktop app
 	@echo   make build-sfx        Build the size-optimized SFX stub
