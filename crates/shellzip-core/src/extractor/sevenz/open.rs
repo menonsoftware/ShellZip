@@ -38,9 +38,11 @@ pub(crate) fn open_streaming(
     }
 }
 
-/// `zesven` reports a wrong password on an encrypted header as LZMA2 input
-/// corruption. The coder list of that header is not encrypted, so an AES method
-/// id there means the failure is the password.
+/// `zesven` reports a wrong password on an encrypted header as a decoder
+/// failure. An empty password can come back as LZMA input (`first byte is 0`);
+/// a wrong one can come back as a short decoded header. The coder list in front
+/// of that header is not encrypted, so an AES method id there means the
+/// failure is the password.
 fn explain_open(path: &Path, err: zesven::Error, had_password: bool) -> Error {
     if decoder_rejected(&err) && header_uses_aes(path) {
         return if had_password {
@@ -53,11 +55,21 @@ fn explain_open(path: &Path, err: zesven::Error, had_password: bool) -> Error {
 }
 
 fn decoder_rejected(err: &zesven::Error) -> bool {
-    let zesven::Error::Io(source) = err else {
-        return false;
-    };
-    let text = source.to_string().to_ascii_lowercase();
-    text.contains("corrupt") || text.contains("lzma")
+    match err {
+        zesven::Error::CorruptHeader { .. } | zesven::Error::CrcMismatch { .. } => true,
+        zesven::Error::Io(source) => {
+            matches!(
+                source.kind(),
+                std::io::ErrorKind::InvalidInput
+                    | std::io::ErrorKind::InvalidData
+                    | std::io::ErrorKind::UnexpectedEof
+            ) || {
+                let text = source.to_string().to_ascii_lowercase();
+                text.contains("corrupt") || text.contains("lzma")
+            }
+        }
+        _ => false,
+    }
 }
 
 /// AES-256 method id, stored in the clear in front of an encrypted header.

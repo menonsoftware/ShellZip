@@ -7,8 +7,8 @@ use std::fs;
 use std::path::Path;
 
 use shellzip_core::{
-    CompressOpts, ExtractOpts, ListOpts, NopProgress, Overwrite, Password, add, extract, list,
-    list_with,
+    CompressOpts, ExtractOpts, ListOpts, NopProgress, Overwrite, Password, SevenZOpts, add,
+    extract, list, list_with,
 };
 use zesven::codec::CodecMethod;
 use zesven::write::WriteOptions;
@@ -183,6 +183,40 @@ fn aes_hides_bytes_and_header_encryption_hides_names() {
     assert_eq!(fs::read(out.path().join("hello.txt")).unwrap(), b"hello\n");
 }
 
+/// Each archive draws a fresh nonce. A missing or wrong password must stay
+/// exit 11 for every one of them, not a decoder error on some ciphertexts.
+#[test]
+fn header_encryption_is_a_password_error_for_every_nonce() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("hello.txt");
+    fs::write(&src, b"hello\n").unwrap();
+    let opts = CompressOpts {
+        level: 1,
+        threads: 1,
+        password: Some(password()),
+        sevenz: SevenZOpts {
+            encrypt_headers: true,
+            ..SevenZOpts::default()
+        },
+        ..CompressOpts::default()
+    };
+    for n in 0..12 {
+        let dest = tmp.path().join(format!("secret-{n}.7z"));
+        add(&dest, std::slice::from_ref(&src), &opts, &NopProgress).unwrap();
+        let missing = list(&dest).unwrap_err();
+        assert_eq!(missing.exit_code(), 11, "archive {n}: {missing}");
+        let wrong = list_with(
+            &dest,
+            &ListOpts {
+                password: Some(Password::new("wrong-fixture").unwrap()),
+                ..ListOpts::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(wrong.exit_code(), 11, "archive {n} wrong password: {wrong}");
+    }
+}
+
 #[test]
 fn committed_sevenz_fixtures_list_when_present() {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/sevenz");
@@ -251,4 +285,101 @@ fn bzip2_and_deflate_round_trip() {
         let out = extract_bytes(&archive, None);
         assert_eq!(fs::read(out.path().join("hello.txt")).unwrap(), b"hello\n");
     }
+}
+
+fn fast() -> CompressOpts {
+    CompressOpts {
+        level: 1,
+        threads: 1,
+        ..CompressOpts::default()
+    }
+}
+
+/// Directories whose names sort after a file in a sibling folder, plus mixed case.
+///
+/// `VMWARE/Worker1` is stored before `VMWARE/CP1/vmware-0.log`, and `a.txt`
+/// before `B.txt`. Byte order is the other way around, which is what zesven's
+/// deterministic check used to reject.
+fn vmware_tree(parent: &Path) -> std::path::PathBuf {
+    let root = parent.join("VMWARE");
+    fs::create_dir_all(root.join("Worker1")).unwrap();
+    fs::create_dir_all(root.join("CP1")).unwrap();
+    fs::create_dir_all(root.join("empty")).unwrap();
+    fs::write(root.join("Worker1").join("x.txt"), b"worker").unwrap();
+    fs::write(root.join("CP1").join("vmware-0.log"), b"log-bytes").unwrap();
+    fs::write(root.join("B.txt"), b"upper").unwrap();
+    fs::write(root.join("a.txt"), b"lower").unwrap();
+    fs::write(root.join("文档.txt"), "你好").unwrap();
+    root
+}
+
+#[test]
+fn nested_folder_adds_in_planner_order() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = vmware_tree(tmp.path());
+    let dest = tmp.path().join("vmware.7z");
+    add(&dest, &[root], &fast(), &NopProgress).unwrap();
+    let (_opened, entries) = list(&dest).unwrap();
+    let paths: Vec<&str> = entries.iter().map(|entry| entry.path.as_str()).collect();
+    assert!(
+        paths.iter().any(|path| path.ends_with("vmware-0.log")),
+        "{paths:?}"
+    );
+    assert!(
+        paths.iter().any(|path| path.ends_with("文档.txt")),
+        "{paths:?}"
+    );
+    let out = extract_bytes(&dest, None);
+    assert_eq!(
+        fs::read(out.path().join("VMWARE").join("Worker1").join("x.txt")).unwrap(),
+        b"worker"
+    );
+    assert_eq!(
+        fs::read(out.path().join("VMWARE").join("CP1").join("vmware-0.log")).unwrap(),
+        b"log-bytes"
+    );
+    assert_eq!(
+        fs::read(out.path().join("VMWARE").join("B.txt")).unwrap(),
+        b"upper"
+    );
+    assert_eq!(
+        fs::read(out.path().join("VMWARE").join("a.txt")).unwrap(),
+        b"lower"
+    );
+    assert_eq!(
+        fs::read(out.path().join("VMWARE").join("文档.txt")).unwrap(),
+        "你好".as_bytes()
+    );
+    assert!(out.path().join("VMWARE").join("empty").is_dir());
+}
+
+#[test]
+fn update_adds_a_name_that_sorts_before_kept_members() {
+    let tmp = tempfile::tempdir().unwrap();
+    let zeta = tmp.path().join("zeta.txt");
+    fs::write(&zeta, b"zeta").unwrap();
+    let dest = tmp.path().join("notes.7z");
+    add(&dest, &[zeta], &fast(), &NopProgress).unwrap();
+    let alpha = tmp.path().join("alpha.txt");
+    fs::write(&alpha, b"alpha").unwrap();
+    add(&dest, &[alpha], &fast(), &NopProgress).unwrap();
+    let out = extract_bytes(&dest, None);
+    assert_eq!(fs::read(out.path().join("zeta.txt")).unwrap(), b"zeta");
+    assert_eq!(fs::read(out.path().join("alpha.txt")).unwrap(), b"alpha");
+}
+
+#[test]
+fn same_tree_gives_identical_7z_bytes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = vmware_tree(tmp.path());
+    let opts = fast();
+    let first = tmp.path().join("a.7z");
+    let second = tmp.path().join("b.7z");
+    add(&first, std::slice::from_ref(&root), &opts, &NopProgress).unwrap();
+    add(&second, std::slice::from_ref(&root), &opts, &NopProgress).unwrap();
+    assert_eq!(
+        fs::read(&first).unwrap(),
+        fs::read(&second).unwrap(),
+        "two packs of the same tree differed"
+    );
 }

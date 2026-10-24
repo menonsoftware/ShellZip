@@ -26,12 +26,18 @@ pub(super) fn write_options(opts: &CompressOpts) -> Result<WriteOptions, Error> 
     } else {
         codec_method(opts.sevenz.method)?
     };
+    // Not `.deterministic(true)`. zesven only uses that flag to reject any
+    // entry whose path is not byte-wise after the previous one, and it does
+    // not sort. The planner orders directories first and then by extension
+    // (`fs::walk::sort_key`), which is what groups similar files for solid
+    // compression, and an update writes kept members before the new ones.
+    // Either order fails that check. Reproducibility comes from the planner's
+    // stable sort, not from the flag.
     let mut options = WriteOptions::new()
         .method(method)
         .level_clamped(opts.sevenz_level())
         .threads(Threads::count_or_single(opts.thread_count()))
-        .memory_limit(MemoryLimit::Auto)
-        .deterministic(true);
+        .memory_limit(MemoryLimit::Auto);
     if opts.sevenz.solid && opts.level > 0 {
         options = options.solid();
     }
