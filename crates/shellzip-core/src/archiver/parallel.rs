@@ -1,13 +1,15 @@
 //! Parallel ZIP compression.
 //!
 //! Each worker compresses one entry into its own zip piece (in memory under
-//! 1 MiB, otherwise a temporary file). The main thread merges those pieces in
-//! input order with `ZipWriter::raw_copy_file`, so the archive layout matches
-//! the single-thread writer. At most `--threads` pieces exist at once.
+//! 1 MiB, otherwise a temporary file kept open until that piece is merged).
+//! The main thread merges those pieces in input order with `ZipWriter::raw_copy_file`,
+//! so the archive layout matches the single-thread writer. At most `--threads`
+//! pieces exist at once.
 
-use std::fs::File;
-use std::io::{BufWriter, Cursor, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Cursor, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use rayon::prelude::*;
 use zip::ZipWriter;
@@ -22,15 +24,22 @@ use crate::progress::{ProgressReader, ProgressSink};
 
 const MEMORY_LIMIT: u64 = 1024 * 1024;
 
+struct Spilled {
+    file: File,
+    path: PathBuf,
+}
+
 enum Piece {
     Memory(Vec<u8>),
-    Temp(PathBuf),
+    Temp(Spilled),
 }
 
 impl Drop for Piece {
     fn drop(&mut self) {
-        if let Self::Temp(path) = self {
-            let _ = std::fs::remove_file(path);
+        if let Self::Temp(spilled) = self {
+            // Unlink while `file` is still open. Closing first lets a scanner
+            // remove the temp zip, and the merge then fails with os error 2.
+            let _ = std::fs::remove_file(&spilled.path);
         }
     }
 }
@@ -85,10 +94,10 @@ pub(crate) fn add_zip(
                     archiver.add_symlink(Path::new(&item.rel), Path::new(target), &item.meta)?;
                 }
                 EntryKind::File => {
-                    let piece = piece.ok_or_else(|| {
+                    let mut piece = piece.ok_or_else(|| {
                         Error::Archive(format!("missing compressed piece for `{}`", item.rel))
                     })?;
-                    merge(&mut archiver, &piece)?;
+                    merge(&mut archiver, &mut piece)?;
                 }
                 EntryKind::Other => {}
             }
@@ -100,13 +109,15 @@ pub(crate) fn add_zip(
     super::ArchiveWriter::finish(Box::new(archiver))
 }
 
-fn merge(archiver: &mut ZipArchiver, piece: &Piece) -> Result<(), Error> {
+fn merge(archiver: &mut ZipArchiver, piece: &mut Piece) -> Result<(), Error> {
     match piece {
         Piece::Memory(bytes) => archiver.merge_compressed(Cursor::new(bytes.as_slice())),
-        Piece::Temp(path) => {
-            let file = File::open(path)
-                .map_err(|err| Error::io(format!("open {}", path.display()), err))?;
-            archiver.merge_compressed(file)
+        Piece::Temp(spilled) => {
+            spilled
+                .file
+                .seek(SeekFrom::Start(0))
+                .map_err(|err| Error::io(format!("rewind {}", spilled.path.display()), err))?;
+            archiver.merge_compressed(&mut spilled.file)
         }
     }
 }
@@ -141,8 +152,12 @@ fn compress_file(
         return Ok(Piece::Memory(cursor.into_inner()));
     }
     let path = piece_path(&item.rel);
-    let outcome = (|| {
-        let out = File::create(&path)
+    let built = (|| -> Result<File, Error> {
+        let out = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
             .map_err(|err| Error::io(format!("create {}", path.display()), err))?;
         let mut writer = ZipWriter::new(BufWriter::new(out));
         writer.start_file(name, options)?;
@@ -151,26 +166,94 @@ fn compress_file(
         inner
             .flush()
             .map_err(|err| Error::io(format!("flush {}", path.display()), err))?;
-        Ok(Piece::Temp(path.clone()))
+        let mut file = inner
+            .into_inner()
+            .map_err(|err| Error::io(format!("flush {}", path.display()), err.into_error()))?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|err| Error::io(format!("rewind {}", path.display()), err))?;
+        Ok(file)
     })();
-    if outcome.is_err() {
-        let _ = std::fs::remove_file(&path);
+    match built {
+        Ok(file) => Ok(Piece::Temp(Spilled { file, path })),
+        Err(err) => {
+            let _ = std::fs::remove_file(&path);
+            Err(err)
+        }
     }
-    outcome
 }
 
 fn piece_path(rel: &str) -> PathBuf {
-    let slug: String = rel
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let mapped: String = rel
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-        .take(40)
         .collect();
+    // The tail, not the shared folder prefix. `take(40)` made every file under
+    // `drivers/M2V0D17D/Packages/Drivers/Display…` use one slug.
+    let start = mapped.len().saturating_sub(40);
+    let slug = &mapped[start..];
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
     std::env::temp_dir().join(format!(
-        "szip-piece-{}-{}-{slug}.zip",
+        "szip-piece-{}-{nanos}-{id}-{slug}.zip",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or(0)
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::zip::ZipArchiver;
+    use super::{ArchiveWriter, Piece, compress_file, merge};
+    use crate::entry::{EntryKind, EntryMeta};
+    use crate::fs::walk::Planned;
+    use crate::options::CompressOpts;
+    use crate::progress::NopProgress;
+
+    #[test]
+    fn spilled_piece_survives_removal_of_its_temp_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("nvlddmkm.sys");
+        let mut bytes = vec![0u8; 1024 * 1024];
+        bytes[0] = b'D';
+        std::fs::write(&source, &bytes).unwrap();
+        let item = Planned {
+            source: Some(source),
+            rel: "drivers/M2V0D17D/Packages/Drivers/Display.Driver/nvlddmkm.sys".into(),
+            kind: EntryKind::File,
+            meta: EntryMeta {
+                size: bytes.len() as u64,
+                modified: None,
+                mode: 0o644,
+                size_known: true,
+            },
+            link_target: None,
+        };
+        let opts = CompressOpts {
+            level: 0,
+            ..CompressOpts::default()
+        };
+        let mut piece = compress_file(&item, &opts, &NopProgress).unwrap();
+        let Piece::Temp(spilled) = &piece else {
+            panic!("a 1 MiB file should spill to a temp piece");
+        };
+        std::fs::remove_file(&spilled.path).unwrap();
+        let dest = tmp.path().join("out.zip");
+        let mut archiver = ZipArchiver::create(&dest, &opts).unwrap();
+        merge(&mut archiver, &mut piece).unwrap();
+        ArchiveWriter::finish(Box::new(archiver)).unwrap();
+
+        let out = tmp.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        let mut extract_opts = crate::ExtractOpts::new(&out);
+        extract_opts.overwrite = crate::Overwrite::Always;
+        crate::extract(&dest, &extract_opts, None, &NopProgress).unwrap();
+        let restored = std::fs::read(
+            out.join("drivers/M2V0D17D/Packages/Drivers/Display.Driver/nvlddmkm.sys"),
+        )
+        .unwrap();
+        assert_eq!(restored, bytes);
+    }
 }
