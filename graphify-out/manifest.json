@@ -438,9 +438,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/archiver/parallel.rs": {
-    "mtime": 1792847667.9759843,
-    "seen": 1792848507.9507387,
-    "ast_hash": "052ce538b4e388dbcfc8964a06ed4c30",
+    "mtime": 1792870446.183405,
+    "seen": 1792870460.5770314,
+    "ast_hash": "89c2e3b8dca5df11989ce494b66eb12d",
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/archiver/zstd_tune.rs": {
@@ -618,9 +618,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-core/tests/folder_formats.rs": {
-    "mtime": 1792867915.737978,
-    "seen": 1792868002.5255826,
-    "ast_hash": "2393b291462a4b2296e12ae22fcbb480",
+    "mtime": 1792870446.2614067,
+    "seen": 1792870460.577091,
+    "ast_hash": "cb9601324b8b4a4ed43b83e0566d6fac",
     "semantic_hash": ""
   }
 }

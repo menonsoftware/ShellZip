@@ -606,15 +606,15 @@
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/extractor/sevenz/open.rs": {
-    "mtime": 1792863609.8731048,
-    "seen": 1792863951.1750042,
-    "ast_hash": "a0f3c0920aa0617d9c0af5e23b68797c",
+    "mtime": 1792868518.5528443,
+    "seen": 1792868566.1219964,
+    "ast_hash": "a6583341aa5de1a7e2df4186894083dc",
     "semantic_hash": ""
   },
   "crates/shellzip-core/tests/sevenz.rs": {
-    "mtime": 1792867942.8547814,
-    "seen": 1792868002.5255895,
-    "ast_hash": "0457df204f4f3c500653673ba987978a",
+    "mtime": 1792868522.9234686,
+    "seen": 1792868566.1220107,
+    "ast_hash": "0a3b20aa9bb33227d40915556cc63fc0",
     "semantic_hash": ""
   },
   "crates/shellzip-core/tests/folder_formats.rs": {

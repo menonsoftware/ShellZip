@@ -19,7 +19,7 @@ struct Case {
 }
 
 fn cases() -> Vec<Case> {
-    let mut cases = vec![
+    vec![
         Case {
             label: "zip",
             ext: "zip",
@@ -62,15 +62,14 @@ fn cases() -> Vec<Case> {
             threads: 1,
             can_update: false,
         },
-    ];
-    #[cfg(feature = "sevenz")]
-    cases.push(Case {
-        label: "7z",
-        ext: "7z",
-        threads: 1,
-        can_update: true,
-    });
-    cases
+        #[cfg(feature = "sevenz")]
+        Case {
+            label: "7z",
+            ext: "7z",
+            threads: 1,
+            can_update: true,
+        },
+    ]
 }
 
 fn opts(threads: u16) -> CompressOpts {
@@ -180,6 +179,39 @@ fn nested_folder_round_trips_every_writable_format() {
         let out = tmp.path().join("out");
         extract_all(&archive, &out);
         assert_tree(case.label, &out);
+    }
+}
+
+#[test]
+fn parallel_zip_round_trips_a_folder_of_spilled_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("drivers");
+    let dir = root.join("M2V0D17D").join("Packages").join("Drivers");
+    fs::create_dir_all(dir.join("empty")).unwrap();
+    fs::write(dir.join("note.txt"), b"small").unwrap();
+    let names = [
+        "Display.A.bin",
+        "Display.B.bin",
+        "Display.C.bin",
+        "Display.D.bin",
+    ];
+    for (index, name) in names.iter().enumerate() {
+        let mut bytes = vec![0u8; 1024 * 1024];
+        bytes[0] = b'A' + u8::try_from(index).unwrap();
+        fs::write(dir.join(name), &bytes).unwrap();
+    }
+    let archive = tmp.path().join("drivers.zip");
+    add(&archive, &[root], &opts(4), &NopProgress).unwrap_or_else(|err| panic!("zip: {err}"));
+    let out = tmp.path().join("out");
+    extract_all(&archive, &out);
+    let stored = out.join("drivers/M2V0D17D/Packages/Drivers");
+    assert_eq!(fs::read(stored.join("note.txt")).unwrap(), b"small");
+    assert!(stored.join("empty").is_dir());
+    for (index, name) in names.iter().enumerate() {
+        let data = fs::read(stored.join(name)).unwrap();
+        assert_eq!(data.len(), 1024 * 1024, "{name}");
+        assert_eq!(data[0], b'A' + u8::try_from(index).unwrap(), "{name}");
+        assert!(data[1..].iter().all(|byte| *byte == 0), "{name}");
     }
 }
 
