@@ -14,6 +14,10 @@ pub fn extract(args: &ExtractArgs, flat: bool, shared: &Shared) -> Result<i32, E
     opts.overwrite = overwrite_mode(args)?;
     opts.flat = flat;
     opts.keep_broken = args.keep_broken;
+    opts.skip_encrypted = args.skip_encrypted;
+    opts.allow_unsafe_links = args.allow_unsafe_links;
+    opts.mark_of_the_web = args.mark_of_the_web;
+    opts.password = shared.password.clone();
     opts.includes = args.include.clone();
     if !args.files.is_empty() {
         opts.exact_paths = Some(args.files.clone());

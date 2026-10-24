@@ -43,8 +43,12 @@ pub struct Entry {
     pub blake2sp: Option<[u8; 32]>,
     /// Symlink target as stored.
     pub link_target: Option<String>,
-    /// The member is encrypted. This build can list it but not unpack it.
+    /// The member payload is encrypted.
     pub encrypted: bool,
+    /// The member shares a compression block with its neighbours (RAR solid, 7z solid).
+    pub solid: bool,
+    /// Compression dictionary size in bytes, when the format records one.
+    pub dictionary: Option<u64>,
 }
 
 impl Entry {

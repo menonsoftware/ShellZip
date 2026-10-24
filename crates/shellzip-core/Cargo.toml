@@ -16,16 +16,19 @@ tar = "0.4"
 thiserror = "2"
 tracing = "0.1"
 walkdir = "2"
-zip = { version = "2", default-features = false, features = ["deflate", "zstd", "time"] }
+zip = { version = "2", default-features = false, features = ["deflate", "zstd", "time", "aes-crypto"] }
 zstd = { version = "0.13", features = ["zstdmt"] }
 zeroize = "1"
 rayon = "1.12.0"
 blake2s_simd = "1.0.5"
 xz2 = { version = "0.1.7", default-features = false, features = ["static"] }
 bzip2 = "0.6.1"
+unrar = { version = "0.5.8", optional = true }
+sevenz-rust2 = { version = "0.24.1", optional = true, features = ["deflate"] }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
+sha2 = "0.10"
 tempfile = "3"
 
 [[bench]]
@@ -34,3 +37,8 @@ harness = false
 
 [lints]
 workspace = true
+
+[features]
+# Extraction only. The UnRAR licence forbids a RAR compressor.
+rar = ["dep:unrar"]
+sevenz = ["dep:sevenz-rust2"]

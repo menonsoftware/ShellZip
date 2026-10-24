@@ -7,7 +7,6 @@
   "19": "extract.rs",
   "22": "src/cli.rs",
   "24": "Command",
-  "25": "MethodArg",
   "26": "shellzip-gui/src/main.rs",
   "27": "shellzip-core",
   "28": "shellzip-cli/src/main.rs"

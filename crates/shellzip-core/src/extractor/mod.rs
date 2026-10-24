@@ -1,13 +1,17 @@
 //! Archive readers and the high-level extract/test entry points.
 
 mod policy;
+#[cfg(feature = "rar")]
+mod rar;
+#[cfg(feature = "sevenz")]
+mod sevenz;
 mod tar;
 mod zip;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::crypto::{Password, reject_unsupported};
+use crate::crypto::Password;
 use crate::detect::{Compression, Format, detect_file};
 use crate::entry::Entry;
 use crate::error::Error;
@@ -49,14 +53,34 @@ pub struct Verify {
 pub struct Opened {
     path: PathBuf,
     format: Format,
+    password: Option<Password>,
 }
 
 impl Opened {
     /// Sniff `path` and remember how to read it.
     pub fn open(path: &Path) -> Result<Self, Error> {
+        Self::open_with(path, None)
+    }
+
+    /// Sniff `path`, keeping `password` for encrypted headers and members.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Usage`] when `password` is set for a format that has no
+    /// encryption, and [`Error::Unsupported`] when this build cannot read the
+    /// format.
+    pub fn open_with(path: &Path, password: Option<Password>) -> Result<Self, Error> {
+        let format = resolve(path)?;
+        if password.is_some() && !format.accepts_password() {
+            return Err(Error::Usage(format!(
+                "{} does not use a password",
+                format.label()
+            )));
+        }
         Ok(Self {
             path: path.to_path_buf(),
-            format: resolve(path)?,
+            format,
+            password,
         })
     }
 
@@ -67,14 +91,24 @@ impl Opened {
 
     /// Member metadata. When `hash` is set, file payloads are read for BLAKE2sp.
     pub fn read_entries(&mut self, hash: bool) -> Result<Vec<Entry>, Error> {
-        match &self.format {
-            Format::Zip | Format::Sfx { .. } => zip::list_zip(&self.path, hash),
-            Format::Tar(compression) => tar::list_tar(&self.path, *compression, hash),
-            Format::Gzip => tar::list_single(&self.path, Compression::Gzip, hash),
-            Format::Zstd => tar::list_single(&self.path, Compression::Zstd, hash),
-            Format::Xz => tar::list_single(&self.path, Compression::Xz, hash),
-            Format::Bzip2 => tar::list_single(&self.path, Compression::Bzip2, hash),
-            other => Err(unsupported(other)),
+        let path = self.path.clone();
+        let format = self.format.clone();
+        let password = self.password.clone();
+        match &format {
+            Format::Zip | Format::Sfx { .. } => zip::list_zip(&path, hash, password.as_ref()),
+            Format::Tar(compression) => tar::list_tar(&path, *compression, hash),
+            Format::Gzip => tar::list_single(&path, Compression::Gzip, hash),
+            Format::Zstd => tar::list_single(&path, Compression::Zstd, hash),
+            Format::Xz => tar::list_single(&path, Compression::Xz, hash),
+            Format::Bzip2 => tar::list_single(&path, Compression::Bzip2, hash),
+            #[cfg(feature = "rar")]
+            Format::Rar4 | Format::Rar5 => rar::list_rar(&path, hash, password.as_ref()),
+            #[cfg(feature = "sevenz")]
+            Format::SevenZ => sevenz::list_sevenz(&path, hash, password.as_ref()),
+            #[cfg(not(feature = "rar"))]
+            Format::Rar4 | Format::Rar5 => Err(unsupported(&format)),
+            #[cfg(not(feature = "sevenz"))]
+            Format::SevenZ => Err(unsupported(&format)),
         }
     }
 
@@ -125,7 +159,16 @@ impl Opened {
                 selected,
                 progress,
             ),
-            other => Err(unsupported(other)),
+            #[cfg(feature = "rar")]
+            Format::Rar4 | Format::Rar5 => {
+                rar::extract_rar(&self.path, opts, decide, selected, progress)
+            }
+            #[cfg(feature = "sevenz")]
+            Format::SevenZ => sevenz::extract_sevenz(&self.path, opts, decide, selected, progress),
+            #[cfg(not(feature = "rar"))]
+            Format::Rar4 | Format::Rar5 => Err(unsupported(&self.format)),
+            #[cfg(not(feature = "sevenz"))]
+            Format::SevenZ => Err(unsupported(&self.format)),
         }
     }
 }
@@ -145,10 +188,13 @@ impl ArchiveReader for Opened {
         sink: &mut dyn Write,
         password: Option<&Password>,
     ) -> Result<Verify, Error> {
-        reject_unsupported(password)?;
-        let (bytes, crc32) = match &self.format {
+        let path = self.path.clone();
+        let format = self.format.clone();
+        let stored = self.password.clone();
+        let password = password.or(stored.as_ref());
+        let (bytes, crc32) = match &format {
             Format::Zip | Format::Sfx { .. } => {
-                zip::extract_zip_index(&self.path, idx, sink, &crate::progress::NopProgress)?
+                zip::extract_zip_index(&path, idx, sink, password, &crate::progress::NopProgress)?
             }
             Format::Tar(compression) => tar::copy_tar_index(&self.path, *compression, idx, sink)?,
             Format::Gzip => {
@@ -165,9 +211,16 @@ impl ArchiveReader for Opened {
             }
             Format::Bzip2 => {
                 only_first(idx)?;
-                tar::copy_single(&self.path, Compression::Bzip2, sink)?
+                tar::copy_single(&path, Compression::Bzip2, sink)?
             }
-            other => return Err(unsupported(other)),
+            #[cfg(feature = "rar")]
+            Format::Rar4 | Format::Rar5 => rar::copy_rar_index(&path, idx, sink, password)?,
+            #[cfg(feature = "sevenz")]
+            Format::SevenZ => sevenz::copy_sevenz_index(&path, idx, sink, password)?,
+            #[cfg(not(feature = "rar"))]
+            Format::Rar4 | Format::Rar5 => return Err(unsupported(&format)),
+            #[cfg(not(feature = "sevenz"))]
+            Format::SevenZ => return Err(unsupported(&format)),
         };
         Ok(Verify { bytes, crc32 })
     }
@@ -177,15 +230,25 @@ impl ArchiveReader for Opened {
         progress: &dyn ProgressSink,
         password: Option<&Password>,
     ) -> Result<TestReport, Error> {
-        reject_unsupported(password)?;
-        match &self.format {
-            Format::Zip | Format::Sfx { .. } => zip::test_zip(&self.path, progress),
+        let path = self.path.clone();
+        let format = self.format.clone();
+        let stored = self.password.clone();
+        let password = password.or(stored.as_ref());
+        match &format {
+            Format::Zip | Format::Sfx { .. } => zip::test_zip(&path, password, progress),
             Format::Tar(compression) => tar::test_tar(&self.path, *compression, progress),
             Format::Gzip => tar::test_single(&self.path, Compression::Gzip, progress),
             Format::Zstd => tar::test_single(&self.path, Compression::Zstd, progress),
             Format::Xz => tar::test_single(&self.path, Compression::Xz, progress),
-            Format::Bzip2 => tar::test_single(&self.path, Compression::Bzip2, progress),
-            other => Err(unsupported(other)),
+            Format::Bzip2 => tar::test_single(&path, Compression::Bzip2, progress),
+            #[cfg(feature = "rar")]
+            Format::Rar4 | Format::Rar5 => rar::test_rar(&path, progress, password),
+            #[cfg(feature = "sevenz")]
+            Format::SevenZ => sevenz::test_sevenz(&path, progress, password),
+            #[cfg(not(feature = "rar"))]
+            Format::Rar4 | Format::Rar5 => Err(unsupported(&format)),
+            #[cfg(not(feature = "sevenz"))]
+            Format::SevenZ => Err(unsupported(&format)),
         }
     }
 }
@@ -225,14 +288,24 @@ fn resolve(path: &Path) -> Result<Format, Error> {
             }
         }
         Format::Tar(Compression::None) => Ok(Format::Tar(Compression::None)),
+        format @ (Format::Rar4 | Format::Rar5 | Format::SevenZ) if format.is_supported() => {
+            Ok(format)
+        }
         other => Err(unsupported(&other)),
     }
 }
 
 fn unsupported(format: &Format) -> Error {
+    let detail = match format {
+        Format::Rar4 | Format::Rar5 => {
+            "rebuild with the `rar` feature to extract RAR; creation stays unsupported"
+        }
+        Format::SevenZ => "rebuild with the `sevenz` feature to extract 7z",
+        _ => "extraction for this format is a later milestone",
+    };
     Error::Unsupported {
         format: format.label(),
-        detail: "extraction for this format is a later milestone".to_string(),
+        detail: detail.to_string(),
     }
 }
 

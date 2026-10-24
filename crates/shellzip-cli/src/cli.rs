@@ -4,13 +4,18 @@ use std::path::PathBuf;
 
 use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
-use shellzip_core::{CompressOpts, Error, Overwrite, StoreList, UpdateMode, ZipMethod};
+use shellzip_core::{CompressOpts, Error, Overwrite, Password, StoreList, UpdateMode, ZipMethod};
+use zeroize::Zeroize;
 
 use crate::commands::{self, Shared};
 use crate::ui;
 
 /// Create and extract ZIP, tar, gzip, zstd, xz, and bzip2 archives.
-#[derive(Debug, Parser)]
+/// RAR and 7z can be listed, tested, and extracted. RAR is never created.
+///
+/// ZIP AES-256 (WinZip AE-2) encrypts file contents only. Names stay visible,
+/// which is WinRAR `-p`, not header encryption `-hp`.
+#[derive(Parser)]
 #[command(name = "szip", version, about, propagate_version = true)]
 pub struct Cli {
     /// Command.
@@ -28,6 +33,20 @@ pub struct Cli {
     /// Also write the tracing log to stderr. With `-ilog`, stderr is used only when this is set.
     #[arg(long = "ierr", global = true)]
     pub ierr: bool,
+    /// Password for ZIP AES-256, RAR, and 7z.
+    ///
+    /// `-pSECRET` uses SECRET. Bare `-p` prompts without echo. Otherwise
+    /// `SZIP_PASSWORD` is used. The value is never written to the log or a
+    /// window title. ZIP encryption does not hide file names.
+    #[arg(
+        long = "password",
+        global = true,
+        value_name = "PASSWORD",
+        num_args = 0..=1,
+        default_missing_value = "",
+        require_equals = true
+    )]
+    pub password: Option<String>,
 }
 
 /// `szip` commands.
@@ -188,6 +207,15 @@ pub struct ExtractArgs {
     /// Keep a partial file when decoding fails.
     #[arg(long = "kb", visible_alias = "keep-broken")]
     pub keep_broken: bool,
+    /// Skip encrypted members instead of failing.
+    #[arg(long = "mes", visible_alias = "skip-encrypted")]
+    pub skip_encrypted: bool,
+    /// Allow symlink targets that point outside the destination.
+    #[arg(long = "allow-unsafe-links")]
+    pub allow_unsafe_links: bool,
+    /// Copy the archive Zone.Identifier stream onto extracted files. Windows only.
+    #[arg(long = "om", visible_alias = "motw")]
+    pub mark_of_the_web: bool,
     /// Include glob. Repeatable.
     #[arg(short = 'n', long = "include")]
     pub include: Vec<String>,
@@ -244,7 +272,7 @@ impl From<OverwriteArg> for Overwrite {
 
 /// Parse arguments, run one command, and return the process exit code.
 pub fn run() -> i32 {
-    let cli = match Cli::try_parse_from(normalize_args(std::env::args())) {
+    let mut cli = match Cli::try_parse_from(normalize_args(std::env::args())) {
         Ok(cli) => cli,
         Err(err) => {
             let code = if err.exit_code() == 0 { 0 } else { 7 };
@@ -259,7 +287,7 @@ pub fn run() -> i32 {
             return err.exit_code();
         }
     };
-    let code = match dispatch(&cli) {
+    let code = match dispatch(&mut cli) {
         Ok(code) => code,
         Err(err) => {
             anstream::eprintln!("szip: {err}");
@@ -270,10 +298,20 @@ pub fn run() -> i32 {
     code
 }
 
-fn dispatch(cli: &Cli) -> Result<i32, Error> {
+fn dispatch(cli: &mut Cli) -> Result<i32, Error> {
+    let prompt = !matches!(cli.command, Command::Complete { .. });
+    let password = if prompt {
+        take_password(cli.password.take())?
+    } else {
+        if let Some(mut value) = cli.password.take() {
+            value.zeroize();
+        }
+        None
+    };
     let shared = Shared {
         quiet: cli.quiet,
         sink: ui::sink(cli.quiet),
+        password,
     };
     match &cli.command {
         Command::Add(args) => commands::add(args, UpdateMode::Add, &shared),
@@ -282,9 +320,9 @@ fn dispatch(cli: &Cli) -> Result<i32, Error> {
         Command::Delete(args) => commands::delete(args, &shared),
         Command::Extract(args) => commands::extract(args, false, &shared),
         Command::ExtractFlat(args) => commands::extract(args, true, &shared),
-        Command::List(args) => commands::list(args),
-        Command::ListTechnical(args) => commands::list_technical(args),
-        Command::Print(args) => commands::print_entry(args),
+        Command::List(args) => commands::list(args, shared.password.as_ref()),
+        Command::ListTechnical(args) => commands::list_technical(args, shared.password.as_ref()),
+        Command::Print(args) => commands::print_entry(args, &shared),
         Command::Test(args) => commands::test(args, &shared),
         Command::Complete { shell } => {
             let mut cmd = Cli::command();
@@ -333,6 +371,7 @@ pub(crate) fn compress_opts(args: &AddArgs, update: UpdateMode) -> Result<Compre
         threads: args.threads.unwrap_or(0),
         zstd_long: args.long_window,
         input_bytes: None,
+        password: None,
     })
 }
 
@@ -402,7 +441,52 @@ fn init_tracing(cli: &Cli) -> Result<Option<tracing_appender::non_blocking::Work
     Ok(Some(guard))
 }
 
-/// Accept WinRAR-style switches (`-ilog=`, `-ierr`, `-htb`, `-siNAME`, `-mtN`, `-long=`).
+fn take_password(flag: Option<String>) -> Result<Option<Password>, Error> {
+    match flag {
+        Some(value) if value.is_empty() => Ok(Some(prompt_password()?)),
+        Some(mut value) => {
+            let password = Password::new(value.clone())?;
+            value.zeroize();
+            Ok(Some(password))
+        }
+        None => password_from_env(),
+    }
+}
+
+fn prompt_password() -> Result<Password, Error> {
+    let mut value = rpassword::prompt_password("Enter password: ")
+        .map_err(|err| Error::io("read password", err))?;
+    if value.is_empty() {
+        value.zeroize();
+        return Err(Error::Usage("password was empty".to_string()));
+    }
+    let password = Password::new(value.clone())?;
+    value.zeroize();
+    Ok(password)
+}
+
+fn password_from_env() -> Result<Option<Password>, Error> {
+    // The variable stays in the process environment. Clearing it is `unsafe`
+    // on this toolchain, and this workspace forbids unsafe code. The copy
+    // held in `Password` is wiped on drop and is never logged.
+    match std::env::var("SZIP_PASSWORD") {
+        Ok(mut value) => {
+            if value.is_empty() {
+                value.zeroize();
+                return Ok(None);
+            }
+            let password = Password::new(value.clone())?;
+            value.zeroize();
+            Ok(Some(password))
+        }
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(Error::Usage(
+            "SZIP_PASSWORD is not valid Unicode".to_string(),
+        )),
+    }
+}
+
+/// Accept WinRAR-style switches (`-ilog=`, `-ierr`, `-htb`, `-siNAME`, `-mtN`, `-long=`, `-p`).
 fn normalize_args(args: impl Iterator<Item = String>) -> Vec<String> {
     let mut out = Vec::new();
     for arg in args {
@@ -433,6 +517,17 @@ fn normalize_args(args: impl Iterator<Item = String>) -> Vec<String> {
             out.push("--long".to_string());
         } else if let Some(rest) = arg.strip_prefix("-long=") {
             out.push(format!("--long={rest}"));
+        } else if arg == "-p" {
+            out.push("--password".to_string());
+        } else if let Some(secret) = arg.strip_prefix("-p")
+            && !secret.is_empty()
+            && !secret.starts_with('-')
+        {
+            out.push(format!("--password={secret}"));
+        } else if arg == "-mes" {
+            out.push("--mes".to_string());
+        } else if arg == "-om" {
+            out.push("--om".to_string());
         } else {
             out.push(arg);
         }
@@ -455,6 +550,9 @@ mod tests {
             "-ierr",
             "-htb",
             "-long=27",
+            "-psecret",
+            "-mes",
+            "-om",
         ]
         .into_iter()
         .map(str::to_string);
@@ -469,6 +567,9 @@ mod tests {
                 "--ierr",
                 "--htb",
                 "--long=27",
+                "--password=secret",
+                "--mes",
+                "--om",
             ]
         );
     }

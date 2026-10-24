@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::crypto::Password;
 use crate::error::Error;
 
 /// Called when an extracted file already exists.
@@ -119,6 +120,10 @@ pub struct CompressOpts {
     pub zstd_long: Option<u32>,
     /// Uncompressed input bytes, used to pick the zstd window. `None` means unknown.
     pub input_bytes: Option<u64>,
+    /// ZIP AES-256 password. `None` writes an unencrypted archive.
+    ///
+    /// Only file contents are encrypted. Names, sizes, and timestamps stay visible.
+    pub password: Option<Password>,
 }
 
 impl Default for CompressOpts {
@@ -137,6 +142,7 @@ impl Default for CompressOpts {
             threads: 0,
             zstd_long: None,
             input_bytes: None,
+            password: None,
         }
     }
 }
@@ -227,6 +233,14 @@ pub struct ExtractOpts {
     pub exact_paths: Option<Vec<String>>,
     /// Stop after this many uncompressed bytes have been written.
     pub max_bytes: u64,
+    /// Password for ZIP AES, RAR, and 7z. `None` only reads clear members.
+    pub password: Option<Password>,
+    /// Skip encrypted members instead of failing (`-mes`).
+    pub skip_encrypted: bool,
+    /// Allow symlink targets that resolve outside the destination.
+    pub allow_unsafe_links: bool,
+    /// Copy the archive's Zone.Identifier stream onto extracted files (`-om`).
+    pub mark_of_the_web: bool,
 }
 
 impl ExtractOpts {
@@ -240,6 +254,10 @@ impl ExtractOpts {
             includes: Vec::new(),
             exact_paths: None,
             max_bytes: 64 << 30,
+            password: None,
+            skip_encrypted: false,
+            allow_unsafe_links: false,
+            mark_of_the_web: false,
         }
     }
 }
@@ -293,10 +311,12 @@ pub struct TestReport {
 }
 
 /// Options for `szip l` and `szip lt`.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ListOpts {
     /// Hash each file payload with BLAKE2sp-256 (`-htb`).
     pub blake2sp: bool,
+    /// Password for header-encrypted RAR and encrypted 7z headers.
+    pub password: Option<Password>,
 }
 
 /// Summary of `szip d`.

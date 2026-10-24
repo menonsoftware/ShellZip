@@ -11,7 +11,8 @@ use crate::cli::{AddArgs, compress_opts};
 pub fn add(args: &AddArgs, mode: UpdateMode, shared: &Shared) -> Result<i32, Error> {
     let existed = args.archive.is_file();
     let updating = existed && !args.yes && mode == UpdateMode::Add;
-    let opts = compress_opts(args, mode)?;
+    let mut opts = compress_opts(args, mode)?;
+    opts.password = shared.password.clone();
     let report = if let Some(name) = &args.stdin {
         let stdin = std::io::stdin();
         let mut locked = stdin.lock();

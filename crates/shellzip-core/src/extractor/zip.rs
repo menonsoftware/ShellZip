@@ -8,7 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::TimeZone;
 use zip::ZipArchive;
 
-use super::policy::{Budget, Destination, destination, symlink_destination, write_atomic};
+use super::policy::{
+    Budget, Destination, destination, mark_extracted, symlink_destination, write_atomic,
+};
 use crate::entry::{Entry, EntryKind};
 use crate::error::Error;
 use crate::hash::{Blake2spWriter, CrcWriter};
@@ -19,17 +21,42 @@ use zip::HasZipMetadata;
 /// List every ZIP member. Symlink targets are read when they are small.
 ///
 /// `hash` streams each file payload through BLAKE2sp.
-pub fn list_zip(path: &Path, hash: bool) -> Result<Vec<Entry>, Error> {
+pub fn list_zip(
+    path: &Path,
+    hash: bool,
+    password: Option<&crate::crypto::Password>,
+) -> Result<Vec<Entry>, Error> {
     let mut archive = open_zip(path)?;
     let mut entries = Vec::with_capacity(archive.len());
     for index in 0..archive.len() {
-        let mut file = archive.by_index(index).map_err(|err| annotate(err, path))?;
+        let encrypted = archive
+            .by_index_raw(index)
+            .map(|file| file.encrypted())
+            .map_err(|err| annotate(err, path))?;
+        let mut file = if encrypted {
+            archive
+                .by_index_raw(index)
+                .map_err(|err| annotate(err, path))?
+        } else {
+            archive.by_index(index).map_err(|err| annotate(err, path))?
+        };
         let mut entry = entry_from(&mut file)?;
         if hash && entry.kind == EntryKind::File && !entry.encrypted {
             let mut blake = Blake2spWriter::new();
             std::io::copy(&mut file, &mut blake)
                 .map_err(|err| Error::io(entry.path.clone(), err))?;
             entry.blake2sp = Some(blake.finish());
+        } else if hash && entry.kind == EntryKind::File && entry.encrypted {
+            drop(file);
+            if let Some(password) = password {
+                let mut file = archive
+                    .by_index_decrypt(index, password.expose().as_bytes())
+                    .map_err(|err| annotate(err, path))?;
+                let mut blake = Blake2spWriter::new();
+                std::io::copy(&mut file, &mut blake)
+                    .map_err(|err| Error::io(entry.path.clone(), err))?;
+                entry.blake2sp = Some(blake.finish());
+            }
         }
         entries.push(entry);
     }
@@ -37,15 +64,26 @@ pub fn list_zip(path: &Path, hash: bool) -> Result<Vec<Entry>, Error> {
 }
 
 /// Decode every member and compare CRC32 values.
-pub fn test_zip(path: &Path, progress: &dyn ProgressSink) -> Result<TestReport, Error> {
+pub fn test_zip(
+    path: &Path,
+    password: Option<&crate::crypto::Password>,
+    progress: &dyn ProgressSink,
+) -> Result<TestReport, Error> {
     let mut archive = open_zip(path)?;
     let total: u64 = (0..archive.len())
-        .map(|index| archive.by_index(index).map(|file| file.size()).unwrap_or(0))
+        .map(|index| {
+            archive
+                .by_index_raw(index)
+                .map(|file| file.size())
+                .unwrap_or(0)
+        })
         .sum();
     progress.begin(&format!("test {}", path.display()), total);
     let mut report = TestReport::default();
     for index in 0..archive.len() {
-        let mut file = archive.by_index(index).map_err(|err| annotate(err, path))?;
+        let file = archive
+            .by_index_raw(index)
+            .map_err(|err| annotate(err, path))?;
         let name = file.name().to_string();
         report.entries += 1;
         if file.is_dir() {
@@ -53,10 +91,21 @@ pub fn test_zip(path: &Path, progress: &dyn ProgressSink) -> Result<TestReport, 
             progress.end_entry();
             continue;
         }
-        if file.encrypted() {
+        let encrypted = file.encrypted();
+        if encrypted && password.is_none() {
             report.encrypted.push(name);
             continue;
         }
+        let mut file = if encrypted {
+            drop(file);
+            let password = password.ok_or_else(|| Error::Encrypted(name.clone()))?;
+            archive
+                .by_index_decrypt(index, password.expose().as_bytes())
+                .map_err(|err| annotate(err, path))?
+        } else {
+            drop(file);
+            archive.by_index(index).map_err(|err| annotate(err, path))?
+        };
         progress.begin_entry(&name, file.size());
         let expected = file.crc32();
         let mut hasher = CrcWriter::new();
@@ -70,7 +119,9 @@ pub fn test_zip(path: &Path, progress: &dyn ProgressSink) -> Result<TestReport, 
             continue;
         }
         report.bytes += hasher.bytes;
-        if hasher.crc() != expected {
+        // WinZip AE-2 stores a zero CRC and authenticates with HMAC. A
+        // successful decrypt already checked that tag.
+        if !(encrypted && expected == 0) && hasher.crc() != expected {
             report.checksums.push(name);
         }
         progress.end_entry();
@@ -90,24 +141,43 @@ pub fn extract_zip(
     let chosen: Vec<usize> = (0..archive.len())
         .filter(|&index| {
             archive
-                .by_index(index)
+                .by_index_raw(index)
                 .map(|file| selected(file.name()))
                 .unwrap_or(false)
         })
         .collect();
     let total: u64 = chosen
         .iter()
-        .filter_map(|&index| archive.by_index(index).ok().map(|file| file.size()))
+        .filter_map(|&index| archive.by_index_raw(index).ok().map(|file| file.size()))
         .sum();
     progress.begin(&format!("extract {}", path.display()), total);
     let mut report = ExtractReport::default();
     let mut budget = Budget::new(opts.max_bytes);
     for index in chosen {
-        let mut file = archive.by_index(index).map_err(|err| annotate(err, path))?;
+        let file = archive
+            .by_index_raw(index)
+            .map_err(|err| annotate(err, path))?;
         let name = file.name().to_string();
-        if file.encrypted() {
-            return Err(Error::Encrypted(name));
+        let encrypted = file.encrypted();
+        if encrypted && opts.skip_encrypted {
+            report.skipped += 1;
+            report
+                .warnings
+                .push(format!("skipped encrypted entry `{name}`"));
+            continue;
         }
+        let mut file = if encrypted {
+            drop(file);
+            let Some(password) = opts.password.as_ref() else {
+                return Err(Error::Encrypted(name));
+            };
+            archive
+                .by_index_decrypt(index, password.expose().as_bytes())
+                .map_err(|err| annotate(err, path))?
+        } else {
+            drop(file);
+            archive.by_index(index).map_err(|err| annotate(err, path))?
+        };
         progress.begin_entry(&name, file.size());
         budget.reserve(file.size())?;
         if file.is_dir() {
@@ -156,6 +226,9 @@ pub fn extract_zip(
                 {
                     report.warnings.push(err.to_string());
                 }
+                if let Err(err) = mark_extracted(path, &dest, opts) {
+                    report.warnings.push(err.to_string());
+                }
                 report.extracted += 1;
             }
         }
@@ -169,13 +242,28 @@ pub fn extract_zip_index(
     path: &Path,
     index: usize,
     sink: &mut dyn Write,
+    password: Option<&crate::crypto::Password>,
     progress: &dyn ProgressSink,
 ) -> Result<(u64, u32), Error> {
     let mut archive = open_zip(path)?;
-    let mut file = archive.by_index(index).map_err(|err| annotate(err, path))?;
-    if file.encrypted() {
-        return Err(Error::Encrypted(file.name().to_string()));
-    }
+    let encrypted = archive
+        .by_index_raw(index)
+        .map(|file| file.encrypted())
+        .map_err(|err| annotate(err, path))?;
+    let mut file = if encrypted {
+        let Some(password) = password else {
+            let name = archive
+                .by_index_raw(index)
+                .map(|file| file.name().to_string())
+                .unwrap_or_else(|_| index.to_string());
+            return Err(Error::Encrypted(name));
+        };
+        archive
+            .by_index_decrypt(index, password.expose().as_bytes())
+            .map_err(|err| annotate(err, path))?
+    } else {
+        archive.by_index(index).map_err(|err| annotate(err, path))?
+    };
     let name = file.name().to_string();
     progress.begin_entry(&name, file.size());
     let mut hasher = CrcWriter::new();
@@ -188,7 +276,7 @@ pub fn extract_zip_index(
         std::io::copy(&mut reader, &mut tee).map_err(|err| Error::io(name.clone(), err))?;
     }
     progress.end_entry();
-    if hasher.crc() != file.crc32() {
+    if !(file.encrypted() && file.crc32() == 0) && hasher.crc() != file.crc32() {
         return Err(Error::BadChecksum { entry: name });
     }
     Ok((hasher.bytes, hasher.crc()))
@@ -236,6 +324,8 @@ fn entry_from(file: &mut zip::read::ZipFile<'_, File>) -> Result<Entry, Error> {
         blake2sp: None,
         link_target,
         encrypted: file.encrypted(),
+        solid: false,
+        dictionary: None,
     })
 }
 

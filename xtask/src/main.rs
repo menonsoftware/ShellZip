@@ -12,11 +12,15 @@ fn main() {
     let command = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "bench".to_string());
-    if command != "bench" {
-        eprintln!("usage: xtask bench");
-        std::process::exit(2);
-    }
-    if let Err(err) = bench() {
+    let result = match command.as_str() {
+        "bench" => bench(),
+        "build-fixtures" => build_fixtures(),
+        _ => {
+            eprintln!("usage: xtask bench | build-fixtures");
+            std::process::exit(2);
+        }
+    };
+    if let Err(err) = result {
         eprintln!("xtask: {err}");
         std::process::exit(1);
     }
@@ -180,6 +184,217 @@ fn payload(index: u32, len: usize) -> Vec<u8> {
     let mut bytes = out.into_bytes();
     bytes.truncate(len);
     bytes
+}
+
+/// Fixture password. A test vector, not a credential. Never printed.
+const FIXTURE_PASSWORD: &str = "szip-fixture";
+
+fn build_fixtures() -> Result<(), Box<dyn std::error::Error>> {
+    let tool = find_rar().ok_or("Rar.exe was not found")?;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures");
+    let dir = root.join("rar");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir)?;
+    let tmp = std::env::temp_dir().join(format!("szip-fixtures-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp)?;
+    let hello = tmp.join("hello.txt");
+    let alpha = tmp.join("a.txt");
+    let bravo = tmp.join("b.txt");
+    let big = tmp.join("big.bin");
+    fs::write(&hello, b"hello\n")?;
+    fs::write(&alpha, b"alpha\n")?;
+    fs::write(&bravo, b"bravo\n")?;
+    fs::write(&big, vec![0xA5; 30_000])?;
+
+    let password = format!("-p{FIXTURE_PASSWORD}");
+    let headers = format!("-hp{FIXTURE_PASSWORD}");
+    rar_add(
+        &tool,
+        &dir.join("store.rar"),
+        &["-ma5", "-m0", "-ep"],
+        &[&hello],
+    )?;
+    rar_add(
+        &tool,
+        &dir.join("password.rar"),
+        &["-ma5", "-m0", "-ep", &password],
+        &[&hello],
+    )?;
+    rar_add(
+        &tool,
+        &dir.join("headers.rar"),
+        &["-ma5", "-m0", "-ep", &headers],
+        &[&hello],
+    )?;
+    rar_add(
+        &tool,
+        &dir.join("solid.rar"),
+        &["-ma5", "-s", "-m3", "-ep"],
+        &[&alpha, &bravo],
+    )?;
+    // WinRAR 7 dropped `-ma4`. Write a stored RAR 4.x archive directly.
+    write_rar4_store(&dir.join("rar4.rar"), "hello.txt", b"hello\n")?;
+    rar_add(
+        &tool,
+        &dir.join("blake.rar"),
+        &["-ma5", "-m0", "-ep", "-htb"],
+        &[&hello],
+    )?;
+    rar_add(
+        &tool,
+        &dir.join("volumes.rar"),
+        &["-ma5", "-m0", "-ep", "-v10k"],
+        &[&big],
+    )?;
+    if dir.join("volumes.rar").is_file() && volume_parts(&dir).len() >= 2 {
+        fs::remove_file(dir.join("volumes.rar"))?;
+    }
+    write_sums(&root)?;
+    let count = fs::read_dir(&dir)?.count();
+    println!("wrote {count} RAR fixtures under {}", dir.display());
+    let _ = fs::remove_dir_all(&tmp);
+    Ok(())
+}
+
+fn volume_parts(dir: &Path) -> Vec<PathBuf> {
+    let mut parts = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let text = name.to_string_lossy();
+            if text.starts_with("volumes.part") {
+                parts.push(entry.path());
+            }
+        }
+    }
+    parts.sort();
+    parts
+}
+
+fn rar_add(
+    tool: &Path,
+    archive: &Path,
+    switches: &[&str],
+    files: &[&Path],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = vec!["a".to_string(), "-y".to_string(), "-inul".to_string()];
+    args.extend(switches.iter().map(|item| (*item).to_string()));
+    args.push(archive.display().to_string());
+    for file in files {
+        args.push(file.display().to_string());
+    }
+    let status = Command::new(tool).args(&args).status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Rar.exe failed while writing {}", archive.display()).into())
+    }
+}
+
+fn find_rar() -> Option<PathBuf> {
+    for candidate in [
+        r"C:\Program Files\WinRAR\Rar.exe",
+        r"C:\Program Files\WinRAR\rar.exe",
+        r"C:\Program Files (x86)\WinRAR\Rar.exe",
+    ] {
+        let path = PathBuf::from(candidate);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    find_tool("Rar").or_else(|| find_tool("rar"))
+}
+
+fn write_sums(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let mut files = Vec::new();
+    collect_files(root, &mut files)?;
+    files.sort();
+    let mut body = String::new();
+    for file in files {
+        if file.file_name().and_then(|name| name.to_str()) == Some("SHA256SUMS") {
+            continue;
+        }
+        let rel = file.strip_prefix(root)?;
+        let hash = sha256_file(&file)?;
+        let text = rel.to_string_lossy().replace('\\', "/");
+        body.push_str(&format!("{hash}  {text}\n"));
+    }
+    fs::write(root.join("SHA256SUMS"), body)?;
+    Ok(())
+}
+
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), std::io::Error> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(&path, out)?;
+        } else if path.is_file() {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Stored RAR 4.x member. WinRAR 7 no longer accepts `-ma4`.
+fn write_rar4_store(path: &Path, name: &str, data: &[u8]) -> Result<(), std::io::Error> {
+    let name_bytes = name.as_bytes();
+    let mut file_header = Vec::new();
+    file_header.extend_from_slice(&[0, 0]);
+    file_header.push(0x74);
+    file_header.extend_from_slice(&0u16.to_le_bytes());
+    let header_size = 32 + name_bytes.len();
+    file_header.extend_from_slice(&u16::try_from(header_size).unwrap_or(0).to_le_bytes());
+    file_header.extend_from_slice(&u32::try_from(data.len()).unwrap_or(0).to_le_bytes());
+    file_header.extend_from_slice(&u32::try_from(data.len()).unwrap_or(0).to_le_bytes());
+    file_header.push(2);
+    file_header.extend_from_slice(&crc32(data).to_le_bytes());
+    file_header.extend_from_slice(&0u32.to_le_bytes());
+    file_header.push(20);
+    file_header.push(0x30);
+    file_header.extend_from_slice(&u16::try_from(name_bytes.len()).unwrap_or(0).to_le_bytes());
+    file_header.extend_from_slice(&0x20u32.to_le_bytes());
+    file_header.extend_from_slice(name_bytes);
+    stamp_header_crc(&mut file_header);
+
+    let mut main = vec![0, 0, 0x73, 0, 0, 13, 0, 0, 0, 0, 0, 0, 0];
+    stamp_header_crc(&mut main);
+    let mut end = vec![0, 0, 0x7b, 0, 0, 7, 0];
+    stamp_header_crc(&mut end);
+
+    let mut archive = Vec::new();
+    archive.extend_from_slice(b"Rar!\x1a\x07\x00");
+    archive.extend_from_slice(&main);
+    archive.extend_from_slice(&file_header);
+    archive.extend_from_slice(data);
+    archive.extend_from_slice(&end);
+    fs::write(path, archive)
+}
+
+fn stamp_header_crc(header: &mut [u8]) {
+    let crc = crc32(&header[2..]) as u16;
+    header[0] = crc.to_le_bytes()[0];
+    header[1] = crc.to_le_bytes()[1];
+}
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for &byte in data {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+fn sha256_file(path: &Path) -> Result<String, std::io::Error> {
+    use sha2::{Digest, Sha256};
+    let bytes = fs::read(path)?;
+    let digest = Sha256::digest(bytes);
+    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 fn render(rows: &[Row], bytes: u64, speedup: f64) -> String {

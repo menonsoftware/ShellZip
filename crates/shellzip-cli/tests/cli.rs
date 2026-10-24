@@ -8,7 +8,9 @@ use predicates::prelude::*;
 use predicates::str::contains;
 
 fn szip() -> assert_cmd::Command {
-    assert_cmd::Command::cargo_bin("szip").unwrap()
+    let mut cmd = assert_cmd::Command::cargo_bin("szip").unwrap();
+    cmd.env_remove("SZIP_PASSWORD");
+    cmd
 }
 
 #[test]
@@ -297,4 +299,145 @@ fn log_file_receives_debug_events() {
         .success();
     let text = fs::read_to_string(&log).unwrap();
     assert!(text.contains("archive written"), "log was {text:?}");
+}
+
+#[test]
+fn help_explains_that_zip_encryption_leaves_names_visible() {
+    szip()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(contains("Names stay visible"))
+        .stdout(contains("RAR is never created"));
+}
+
+#[test]
+fn zip_password_round_trip_and_exit_11() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("hello.txt");
+    fs::write(&file, b"hello\n").unwrap();
+    let archive = tmp.path().join("secret.zip");
+    szip()
+        .args([
+            "a",
+            "-m",
+            "1",
+            "-pszip-fixture",
+            archive.to_str().unwrap(),
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    szip()
+        .args(["l", archive.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("hello.txt"));
+    szip()
+        .args([
+            "x",
+            "-y",
+            "-o",
+            tmp.path().join("missing").to_str().unwrap(),
+            archive.to_str().unwrap(),
+        ])
+        .assert()
+        .code(11)
+        .stderr(contains("password required"));
+    szip()
+        .args([
+            "x",
+            "-y",
+            "-o",
+            tmp.path().join("wrong").to_str().unwrap(),
+            "-pwrong-fixture",
+            archive.to_str().unwrap(),
+        ])
+        .assert()
+        .code(11)
+        .stderr(contains("incorrect password"));
+    let out = tmp.path().join("out");
+    szip()
+        .args([
+            "x",
+            "-y",
+            "-o",
+            out.to_str().unwrap(),
+            "-pszip-fixture",
+            archive.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read(out.join("hello.txt")).unwrap(), b"hello\n");
+    szip()
+        .args([
+            "x",
+            "-y",
+            "--mes",
+            "-o",
+            tmp.path().join("skip").to_str().unwrap(),
+            archive.to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stderr(contains("skipped encrypted"));
+}
+
+#[test]
+fn password_from_the_environment_is_not_written_to_the_log() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("hello.txt");
+    fs::write(&file, b"hello\n").unwrap();
+    let archive = tmp.path().join("secret.zip");
+    let log = tmp.path().join("run.log");
+    let mut cmd = assert_cmd::Command::cargo_bin("szip").unwrap();
+    cmd.env("SZIP_PASSWORD", "szip-log-secret")
+        .args([
+            "-v",
+            &format!("--ilog={}", log.display()),
+            "a",
+            "-m",
+            "0",
+            archive.to_str().unwrap(),
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(contains("szip-log-secret").not());
+    let text = fs::read_to_string(&log).unwrap();
+    assert!(!text.contains("szip-log-secret"), "{text}");
+    let out = tmp.path().join("out");
+    let mut extract = assert_cmd::Command::cargo_bin("szip").unwrap();
+    extract
+        .env("SZIP_PASSWORD", "szip-log-secret")
+        .args([
+            "x",
+            "-y",
+            "-o",
+            out.to_str().unwrap(),
+            archive.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read(out.join("hello.txt")).unwrap(), b"hello\n");
+}
+
+#[test]
+fn rar_and_7z_are_not_created() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("hello.txt");
+    fs::write(&file, b"hello\n").unwrap();
+    for name in ["notes.rar", "notes.7z"] {
+        szip()
+            .args([
+                "a",
+                "-m",
+                "0",
+                tmp.path().join(name).to_str().unwrap(),
+                file.to_str().unwrap(),
+            ])
+            .assert()
+            .failure()
+            .stderr(contains("not"));
+    }
 }
