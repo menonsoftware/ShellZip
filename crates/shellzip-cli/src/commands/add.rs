@@ -2,7 +2,9 @@
 
 use std::io::Read;
 
-use shellzip_core::{Error, UpdateMode, add as pack, add_sfx, add_stdin, build, format_bytes};
+use shellzip_core::{
+    Error, SfxPayload, UpdateMode, add as pack, add_sfx, add_stdin, build, format_bytes,
+};
 
 use super::Shared;
 use crate::cli::{AddArgs, compress_opts};
@@ -17,13 +19,20 @@ pub fn add(args: &AddArgs, mode: UpdateMode, shared: &Shared) -> Result<i32, Err
     if args.sfx_stub.is_some() && !args.sfx {
         return Err(Error::Usage("--sfx-stub requires --sfx".to_string()));
     }
+    if !args.sfx && args.sfx_format != crate::cli::SfxFormatArg::Zip {
+        return Err(Error::Usage("--sfx-format requires --sfx".to_string()));
+    }
     let existed = args.archive.is_file();
     let updating = existed && !args.yes && mode == UpdateMode::Add && !args.sfx;
     let mut opts = compress_opts(args, mode)?;
     opts.password = shared.password.clone();
     if args.sfx {
         let stub = super::sfx::find_stub(args.sfx_stub.as_deref())?;
-        return pack_sfx(args, &stub, &opts, shared);
+        let payload = match args.sfx_format {
+            crate::cli::SfxFormatArg::Zip => SfxPayload::Zip,
+            crate::cli::SfxFormatArg::SevenZ => SfxPayload::SevenZ,
+        };
+        return pack_sfx(args, &stub, &opts, payload, shared);
     }
     let report = if let Some(name) = &args.stdin {
         let stdin = std::io::stdin();
@@ -62,16 +71,23 @@ fn pack_sfx(
     args: &AddArgs,
     stub: &std::path::Path,
     opts: &shellzip_core::CompressOpts,
+    payload: SfxPayload,
     shared: &Shared,
 ) -> Result<i32, Error> {
+    let mut opts = opts.clone();
+    if payload == SfxPayload::SevenZ && opts.level > 0 {
+        opts.sevenz.method = shellzip_core::SevenZMethod::Lzma2;
+    }
+    let opts = &opts;
     let report = if let Some(name) = &args.stdin {
         let scratch = std::env::temp_dir().join(format!(
-            "szip-sfx-stdin-{}-{}.zip",
+            "szip-sfx-stdin-{}-{}.{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|elapsed| elapsed.as_nanos())
-                .unwrap_or(0)
+                .unwrap_or(0),
+            payload.extension()
         ));
         let stdin = std::io::stdin();
         let mut locked = stdin.lock();
@@ -83,7 +99,7 @@ fn pack_sfx(
             shared.sink.as_ref(),
         );
         let result = written.and_then(|report| {
-            let packed_bytes = build(&args.archive, stub, &scratch)?;
+            let packed_bytes = build(&args.archive, stub, &scratch, payload)?;
             Ok(shellzip_core::AddReport {
                 path: args.archive.clone(),
                 packed_bytes,
@@ -93,7 +109,14 @@ fn pack_sfx(
         let _ = std::fs::remove_file(&scratch);
         result?
     } else {
-        add_sfx(&args.archive, stub, &args.files, opts, shared.sink.as_ref())?
+        add_sfx(
+            &args.archive,
+            stub,
+            &args.files,
+            opts,
+            payload,
+            shared.sink.as_ref(),
+        )?
     };
     if shared.quiet < 2 {
         println!(

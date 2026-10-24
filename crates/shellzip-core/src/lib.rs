@@ -2,8 +2,11 @@
 //!
 //! The library packs and unpacks ZIP, tar, tar.gz, tar.zst, gzip, and zstd,
 //! and extracts xz and bzip2. ZIP contents can be encrypted with AES-256 AE-2.
-//! Names stay visible: ZIP cannot hide them. RAR and 7z extraction are optional
-//! features (`rar`, `sevenz`). This crate never creates RAR archives.
+//! Names stay visible: ZIP cannot hide them. RAR extraction is the optional
+//! `rar` feature. 7z reading and writing are the optional `sevenz` feature
+//! (LZMA2 and AES); `sevenz-codecs` adds Deflate, BZip2, PPMd, and Zstd, and
+//! `sevenz-parallel` compresses on more than one thread. This crate never
+//! creates RAR archives.
 //! A self-extracting package is a stub, a ZIP payload, and a 24-byte trailer.
 //!
 //! File bytes are copied through a fixed buffer. Entry names are checked
@@ -36,11 +39,13 @@ pub use error::Error;
 pub use extractor::{ArchiveReader, Opened, Verify};
 pub use options::{
     AddReport, CompressOpts, ConflictChoice, ConflictDecider, DEFAULT_STORE_EXTS, DeleteReport,
-    ExtractOpts, ExtractReport, ListOpts, MAX_THREADS, Overwrite, StoreList, TestReport,
-    UpdateMode, UpdatePrompt, ZipMethod,
+    ExtractOpts, ExtractReport, ListOpts, MAX_THREADS, Overwrite, SevenZMethod, SevenZOpts,
+    StoreList, TestReport, UpdateMode, UpdatePrompt, ZipMethod,
 };
 pub use progress::{NopProgress, ProgressSink};
-pub use sfx::{SfxDirection, SfxTrailer, build, convert, locate, strip, stub_file_names};
+pub use sfx::{
+    SfxDirection, SfxPayload, SfxTrailer, build, convert, locate, strip, stub_file_names,
+};
 
 /// Library result.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -88,9 +93,10 @@ pub fn add_sfx(
     stub: &std::path::Path,
     inputs: &[std::path::PathBuf],
     opts: &CompressOpts,
+    payload: SfxPayload,
     progress: &dyn ProgressSink,
 ) -> Result<AddReport> {
-    ops::add_sfx(dest, stub, inputs, opts, progress)
+    ops::add_sfx(dest, stub, inputs, opts, payload, progress)
 }
 
 /// List `path` after sniffing its contents.
@@ -117,9 +123,10 @@ pub fn write_member(
 pub fn delete(
     path: &std::path::Path,
     masks: &[String],
+    password: Option<&Password>,
     progress: &dyn ProgressSink,
 ) -> Result<DeleteReport> {
-    ops::delete(path, masks, progress)
+    ops::delete(path, masks, password, progress)
 }
 
 /// Pack a single member read from `input`.

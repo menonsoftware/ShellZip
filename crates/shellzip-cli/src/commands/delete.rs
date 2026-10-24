@@ -7,7 +7,12 @@ use crate::cli::DeleteArgs;
 
 /// Remove members that match `args.masks`.
 pub fn delete(args: &DeleteArgs, shared: &Shared) -> Result<i32, Error> {
-    let report = delete_members(&args.archive, &args.masks, shared.sink.as_ref())?;
+    let report = delete_members(
+        &args.archive,
+        &args.masks,
+        shared.password.as_ref(),
+        shared.sink.as_ref(),
+    )?;
     if shared.quiet < 2 {
         println!(
             "deleted {} from {} ({} kept)",

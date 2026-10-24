@@ -4,7 +4,7 @@ mod policy;
 #[cfg(feature = "rar")]
 mod rar;
 #[cfg(feature = "sevenz")]
-mod sevenz;
+pub(crate) mod sevenz;
 mod tar;
 mod zip;
 
@@ -95,7 +95,10 @@ impl Opened {
         let format = self.format.clone();
         let password = self.password.clone();
         match &format {
-            Format::Zip | Format::Sfx { .. } => zip::list_zip(&path, hash, password.as_ref()),
+            Format::Zip => zip::list_zip(&path, hash, password.as_ref()),
+            Format::Sfx { inner, .. } if matches!(inner.as_ref(), Format::Zip) => {
+                zip::list_zip(&path, hash, password.as_ref())
+            }
             Format::Tar(compression) => tar::list_tar(&path, *compression, hash),
             Format::Gzip => tar::list_single(&path, Compression::Gzip, hash),
             Format::Zstd => tar::list_single(&path, Compression::Zstd, hash),
@@ -105,6 +108,11 @@ impl Opened {
             Format::Rar4 | Format::Rar5 => rar::list_rar(&path, hash, password.as_ref()),
             #[cfg(feature = "sevenz")]
             Format::SevenZ => sevenz::list_sevenz(&path, hash, password.as_ref()),
+            #[cfg(feature = "sevenz")]
+            Format::Sfx { inner, .. } if matches!(inner.as_ref(), Format::SevenZ) => {
+                sevenz::list_sevenz(&path, hash, password.as_ref())
+            }
+            Format::Sfx { .. } => Err(unsupported(&format)),
             #[cfg(not(feature = "rar"))]
             Format::Rar4 | Format::Rar5 => Err(unsupported(&format)),
             #[cfg(not(feature = "sevenz"))]
@@ -121,7 +129,8 @@ impl Opened {
         progress: &dyn ProgressSink,
     ) -> Result<ExtractReport, Error> {
         match &self.format {
-            Format::Zip | Format::Sfx { .. } => {
+            Format::Zip => zip::extract_zip(&self.path, opts, decide, selected, progress),
+            Format::Sfx { inner, .. } if matches!(inner.as_ref(), Format::Zip) => {
                 zip::extract_zip(&self.path, opts, decide, selected, progress)
             }
             Format::Tar(compression) => {
@@ -165,6 +174,11 @@ impl Opened {
             }
             #[cfg(feature = "sevenz")]
             Format::SevenZ => sevenz::extract_sevenz(&self.path, opts, decide, selected, progress),
+            #[cfg(feature = "sevenz")]
+            Format::Sfx { inner, .. } if matches!(inner.as_ref(), Format::SevenZ) => {
+                sevenz::extract_sevenz(&self.path, opts, decide, selected, progress)
+            }
+            Format::Sfx { .. } => Err(unsupported(&self.format)),
             #[cfg(not(feature = "rar"))]
             Format::Rar4 | Format::Rar5 => Err(unsupported(&self.format)),
             #[cfg(not(feature = "sevenz"))]
@@ -193,7 +207,10 @@ impl ArchiveReader for Opened {
         let stored = self.password.clone();
         let password = password.or(stored.as_ref());
         let (bytes, crc32) = match &format {
-            Format::Zip | Format::Sfx { .. } => {
+            Format::Zip => {
+                zip::extract_zip_index(&path, idx, sink, password, &crate::progress::NopProgress)?
+            }
+            Format::Sfx { inner, .. } if matches!(inner.as_ref(), Format::Zip) => {
                 zip::extract_zip_index(&path, idx, sink, password, &crate::progress::NopProgress)?
             }
             Format::Tar(compression) => tar::copy_tar_index(&self.path, *compression, idx, sink)?,
@@ -217,6 +234,11 @@ impl ArchiveReader for Opened {
             Format::Rar4 | Format::Rar5 => rar::copy_rar_index(&path, idx, sink, password)?,
             #[cfg(feature = "sevenz")]
             Format::SevenZ => sevenz::copy_sevenz_index(&path, idx, sink, password)?,
+            #[cfg(feature = "sevenz")]
+            Format::Sfx { inner, .. } if matches!(inner.as_ref(), Format::SevenZ) => {
+                sevenz::copy_sevenz_index(&path, idx, sink, password)?
+            }
+            Format::Sfx { .. } => return Err(unsupported(&format)),
             #[cfg(not(feature = "rar"))]
             Format::Rar4 | Format::Rar5 => return Err(unsupported(&format)),
             #[cfg(not(feature = "sevenz"))]
@@ -235,7 +257,10 @@ impl ArchiveReader for Opened {
         let stored = self.password.clone();
         let password = password.or(stored.as_ref());
         match &format {
-            Format::Zip | Format::Sfx { .. } => zip::test_zip(&path, password, progress),
+            Format::Zip => zip::test_zip(&path, password, progress),
+            Format::Sfx { inner, .. } if matches!(inner.as_ref(), Format::Zip) => {
+                zip::test_zip(&path, password, progress)
+            }
             Format::Tar(compression) => tar::test_tar(&self.path, *compression, progress),
             Format::Gzip => tar::test_single(&self.path, Compression::Gzip, progress),
             Format::Zstd => tar::test_single(&self.path, Compression::Zstd, progress),
@@ -245,6 +270,11 @@ impl ArchiveReader for Opened {
             Format::Rar4 | Format::Rar5 => rar::test_rar(&path, progress, password),
             #[cfg(feature = "sevenz")]
             Format::SevenZ => sevenz::test_sevenz(&path, progress, password),
+            #[cfg(feature = "sevenz")]
+            Format::Sfx { inner, .. } if matches!(inner.as_ref(), Format::SevenZ) => {
+                sevenz::test_sevenz(&path, progress, password)
+            }
+            Format::Sfx { .. } => Err(unsupported(&format)),
             #[cfg(not(feature = "rar"))]
             Format::Rar4 | Format::Rar5 => Err(unsupported(&format)),
             #[cfg(not(feature = "sevenz"))]
@@ -256,7 +286,9 @@ impl ArchiveReader for Opened {
 fn resolve(path: &Path) -> Result<Format, Error> {
     match detect_file(path)? {
         Format::Zip => Ok(Format::Zip),
-        Format::Sfx { inner, offset } if matches!(inner.as_ref(), Format::Zip) => {
+        Format::Sfx { inner, offset }
+            if matches!(inner.as_ref(), Format::Zip | Format::SevenZ) && inner.is_supported() =>
+        {
             Ok(Format::Sfx { inner, offset })
         }
         Format::Gzip => {

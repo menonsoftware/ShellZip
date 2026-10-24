@@ -10,3 +10,5 @@ Uncompressed input: 33554432 bytes.
 | szip --threads 8 | zip | 0.551 | 60.9 | 4219668 |
 
 `--threads 8` / `--threads 1` speedup: 4.87×. Matching packed sizes mean the parallel merge wrote the same compressed bytes as one thread.
+
+The same command also times 7z: `szip` at `-m3` (LZMA2, solid, one thread and eight threads) and `7z a -t7z -mx=5` when 7-Zip is on `PATH`. Re-run it to add those rows. The self-extractor is built with `make build-sfx` (`--profile minisize`, `sevenz` feature only: LZMA2 and AES). That stub is 1,520,640 bytes (1.45 MiB) on x86_64 Windows, under the 2.5 MiB cap.

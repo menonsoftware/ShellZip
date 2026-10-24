@@ -7,7 +7,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 
-use shellzip_core::{UpdateMode, ZipMethod, creatable_formats};
+use shellzip_core::{
+    SevenZMethod, SevenZOpts, SfxPayload, UpdateMode, ZipMethod, creatable_formats,
+};
 
 use crate::chrome::PackSettings;
 use crate::theme::{DANGER, MUTED};
@@ -37,6 +39,10 @@ pub struct AddRequest {
     pub sfx: bool,
     /// Empty means no password.
     pub password: String,
+    /// 7z codec, solid blocks, and name encryption.
+    pub sevenz: SevenZOpts,
+    /// Payload when [`Self::sfx`] is set.
+    pub sfx_payload: SfxPayload,
     /// `None` leaves an existing ZIP comment unchanged.
     pub comment: Option<String>,
 }
@@ -57,6 +63,9 @@ pub struct AddDialog {
     update: UpdateMode,
     level: u8,
     method: ZipMethod,
+    sevenz_method: SevenZMethod,
+    solid: bool,
+    encrypt_headers: bool,
     sfx: bool,
     password: String,
     comment_path: String,
@@ -78,6 +87,9 @@ impl AddDialog {
             update: UpdateMode::Add,
             level: options.level.min(5),
             method: options.method,
+            sevenz_method: options.sevenz_method,
+            solid: options.solid,
+            encrypt_headers: false,
             sfx: false,
             password: String::new(),
             comment_path: String::new(),
@@ -248,6 +260,7 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut AddDialog) {
     });
     ui.add_space(6.0);
     method_row(ui, dialog);
+    sevenz_options(ui, dialog);
     ui.add_space(8.0);
     let mut sfx = dialog.sfx;
     if ui.checkbox(&mut sfx, "Create SFX archive").changed() {
@@ -255,22 +268,22 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut AddDialog) {
     }
     ui.label(
         egui::RichText::new(
-            "An SFX package is a ZIP wrapped in the ShellZip extractor. A password is requested when that package is opened.",
+            "An SFX package is a ZIP or 7z archive wrapped in the ShellZip extractor. A password is requested when that package is opened.",
         )
         .color(MUTED),
     );
     ui.add_space(6.0);
     ui.label("Password");
-    let zip = dialog.stores_zip();
-    ui.add_enabled_ui(zip, |ui| {
+    let encrypted = dialog.stores_comment();
+    ui.add_enabled_ui(encrypted, |ui| {
         ui.add(
             egui::TextEdit::singleline(&mut dialog.password)
                 .password(true)
                 .desired_width(f32::INFINITY)
-                .hint_text(if zip {
+                .hint_text(if encrypted {
                     "Leave empty for no encryption"
                 } else {
-                    "ZIP archives only"
+                    "ZIP and 7z archives only"
                 })
                 .id_salt("shellzip-archive-password"),
         );
@@ -294,8 +307,8 @@ fn comment_tab(ui: &mut egui::Ui, dialog: &mut AddDialog) {
     );
     ui.add_space(8.0);
     ui.label("Enter a comment manually");
-    if !dialog.stores_zip() {
-        ui.label(egui::RichText::new("Comments are stored in ZIP archives.").color(MUTED));
+    if !dialog.stores_comment() {
+        ui.label(egui::RichText::new("Comments are stored in ZIP and 7z archives.").color(MUTED));
     }
     let response = ui.add_sized(
         egui::vec2(ui.available_width(), 180.0),
@@ -323,7 +336,7 @@ fn help_window(ctx: &egui::Context, dialog: &mut AddDialog) {
                 ui.label(mode_help(mode));
                 ui.add_space(4.0);
             }
-            ui.label("The comment is stored in a ZIP archive, including an SFX package.");
+            ui.label("The comment is stored in a ZIP or 7z archive, including an SFX package.");
         });
     dialog.help = open;
 }
@@ -347,23 +360,26 @@ fn format_combo(ui: &mut egui::Ui, dialog: &mut AddDialog) {
         .get(dialog.format)
         .map(|kind| kind.label)
         .unwrap_or("ZIP");
-    ui.add_enabled_ui(!dialog.sfx, |ui| {
-        egui::ComboBox::from_id_salt("shellzip-archive-format")
-            .selected_text(selected)
-            .width(220.0)
-            .show_ui(ui, |ui| {
-                for (index, kind) in formats.iter().enumerate() {
-                    if ui
-                        .selectable_label(dialog.format == index, kind.label)
-                        .clicked()
-                        && dialog.format != index
-                    {
-                        dialog.format = index;
+    egui::ComboBox::from_id_salt("shellzip-archive-format")
+        .selected_text(selected)
+        .width(220.0)
+        .show_ui(ui, |ui| {
+            for (index, kind) in formats.iter().enumerate() {
+                if dialog.sfx && kind.extension != "zip" && kind.extension != "7z" {
+                    continue;
+                }
+                if ui
+                    .selectable_label(dialog.format == index, kind.label)
+                    .clicked()
+                    && dialog.format != index
+                {
+                    dialog.format = index;
+                    if !dialog.sfx {
                         dialog.name = with_extension(&dialog.name, kind.extension);
                     }
                 }
-            });
-    });
+            }
+        });
 }
 
 fn level_combo(ui: &mut egui::Ui, dialog: &mut AddDialog) {
@@ -378,36 +394,91 @@ fn level_combo(ui: &mut egui::Ui, dialog: &mut AddDialog) {
 }
 
 fn method_row(ui: &mut egui::Ui, dialog: &mut AddDialog) {
-    let zip = dialog.stores_zip() && dialog.level > 0;
-    ui.add_enabled_ui(zip, |ui| {
-        ui.label("ZIP method");
-        egui::ComboBox::from_id_salt("shellzip-zip-method")
-            .selected_text(method_name(dialog.method))
-            .width(180.0)
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut dialog.method, ZipMethod::Deflate, "Deflate");
-                ui.selectable_value(&mut dialog.method, ZipMethod::Zstd, "Zstd");
+    let compressing = dialog.level > 0;
+    match dialog.kind() {
+        DialogFormat::Zip => {
+            ui.add_enabled_ui(compressing, |ui| {
+                ui.label("ZIP method");
+                egui::ComboBox::from_id_salt("shellzip-zip-method")
+                    .selected_text(method_name(dialog.method))
+                    .width(180.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut dialog.method, ZipMethod::Deflate, "Deflate");
+                        ui.selectable_value(&mut dialog.method, ZipMethod::Zstd, "Zstd");
+                    });
             });
+        }
+        DialogFormat::SevenZ => {
+            ui.add_enabled_ui(compressing, |ui| {
+                ui.label("7z method");
+                egui::ComboBox::from_id_salt("shellzip-7z-method")
+                    .selected_text(dialog.sevenz_method.label())
+                    .width(180.0)
+                    .show_ui(ui, |ui| {
+                        for method in [
+                            SevenZMethod::Lzma2,
+                            SevenZMethod::Lzma,
+                            SevenZMethod::Ppmd,
+                            SevenZMethod::Bzip2,
+                            SevenZMethod::Deflate,
+                            SevenZMethod::Zstd,
+                        ] {
+                            ui.selectable_value(&mut dialog.sevenz_method, method, method.label());
+                        }
+                    });
+            });
+        }
+        DialogFormat::Other => {}
+    }
+}
+
+fn sevenz_options(ui: &mut egui::Ui, dialog: &mut AddDialog) {
+    let sevenz = dialog.kind() == DialogFormat::SevenZ;
+    ui.add_enabled_ui(sevenz, |ui| {
+        ui.checkbox(&mut dialog.solid, "Solid archive");
+        ui.checkbox(&mut dialog.encrypt_headers, "Encrypt file names");
     });
 }
 
+/// Which creatable container the dialog is aimed at.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DialogFormat {
+    Zip,
+    SevenZ,
+    Other,
+}
+
 impl AddDialog {
-    fn stores_zip(&self) -> bool {
-        self.sfx
-            || creatable_formats()
-                .get(self.format)
-                .is_some_and(|kind| kind.extension == "zip")
+    fn kind(&self) -> DialogFormat {
+        match creatable_formats()
+            .get(self.format)
+            .map(|kind| kind.extension)
+        {
+            Some("zip") => DialogFormat::Zip,
+            Some("7z") => DialogFormat::SevenZ,
+            _ => DialogFormat::Other,
+        }
+    }
+
+    fn stores_comment(&self) -> bool {
+        matches!(self.kind(), DialogFormat::Zip | DialogFormat::SevenZ)
     }
 
     fn set_sfx(&mut self, sfx: bool) {
         self.sfx = sfx;
         if sfx {
-            self.format = 0;
+            if !matches!(self.kind(), DialogFormat::Zip | DialogFormat::SevenZ) {
+                self.format = 0;
+            }
             self.update = UpdateMode::Add;
             let extension = if cfg!(windows) { "exe" } else { "sfx" };
             self.name = with_extension(&self.name, extension);
         } else {
-            self.name = with_extension(&self.name, "zip");
+            let extension = creatable_formats()
+                .get(self.format)
+                .map(|kind| kind.extension)
+                .unwrap_or("zip");
+            self.name = with_extension(&self.name, extension);
         }
         self.notice = None;
     }
@@ -423,9 +494,9 @@ impl AddDialog {
             self.notice = Some("Choose a file name, not a folder.".to_string());
             return None;
         }
-        if self.comment_touched && !self.comment.is_empty() && !self.stores_zip() {
+        if self.comment_touched && !self.comment.is_empty() && !self.stores_comment() {
             self.tab = Tab::Comment;
-            self.notice = Some("Comments are stored in ZIP archives.".to_string());
+            self.notice = Some("Comments are stored in ZIP and 7z archives.".to_string());
             return None;
         }
         if self.comment.len() > usize::from(u16::MAX) {
@@ -433,8 +504,12 @@ impl AddDialog {
             self.notice = Some("A ZIP comment is limited to 65535 bytes.".to_string());
             return None;
         }
-        if !self.password.is_empty() && !self.stores_zip() {
-            self.notice = Some("Passwords encrypt ZIP archives.".to_string());
+        if !self.password.is_empty() && !self.stores_comment() {
+            self.notice = Some("Passwords encrypt ZIP and 7z archives.".to_string());
+            return None;
+        }
+        if self.encrypt_headers && self.kind() == DialogFormat::SevenZ && self.password.is_empty() {
+            self.notice = Some("Encrypting file names needs a password.".to_string());
             return None;
         }
         if self.password.as_bytes().contains(&0) {
@@ -442,7 +517,7 @@ impl AddDialog {
             return None;
         }
         self.notice = None;
-        let comment = if self.comment_touched && self.stores_zip() {
+        let comment = if self.comment_touched && self.stores_comment() {
             Some(self.comment.clone())
         } else {
             None
@@ -459,6 +534,16 @@ impl AddDialog {
             },
             sfx: self.sfx,
             password: self.password.clone(),
+            sevenz: SevenZOpts {
+                method: self.sevenz_method,
+                solid: self.solid,
+                encrypt_headers: self.encrypt_headers && self.kind() == DialogFormat::SevenZ,
+            },
+            sfx_payload: if self.kind() == DialogFormat::SevenZ {
+                SfxPayload::SevenZ
+            } else {
+                SfxPayload::Zip
+            },
             comment,
         })
     }
@@ -500,7 +585,9 @@ fn adopt_extension(dialog: &mut AddDialog) {
     let name = dialog.name.to_ascii_lowercase();
     if name.ends_with(".exe") || name.ends_with(".sfx") {
         dialog.sfx = true;
-        dialog.format = 0;
+        if !matches!(dialog.kind(), DialogFormat::Zip | DialogFormat::SevenZ) {
+            dialog.format = 0;
+        }
         dialog.update = UpdateMode::Add;
         return;
     }

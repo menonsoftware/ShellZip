@@ -9,6 +9,8 @@ use crate::error::Error;
 use crate::options::CompressOpts;
 
 mod parallel;
+#[cfg(feature = "sevenz")]
+mod sevenz;
 mod stream;
 mod tar;
 mod zip;
@@ -28,6 +30,8 @@ pub trait ArchiveWriter {
     /// Keep destination members whose names are not in `replacing`.
     ///
     /// Called before any `add_*`. Formats that cannot update an existing file ignore it.
+    /// A 7z update decompresses each kept member and compresses it again: a solid
+    /// block cannot be copied byte for byte.
     fn retain_existing(&mut self, replacing: &[String]) -> Result<(), Error> {
         let _ = replacing;
         Ok(())
@@ -60,9 +64,12 @@ pub fn create(
             detail: "RAR creation is not implemented; the UnRAR licence allows extraction only"
                 .to_string(),
         }),
+        #[cfg(feature = "sevenz")]
+        Format::SevenZ => Ok(Box::new(sevenz::SevenZArchiver::create(path, opts)?)),
+        #[cfg(not(feature = "sevenz"))]
         Format::SevenZ => Err(Error::Unsupported {
             format: format.label(),
-            detail: "creating 7z is not implemented; this build extracts it".to_string(),
+            detail: "rebuild with the `sevenz` feature to create 7z".to_string(),
         }),
         other => Err(Error::Unsupported {
             format: other.label(),

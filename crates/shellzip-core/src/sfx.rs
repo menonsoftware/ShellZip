@@ -18,6 +18,50 @@ pub const MAGIC: &[u8; 7] = b"SZSFX01";
 /// On-disk trailer size, in bytes.
 pub const TRAILER_LEN: usize = 24;
 
+/// Which archive is appended to a stub. Stored in bit 0 of [`SfxTrailer::flags`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SfxPayload {
+    /// ZIP local header. Flag bit 0 is clear, which is every package written before 7z SFX.
+    Zip,
+    /// 7z signature. Flag bit 0 is set.
+    SevenZ,
+}
+
+impl SfxPayload {
+    /// Payload recorded in `flags`.
+    pub fn from_flags(flags: u8) -> Self {
+        if flags & 1 == 0 {
+            Self::Zip
+        } else {
+            Self::SevenZ
+        }
+    }
+
+    /// Flag byte for a new trailer. Other bits stay clear.
+    pub fn flags(self) -> u8 {
+        match self {
+            Self::Zip => 0,
+            Self::SevenZ => 1,
+        }
+    }
+
+    /// Extension used when unwrapping a package.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Zip => "zip",
+            Self::SevenZ => "7z",
+        }
+    }
+
+    /// Container this payload is read as.
+    pub fn format(self) -> crate::detect::Format {
+        match self {
+            Self::Zip => crate::detect::Format::Zip,
+            Self::SevenZ => crate::detect::Format::SevenZ,
+        }
+    }
+}
+
 /// Names searched beside `szip` when `--sfx-stub` and `SZIP_SFX_STUB` are unset.
 pub fn stub_file_names() -> &'static [&'static str] {
     &[
@@ -72,6 +116,11 @@ impl SfxTrailer {
         })
     }
 
+    /// Payload selected by [`Self::flags`].
+    pub fn payload(self) -> SfxPayload {
+        SfxPayload::from_flags(self.flags)
+    }
+
     /// `offset + length + trailer` is `file_len`, and both spans are non-empty.
     pub fn fits(self, file_len: u64) -> bool {
         let Some(end) = self.archive_offset.checked_add(self.archive_len) else {
@@ -101,10 +150,11 @@ pub fn locate(path: &Path) -> Result<Option<SfxTrailer>, Error> {
     let Some(trailer) = read_trailer(&mut file, file_len)? else {
         return Ok(None);
     };
-    if !payload_is_zip(&mut file, trailer.archive_offset)? {
+    if !payload_matches(&mut file, trailer.archive_offset, trailer.payload())? {
         return Err(Error::Archive(format!(
-            "SFX payload in `{}` is not a ZIP archive",
-            path.display()
+            "SFX payload in `{}` is not a {} archive",
+            path.display(),
+            trailer.payload().extension()
         )));
     }
     Ok(Some(trailer))
@@ -118,7 +168,7 @@ pub fn locate(path: &Path) -> Result<Option<SfxTrailer>, Error> {
 ///
 /// Returns [`Error::Usage`] when `stub` or `archive` is empty, and
 /// [`Error::Io`] when a copy or rename fails.
-pub fn build(dest: &Path, stub: &Path, archive: &Path) -> Result<u64, Error> {
+pub fn build(dest: &Path, stub: &Path, archive: &Path, payload: SfxPayload) -> Result<u64, Error> {
     let stub_len = file_len(stub)?;
     let archive_len = file_len(archive)?;
     if stub_len == 0 || archive_len == 0 {
@@ -129,7 +179,7 @@ pub fn build(dest: &Path, stub: &Path, archive: &Path) -> Result<u64, Error> {
     let trailer = SfxTrailer {
         archive_offset: stub_len,
         archive_len,
-        flags: 0,
+        flags: payload.flags(),
     };
     let (tmp, mut writer) = crate::archiver::prepare_temp(dest)?;
     let result = (|| -> Result<(), Error> {
@@ -225,13 +275,55 @@ pub fn convert(source: &Path, dest: &Path, stub: Option<&Path>) -> Result<SfxDir
         Error::Usage("pass --sfx-stub or place shellzip-sfx next to szip to wrap a ZIP".to_string())
     })?;
     let format = crate::detect::detect_file(source)?;
-    if !matches!(format, crate::detect::Format::Zip) {
-        return Err(Error::Usage(
-            "only a ZIP archive can be wrapped as a self-extractor".to_string(),
-        ));
+    match format {
+        crate::detect::Format::Zip => {
+            build(dest, stub, source, SfxPayload::Zip)?;
+        }
+        crate::detect::Format::SevenZ => {
+            ensure_stub_can_extract(source)?;
+            build(dest, stub, source, SfxPayload::SevenZ)?;
+        }
+        _ => {
+            return Err(Error::Usage(
+                "only a ZIP or 7z archive can be wrapped as a self-extractor".to_string(),
+            ));
+        }
     }
-    build(dest, stub, source)?;
     Ok(SfxDirection::Wrapped)
+}
+
+/// The stub links LZMA2 and AES only. Refuse a 7z that needs another codec.
+fn ensure_stub_can_extract(path: &Path) -> Result<(), Error> {
+    #[cfg(not(feature = "sevenz"))]
+    {
+        let _ = path;
+        return Err(Error::Unsupported {
+            format: "7Z".to_string(),
+            detail: "rebuild with the `sevenz` feature to wrap a 7z archive".to_string(),
+        });
+    }
+    #[cfg(feature = "sevenz")]
+    {
+        let archive = crate::extractor::sevenz::open_streaming(path, None)?;
+        for folder in archive.header().folders() {
+            for coder in &folder.coders {
+                if !stub_codec(&coder.method_id) {
+                    return Err(Error::Usage(
+                        "a 7z self-extractor can only store LZMA2, LZMA, Copy, and AES".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "sevenz")]
+fn stub_codec(id: &[u8]) -> bool {
+    matches!(
+        id,
+        [0x00] | [0x21] | [0x03, 0x01, 0x01] | [0x06, 0xF1, 0x07, 0x01]
+    )
 }
 
 /// A seekable window over `[start, start + len)` of an inner reader.
@@ -307,10 +399,11 @@ pub fn open_section(path: &Path) -> Result<Section<File>, Error> {
         .map_err(|err| Error::io(format!("stat {}", path.display()), err))?
         .len();
     if let Some(trailer) = read_trailer(&mut file, file_len)? {
-        if !payload_is_zip(&mut file, trailer.archive_offset)? {
+        if !payload_matches(&mut file, trailer.archive_offset, trailer.payload())? {
             return Err(Error::Archive(format!(
-                "SFX payload in `{}` is not a ZIP archive",
-                path.display()
+                "SFX payload in `{}` is not a {} archive",
+                path.display(),
+                trailer.payload().extension()
             )));
         }
         return Section::new(file, trailer.archive_offset, trailer.archive_len)
@@ -353,14 +446,17 @@ fn read_trailer(file: &mut File, file_len: u64) -> Result<Option<SfxTrailer>, Er
     Ok(Some(trailer))
 }
 
-fn payload_is_zip(file: &mut File, offset: u64) -> Result<bool, Error> {
+fn payload_matches(file: &mut File, offset: u64, payload: SfxPayload) -> Result<bool, Error> {
     file.seek(SeekFrom::Start(offset))
         .map_err(|err| Error::io("seek SFX payload", err))?;
-    let mut magic = [0u8; 4];
+    let mut magic = [0u8; 6];
     let n = file
         .read(&mut magic)
         .map_err(|err| Error::io("read SFX payload", err))?;
-    Ok(n == 4 && (magic == *b"PK\x03\x04" || magic == *b"PK\x05\x06"))
+    Ok(match payload {
+        SfxPayload::Zip => n >= 4 && (&magic[..4] == b"PK\x03\x04" || &magic[..4] == b"PK\x05\x06"),
+        SfxPayload::SevenZ => n == 6 && magic == [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C],
+    })
 }
 
 fn file_len(path: &Path) -> Result<u64, Error> {
@@ -459,7 +555,7 @@ mod tests {
         std::fs::write(&stub_path, b"MZ-stub-bytes").unwrap();
         std::fs::write(&zip_path, &zip).unwrap();
 
-        build(&sfx_path, &stub_path, &zip_path).unwrap();
+        build(&sfx_path, &stub_path, &zip_path, SfxPayload::Zip).unwrap();
         let trailer = locate(&sfx_path).unwrap().expect("trailer");
         assert_eq!(trailer.archive_offset, b"MZ-stub-bytes".len() as u64);
         assert_eq!(trailer.archive_len, zip.len() as u64);
@@ -484,6 +580,63 @@ mod tests {
             SfxDirection::Stripped
         );
         assert!(convert(&back, &back, Some(&stub_path)).is_err());
+    }
+
+    #[cfg(feature = "sevenz")]
+    #[test]
+    fn sevenz_payload_flag_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("hello.txt");
+        std::fs::write(&src, b"hello").unwrap();
+        let archive = tmp.path().join("in.7z");
+        crate::add(
+            &archive,
+            &[src],
+            &crate::CompressOpts {
+                level: 0,
+                threads: 1,
+                ..crate::CompressOpts::default()
+            },
+            &crate::NopProgress,
+        )
+        .unwrap();
+        let stub = tmp.path().join("stub.bin");
+        std::fs::write(&stub, b"MZ-stub").unwrap();
+        let sfx = tmp.path().join("out.exe");
+        build(&sfx, &stub, &archive, SfxPayload::SevenZ).unwrap();
+        let trailer = locate(&sfx).unwrap().expect("trailer");
+        assert_eq!(trailer.payload(), SfxPayload::SevenZ);
+        match crate::detect_file(&sfx).unwrap() {
+            crate::detect::Format::Sfx { inner, .. } => {
+                assert!(matches!(inner.as_ref(), crate::detect::Format::SevenZ));
+            }
+            other => panic!("expected 7z sfx, got {other:?}"),
+        }
+        let back = tmp.path().join("back.7z");
+        assert_eq!(convert(&sfx, &back, None).unwrap(), SfxDirection::Stripped);
+        assert!(locate(&back).unwrap().is_none());
+    }
+
+    #[cfg(feature = "sevenz-codecs")]
+    #[test]
+    fn convert_refuses_a_ppmd_archive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("text.7z");
+        let options = zesven::WriteOptions::new()
+            .method(zesven::codec::CodecMethod::PPMd)
+            .level_clamped(1);
+        let mut writer = zesven::Writer::create_path(&archive)
+            .unwrap()
+            .options(options);
+        writer
+            .add_bytes(zesven::ArchivePath::new("a.txt").unwrap(), b"hello")
+            .unwrap();
+        let _ = writer.finish().unwrap();
+        let stub = tmp.path().join("stub.bin");
+        std::fs::write(&stub, b"MZ-stub").unwrap();
+        let err = convert(&archive, &tmp.path().join("out.exe"), Some(&stub)).unwrap_err();
+        assert!(err.to_string().contains("LZMA2"), "{err}");
+        assert_eq!(err.exit_code(), 7);
     }
 
     #[test]

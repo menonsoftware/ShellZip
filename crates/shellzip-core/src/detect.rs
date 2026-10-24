@@ -79,21 +79,27 @@ impl Format {
     pub fn is_supported(&self) -> bool {
         match self {
             Self::Zip | Self::Tar(_) | Self::Gzip | Self::Zstd | Self::Xz | Self::Bzip2 => true,
-            Self::Sfx { inner, .. } => matches!(inner.as_ref(), Self::Zip),
+            Self::Sfx { inner, .. } => {
+                matches!(inner.as_ref(), Self::Zip)
+                    || (cfg!(feature = "sevenz") && matches!(inner.as_ref(), Self::SevenZ))
+            }
             Self::Rar4 | Self::Rar5 => cfg!(feature = "rar"),
             Self::SevenZ => cfg!(feature = "sevenz"),
         }
     }
 
-    /// Formats this build can create. RAR, 7z, xz, and bzip2 are extract-only.
+    /// Formats this build can create. RAR, xz, and bzip2 are extract-only.
+    /// 7z creation needs the `sevenz` feature.
     pub fn can_create(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::Zip
-                | Self::Tar(Compression::None | Compression::Gzip | Compression::Zstd)
-                | Self::Gzip
-                | Self::Zstd
-        )
+            | Self::Tar(Compression::None | Compression::Gzip | Compression::Zstd)
+            | Self::Gzip
+            | Self::Zstd => true,
+            Self::SevenZ => cfg!(feature = "sevenz"),
+            Self::Sfx { inner, .. } => inner.can_create(),
+            Self::Tar(_) | Self::Xz | Self::Bzip2 | Self::Rar4 | Self::Rar5 => false,
+        }
     }
 
     /// Formats that can take a password. Tar and single-file streams cannot.
@@ -121,6 +127,11 @@ pub fn creatable_formats() -> &'static [CreatableFormat] {
         CreatableFormat {
             label: "ZIP",
             extension: "zip",
+        },
+        #[cfg(feature = "sevenz")]
+        CreatableFormat {
+            label: "7Z",
+            extension: "7z",
         },
         CreatableFormat {
             label: "TAR",
@@ -174,7 +185,7 @@ pub fn format_from_extension(path: &Path) -> Result<Format, Error> {
         Format::Bzip2
     } else if name.ends_with(".rar") {
         Format::Rar5
-    } else if name.ends_with(".7z") {
+    } else if name.ends_with(".7z.001") || name.ends_with(".7z") {
         Format::SevenZ
     } else {
         return Err(Error::Usage(format!(
@@ -217,7 +228,7 @@ pub fn detect_file(path: &Path) -> Result<Format, Error> {
             Ok(Some(trailer)) => {
                 return Ok(Format::Sfx {
                     offset: trailer.archive_offset,
-                    inner: Box::new(Format::Zip),
+                    inner: Box::new(trailer.payload().format()),
                 });
             }
             Ok(None) => {}
@@ -278,7 +289,7 @@ fn sfx_from_trailer(bytes: &[u8]) -> Option<Format> {
     let trailer = crate::sfx::trailer_from_bytes(bytes)?;
     let offset = usize::try_from(trailer.archive_offset).ok()?;
     let inner = detect_header(bytes.get(offset..)?)?;
-    if !matches!(inner, Format::Zip) {
+    if inner != trailer.payload().format() {
         return None;
     }
     Some(Format::Sfx {
@@ -403,7 +414,7 @@ mod tests {
         assert!(!Format::Xz.can_create());
         assert!(!Format::Bzip2.can_create());
         assert!(!Format::Rar5.can_create());
-        assert!(!Format::SevenZ.can_create());
+        assert_eq!(Format::SevenZ.can_create(), cfg!(feature = "sevenz"));
     }
 
     #[test]
@@ -500,6 +511,10 @@ mod tests {
         );
         assert_eq!(
             format_from_extension(Path::new("a.7z")).unwrap(),
+            Format::SevenZ
+        );
+        assert_eq!(
+            format_from_extension(Path::new("a.7z.001")).unwrap(),
             Format::SevenZ
         );
         assert!(format_from_extension(Path::new("a.cab")).is_err());

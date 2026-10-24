@@ -2,7 +2,9 @@
 //!
 //! Codes follow the RAR convention: `0` success, `1` warning, `2` fatal,
 //! `3` bad checksum, `5` write, `6` open, `7` user, `10` no files,
-//! `11` password, `255` interrupted.
+//! `11` password, `255` interrupted. A 7z error from `zesven` uses the same
+//! codes: a wrong or missing password is 11, a CRC mismatch is 3, and
+//! cancellation is 255.
 
 use std::io;
 use std::path::PathBuf;
@@ -116,6 +118,53 @@ impl From<zip::result::ZipError> for Error {
             }
             other => Self::Archive(other.to_string()),
         }
+    }
+}
+
+#[cfg(feature = "sevenz")]
+impl From<zesven::Error> for Error {
+    fn from(err: zesven::Error) -> Self {
+        map_zesven(err, false)
+    }
+}
+
+/// Map a `zesven` failure. `had_password` turns a rejected password into
+/// [`Error::BadPassword`]; without one, the same failure asks for a password.
+#[cfg(feature = "sevenz")]
+pub(crate) fn map_zesven(err: zesven::Error, had_password: bool) -> Error {
+    match err {
+        zesven::Error::Io(source) => Error::io("7z", source),
+        zesven::Error::PasswordRequired => {
+            if had_password {
+                Error::BadPassword
+            } else {
+                Error::Encrypted("archive headers".to_string())
+            }
+        }
+        zesven::Error::WrongPassword { .. } | zesven::Error::CryptoError(_) => {
+            if had_password {
+                Error::BadPassword
+            } else {
+                Error::Encrypted("archive headers".to_string())
+            }
+        }
+        zesven::Error::CrcMismatch { entry_name, .. } => Error::BadChecksum {
+            entry: entry_name.unwrap_or_else(|| "7z entry".to_string()),
+        },
+        zesven::Error::Cancelled => Error::Interrupted,
+        zesven::Error::UnsupportedMethod { method_id } => Error::Unsupported {
+            format: "7Z".to_string(),
+            detail: format!("compression method {method_id:#x} is not in this build"),
+        },
+        zesven::Error::UnsupportedFeature { feature } => Error::Unsupported {
+            format: "7Z".to_string(),
+            detail: feature.to_string(),
+        },
+        zesven::Error::PathTraversal { path, .. } => Error::UnsafePath(path),
+        zesven::Error::ResourceLimitExceeded(detail)
+        | zesven::Error::InvalidFormat(detail)
+        | zesven::Error::CorruptHeader { reason: detail, .. } => Error::Archive(detail),
+        other => Error::Archive(other.to_string()),
     }
 }
 

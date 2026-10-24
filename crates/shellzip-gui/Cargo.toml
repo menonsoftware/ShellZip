@@ -16,7 +16,7 @@ eframe = "0.32"
 egui = "0.32"
 egui_extras = { version = "0.32", features = ["all_loaders"] }
 rfd = "0.15"
-shellzip-core = { path = "../shellzip-core", features = ["rar", "sevenz"] }
+shellzip-core = { path = "../shellzip-core", features = ["rar", "sevenz-codecs", "sevenz-parallel"] }
 toml = "1.1.8"
 
 [lints]

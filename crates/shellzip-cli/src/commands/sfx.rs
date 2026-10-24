@@ -71,8 +71,8 @@ fn default_output(source: &Path) -> PathBuf {
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_else(|| "archive".to_string());
-    let name = if shellzip_core::locate(source).ok().flatten().is_some() {
-        format!("{stem}.zip")
+    let name = if let Some(trailer) = shellzip_core::locate(source).ok().flatten() {
+        format!("{stem}.{}", trailer.payload().extension())
     } else if cfg!(windows) {
         format!("{stem}.exe")
     } else {

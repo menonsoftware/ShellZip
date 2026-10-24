@@ -3,14 +3,20 @@
 //! The password in these tests is a fixed fixture vector.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "rar")]
+use std::path::PathBuf;
+#[cfg(feature = "rar")]
 use std::process::Command;
 
+#[cfg(feature = "rar")]
 use sha2::{Digest, Sha256};
 use shellzip_core::{
-    CompressOpts, Error, ExtractOpts, ListOpts, NopProgress, Overwrite, Password, UpdateMode, add,
-    extract, list, list_with, test,
+    CompressOpts, Error, ExtractOpts, NopProgress, Overwrite, Password, UpdateMode, add, extract,
+    list, test,
 };
+#[cfg(feature = "rar")]
+use shellzip_core::{ListOpts, list_with};
 
 const FIXTURE_PASSWORD: &str = "szip-fixture";
 
@@ -18,6 +24,7 @@ fn password() -> Password {
     Password::new(FIXTURE_PASSWORD).unwrap()
 }
 
+#[cfg(feature = "rar")]
 fn fixtures_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
 }
@@ -390,131 +397,4 @@ fn find_unrar() -> Option<PathBuf> {
                 .find(|candidate| candidate.is_file())
         })
     })
-}
-
-#[cfg(feature = "sevenz")]
-#[test]
-fn sevenz_lzma2_bzip2_deflate_and_aes_round_trip() {
-    let tmp = tempfile::tempdir().unwrap();
-    let src = tmp.path().join("tree");
-    fs::create_dir(&src).unwrap();
-    fs::write(src.join("hello.txt"), b"hello\n").unwrap();
-    fs::write(src.join("other.txt"), b"other\n").unwrap();
-
-    let plain = tmp.path().join("plain.7z");
-    sevenz_rust2::compress_to_path(&src, &plain).unwrap();
-    let (_opened, entries) = list(&plain).unwrap();
-    assert!(
-        entries
-            .iter()
-            .any(|entry| entry.path.ends_with("hello.txt")),
-        "{entries:?}"
-    );
-    let out = extract_bytes(&plain, None);
-    assert_eq!(fs::read(out.path().join("hello.txt")).unwrap(), b"hello\n");
-    assert_eq!(fs::read(out.path().join("other.txt")).unwrap(), b"other\n");
-
-    for (name, method) in [
-        ("bzip2.7z", bzip2_method()),
-        ("deflate.7z", deflate_method()),
-    ] {
-        let archive = tmp.path().join(name);
-        write_sevenz(&archive, &src.join("hello.txt"), vec![method], false, None);
-        let out = extract_bytes(&archive, None);
-        assert_eq!(fs::read(out.path().join("hello.txt")).unwrap(), b"hello\n");
-    }
-
-    let visible = tmp.path().join("aes.7z");
-    write_sevenz(
-        &visible,
-        &src.join("hello.txt"),
-        vec![lzma2_method()],
-        false,
-        Some(FIXTURE_PASSWORD),
-    );
-    let (_opened, entries) = list(&visible).unwrap();
-    assert!(
-        entries
-            .iter()
-            .any(|entry| entry.path.ends_with("hello.txt") && entry.encrypted)
-    );
-    let missing = extract(
-        &visible,
-        &ExtractOpts::new(tmp.path().join("denied")),
-        None,
-        &NopProgress,
-    )
-    .unwrap_err();
-    assert_eq!(missing.exit_code(), 11);
-    let out = extract_bytes(&visible, Some(password()));
-    assert_eq!(fs::read(out.path().join("hello.txt")).unwrap(), b"hello\n");
-
-    let hidden = tmp.path().join("headers.7z");
-    write_sevenz(
-        &hidden,
-        &src.join("hello.txt"),
-        vec![lzma2_method()],
-        true,
-        Some(FIXTURE_PASSWORD),
-    );
-    let missing = list(&hidden).unwrap_err();
-    assert_eq!(missing.exit_code(), 11, "{missing}");
-    let wrong = list_with(
-        &hidden,
-        &ListOpts {
-            password: Some(Password::new("wrong-fixture").unwrap()),
-            ..ListOpts::default()
-        },
-    )
-    .unwrap_err();
-    assert_eq!(wrong.exit_code(), 11, "{wrong}");
-    let out = extract_bytes(&hidden, Some(password()));
-    assert_eq!(fs::read(out.path().join("hello.txt")).unwrap(), b"hello\n");
-}
-
-#[cfg(feature = "sevenz")]
-fn write_sevenz(
-    dest: &Path,
-    src: &Path,
-    methods: Vec<sevenz_rust2::EncoderConfiguration>,
-    encrypt_header: bool,
-    password: Option<&str>,
-) {
-    let mut writer = sevenz_rust2::ArchiveWriter::create(dest).unwrap();
-    let mut chain = methods;
-    if let Some(password) = password {
-        chain.insert(0, aes_method_with(password));
-    }
-    if !chain.is_empty() {
-        writer.set_content_methods(chain);
-    }
-    writer.set_encrypt_header(encrypt_header && password.is_some());
-    writer
-        .push_archive_entry(
-            sevenz_rust2::ArchiveEntry::from_path(src, "hello.txt".to_string()),
-            Some(fs::File::open(src).unwrap()),
-        )
-        .unwrap();
-    writer.finish().unwrap();
-}
-
-#[cfg(feature = "sevenz")]
-fn aes_method_with(password: &str) -> sevenz_rust2::EncoderConfiguration {
-    sevenz_rust2::encoder_options::AesEncoderOptions::new(sevenz_rust2::Password::new(password))
-        .into()
-}
-
-#[cfg(feature = "sevenz")]
-fn lzma2_method() -> sevenz_rust2::EncoderConfiguration {
-    sevenz_rust2::EncoderMethod::LZMA2.into()
-}
-
-#[cfg(feature = "sevenz")]
-fn bzip2_method() -> sevenz_rust2::EncoderConfiguration {
-    sevenz_rust2::encoder_options::Bzip2Options::from_level(1).into()
-}
-
-#[cfg(feature = "sevenz")]
-fn deflate_method() -> sevenz_rust2::EncoderConfiguration {
-    sevenz_rust2::encoder_options::DeflateOptions::from_level(1).into()
 }

@@ -10,7 +10,9 @@ description = "Archive pack and unpack core for ShellZip"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 crc32fast = "1"
 filetime = "0.2"
-flate2 = "1"
+# `zlib-rs` matches zesven's deflate backend. Enabling both `miniz_oxide` and
+# `zlib-rs` on one `flate2` build does not compile.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 globset = "0.4"
 tar = "0.4"
 thiserror = "2"
@@ -24,16 +26,21 @@ blake2s_simd = "1.0.5"
 xz2 = { version = "0.1.7", default-features = false, features = ["static"] }
 bzip2 = "0.6.1"
 unrar = { version = "0.5.8", optional = true }
-sevenz-rust2 = { version = "0.24.1", optional = true, features = ["deflate"] }
+zesven = { version = "3.2", default-features = false, features = ["lzma2", "aes"], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
 sha2 = "0.10"
 tempfile = "3"
+zesven = { version = "3.2", default-features = false, features = ["lzma2", "aes"] }
 
 [[bench]]
 name = "zip_threads"
 harness = false
+
+[[test]]
+name = "sevenz"
+required-features = ["sevenz"]
 
 [lints]
 workspace = true
@@ -41,4 +48,9 @@ workspace = true
 [features]
 # Extraction only. The UnRAR licence forbids a RAR compressor.
 rar = ["dep:unrar"]
-sevenz = ["dep:sevenz-rust2"]
+# 7z read and write: LZMA, LZMA2, and AES-256. This is what the SFX stub links.
+sevenz = ["dep:zesven"]
+# Extra 7z codecs. Additive: a `sevenz`-only build still reads LZMA2 and AES.
+sevenz-codecs = ["sevenz", "zesven/deflate", "zesven/bzip2", "zesven/ppmd", "zesven/zstd"]
+# Multi-threaded 7z compression and a memory budget taken from the machine.
+sevenz-parallel = ["sevenz", "zesven/parallel", "zesven/sysinfo"]

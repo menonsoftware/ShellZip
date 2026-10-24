@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 sha2 = { version = "0.11.1", default-features = false }
-shellzip-core = { path = "../crates/shellzip-core" }
+shellzip-core = { path = "../crates/shellzip-core", features = ["sevenz-codecs", "sevenz-parallel"] }
 
 [lints]
 workspace = true

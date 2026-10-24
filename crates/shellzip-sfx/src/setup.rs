@@ -305,7 +305,11 @@ mod win {
         dest: &Path,
         password: Option<Password>,
     ) -> Result<i32, shellzip_core::Error> {
-        let encrypted = list(exe)?.1.iter().any(|entry| entry.encrypted);
+        let encrypted = match list(exe) {
+            Ok((_, entries)) => entries.iter().any(|entry| entry.encrypted),
+            Err(shellzip_core::Error::Encrypted(_)) => true,
+            Err(err) => return Err(err),
+        };
         let com = ComInit::new();
         init_common_controls();
         let mut state = SetupState {

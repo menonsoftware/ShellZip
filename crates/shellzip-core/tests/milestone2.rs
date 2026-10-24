@@ -132,7 +132,7 @@ fn update_freshen_and_delete_rewrite_zip() {
     let (_o, entries) = list(&archive).unwrap();
     assert!(entries.iter().any(|entry| entry.path == "b.txt"));
 
-    delete(&archive, &["b.txt".to_string()], &NopProgress).unwrap();
+    delete(&archive, &["b.txt".to_string()], None, &NopProgress).unwrap();
     let (_o, entries) = list(&archive).unwrap();
     assert!(entries.iter().all(|entry| entry.path != "b.txt"));
     assert!(entries.iter().any(|entry| entry.path == "a.txt"));
@@ -363,7 +363,7 @@ fn zip_comment_is_kept_until_replaced() {
     let mut noted = opts(1);
     noted.comment = Some("kept".to_string());
     add(&archive, std::slice::from_ref(&file), &noted, &NopProgress).unwrap();
-    delete(&archive, &["a.txt".to_string()], &NopProgress).unwrap();
+    delete(&archive, &["a.txt".to_string()], None, &NopProgress).unwrap();
     assert_eq!(zip_comment(&archive).unwrap(), "kept");
 }
 

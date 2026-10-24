@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use shellzip_core::{
-    CompressOpts, ConflictChoice, Entry, ExtractOpts, Password, UpdateMode, add, add_prompted,
-    add_sfx, delete, extract, format_bytes, format_crc, list, test,
+    CompressOpts, ConflictChoice, Entry, Error, ExtractOpts, ListOpts, Password, UpdateMode, add,
+    add_prompted, add_sfx, delete, extract, format_bytes, format_crc, list_with, test,
 };
 
 use crate::add_dialog::{self, AddAction, AddRequest, AskPrompt, AskReply};
@@ -17,7 +17,13 @@ use crate::explorer::{
     totals_label,
 };
 use crate::theme::{self, CANVAS};
-use crate::worker::{self, Outcome, SharedProgress};
+use crate::worker::{self, Outcome, PasswordJob, PasswordRequest, SharedProgress};
+
+/// Password dialog waiting on the window.
+struct PasswordAsk {
+    request: PasswordRequest,
+    text: String,
+}
 
 /// Where the file pane is looking.
 enum Place {
@@ -50,6 +56,9 @@ pub struct ShellZipApp {
     pending_delete: Option<Vec<String>>,
     add_dialog: Option<add_dialog::AddDialog>,
     ask: Option<AskPrompt>,
+    password_ask: Option<PasswordAsk>,
+    /// Password that opened the archive currently shown, if it needed one.
+    opened_secret: Option<(PathBuf, Password)>,
     options: PackSettings,
     saved: PackSettings,
     generation: u64,
@@ -99,6 +108,8 @@ impl ShellZipApp {
             pending_delete: None,
             add_dialog: None,
             ask: None,
+            password_ask: None,
+            opened_secret: None,
             options,
             saved: options,
             generation,
@@ -137,6 +148,11 @@ impl ShellZipApp {
     }
 
     fn start_list(&mut self, path: PathBuf) {
+        let password = self.saved_password(&path);
+        self.start_list_with(path, password);
+    }
+
+    fn start_list_with(&mut self, path: PathBuf, password: Option<Password>) {
         if self.busy {
             return;
         }
@@ -144,14 +160,21 @@ impl ShellZipApp {
         self.begin_job();
         self.status = format!("Opening {}", path.display());
         let tx = self.tx.clone();
-        worker::spawn(tx, move || {
-            let (opened, entries) = list(&path)?;
-            Ok(Outcome::Listed {
+        let again = password.is_some();
+        worker::spawn(tx, move || match list_archive(&path, password.as_ref()) {
+            Ok((opened, entries)) => Ok(Outcome::Listed {
                 generation,
                 format: opened.detected().label(),
                 path,
                 entries,
-            })
+            }),
+            Err(err) if needs_password(&err) => Ok(Outcome::NeedPassword(PasswordRequest {
+                generation,
+                path,
+                job: PasswordJob::List,
+                again,
+            })),
+            Err(err) => Err(err),
         });
     }
 
@@ -169,21 +192,53 @@ impl ShellZipApp {
         let names = self.member_filter(&archive);
         let flat = self.options.flat;
         let overwrite = self.options.overwrite;
+        let password = self.saved_password(&archive);
+        self.spawn_extract(archive, output, flat, overwrite, names, password);
+    }
+
+    fn spawn_extract(
+        &mut self,
+        archive: PathBuf,
+        output: PathBuf,
+        flat: bool,
+        overwrite: shellzip_core::Overwrite,
+        names: Option<Vec<String>>,
+        password: Option<Password>,
+    ) {
+        if self.busy {
+            return;
+        }
         let progress = Arc::clone(&self.progress);
+        let generation = self.generation;
         self.begin_job();
         let tx = self.tx.clone();
+        let again = password.is_some();
         worker::spawn(tx, move || {
-            let mut opts = ExtractOpts::new(output);
+            let mut opts = ExtractOpts::new(&output);
             opts.flat = flat;
             opts.overwrite = overwrite;
+            opts.password = password;
             if names.is_some() {
-                opts.exact_paths = names;
+                opts.exact_paths = names.clone();
             }
-            let report = extract(&archive, &opts, None, progress.as_ref())?;
-            Ok(Outcome::Finished(format!(
-                "extracted {}, skipped {}",
-                report.extracted, report.skipped
-            )))
+            match extract(&archive, &opts, None, progress.as_ref()) {
+                Ok(report) => Ok(Outcome::Finished(format!(
+                    "extracted {}, skipped {}",
+                    report.extracted, report.skipped
+                ))),
+                Err(err) if needs_password(&err) => Ok(Outcome::NeedPassword(PasswordRequest {
+                    generation,
+                    path: archive,
+                    job: PasswordJob::Extract {
+                        output,
+                        flat,
+                        overwrite,
+                        names,
+                    },
+                    again,
+                })),
+                Err(err) => Err(err),
+            }
         });
     }
 
@@ -195,11 +250,31 @@ impl ShellZipApp {
         if self.busy {
             return;
         }
+        let password = self.saved_password(&archive);
+        self.spawn_test(archive, password);
+    }
+
+    fn spawn_test(&mut self, archive: PathBuf, password: Option<Password>) {
+        if self.busy {
+            return;
+        }
         let progress = Arc::clone(&self.progress);
+        let generation = self.generation;
         self.begin_job();
         let tx = self.tx.clone();
+        let again = password.is_some();
         worker::spawn(tx, move || {
-            let report = test(&archive, None, progress.as_ref())?;
+            let report = match test(&archive, password.as_ref(), progress.as_ref()) {
+                Err(err) if needs_password(&err) => {
+                    return Ok(Outcome::NeedPassword(PasswordRequest {
+                        generation,
+                        path: archive,
+                        job: PasswordJob::Test,
+                        again,
+                    }));
+                }
+                other => other?,
+            };
             let code = report.exit_code();
             if code == 0 {
                 Ok(Outcome::Finished(format!("OK, {} entries", report.entries)))
@@ -207,8 +282,15 @@ impl ShellZipApp {
                 Err(shellzip_core::Error::BadChecksum {
                     entry: report.checksums.join(", "),
                 })
+            } else if !again && !report.encrypted.is_empty() {
+                Ok(Outcome::NeedPassword(PasswordRequest {
+                    generation,
+                    path: archive,
+                    job: PasswordJob::Test,
+                    again: false,
+                }))
             } else {
-                Err(shellzip_core::Error::Encrypted(report.encrypted.join(", ")))
+                Err(Error::Encrypted(report.encrypted.join(", ")))
             }
         });
     }
@@ -254,6 +336,8 @@ impl ShellZipApp {
         }
         self.options.level = request.level.min(5);
         self.options.method = request.method;
+        self.options.sevenz_method = request.sevenz.method;
+        self.options.solid = request.sevenz.solid;
         let password = if request.password.is_empty() {
             None
         } else {
@@ -276,13 +360,12 @@ impl ShellZipApp {
         } else {
             None
         };
-        let merging_zip = stub.is_none()
+        let merging = stub.is_none()
             && request.dest.is_file()
-            && request
-                .dest
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
-        let force = request.dest.exists() && !merging_zip;
+            && request.dest.extension().is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("zip") || ext.eq_ignore_ascii_case("7z")
+            });
+        let force = request.dest.exists() && !merging;
         let generation = self.next_generation();
         let progress = Arc::clone(&self.progress);
         self.begin_job();
@@ -302,6 +385,7 @@ impl ShellZipApp {
             (names_tx, replies_rx)
         });
         worker::spawn(tx, move || {
+            let listed = password.clone();
             let opts = CompressOpts {
                 level: request.level.min(5),
                 zip_method: request.method,
@@ -309,12 +393,20 @@ impl ShellZipApp {
                 update: request.update,
                 comment: request.comment,
                 password,
+                sevenz: request.sevenz,
                 ..CompressOpts::default()
             };
             let dest = request.dest;
             let files = request.inputs;
             let report = if let Some(stub) = stub {
-                add_sfx(&dest, &stub, &files, &opts, progress.as_ref())?
+                add_sfx(
+                    &dest,
+                    &stub,
+                    &files,
+                    &opts,
+                    request.sfx_payload,
+                    progress.as_ref(),
+                )?
             } else if let Some((names_tx, replies_rx)) = prompt {
                 let policy = std::sync::Mutex::new(None);
                 let decide = move |name: &str| decide_member(name, &policy, &names_tx, &replies_rx);
@@ -322,7 +414,7 @@ impl ShellZipApp {
             } else {
                 add(&dest, &files, &opts, progress.as_ref())?
             };
-            match list(&dest) {
+            match list_archive(&dest, listed.as_ref()) {
                 Ok((opened, entries)) => Ok(Outcome::Listed {
                     generation,
                     path: dest,
@@ -345,12 +437,12 @@ impl ShellZipApp {
         let (format, path) = match &self.place {
             Place::Archive { format, path, .. } => (format.clone(), path.clone()),
             Place::Folder { .. } => {
-                self.error = Some("Open a ZIP to delete members.".to_string());
+                self.error = Some("Open a ZIP or 7z archive to delete members.".to_string());
                 return;
             }
         };
-        if format != "ZIP" {
-            self.error = Some("Delete only rewrites ZIP archives.".to_string());
+        if format != "ZIP" && format != "7Z" {
+            self.error = Some("Delete only rewrites ZIP and 7z archives.".to_string());
             return;
         }
         let Some(names) = self.member_filter(&path) else {
@@ -372,13 +464,33 @@ impl ShellZipApp {
             return;
         };
         let archive = path.clone();
+        let password = self.saved_password(&archive);
+        self.spawn_delete(archive, names, password);
+    }
+
+    fn spawn_delete(&mut self, archive: PathBuf, names: Vec<String>, password: Option<Password>) {
+        if self.busy {
+            return;
+        }
         let generation = self.next_generation();
         let progress = Arc::clone(&self.progress);
         self.begin_job();
         let tx = self.tx.clone();
+        let again = password.is_some();
+        let listed = password.clone();
         worker::spawn(tx, move || {
-            let report = delete(&archive, &names, progress.as_ref())?;
-            match list(&archive) {
+            let report = match delete(&archive, &names, password.as_ref(), progress.as_ref()) {
+                Err(err) if needs_password(&err) => {
+                    return Ok(Outcome::NeedPassword(PasswordRequest {
+                        generation,
+                        path: archive,
+                        job: PasswordJob::Delete { names },
+                        again,
+                    }));
+                }
+                other => other?,
+            };
+            match list_archive(&archive, listed.as_ref()) {
                 Ok((opened, entries)) => Ok(Outcome::Listed {
                     generation,
                     path: archive,
@@ -476,7 +588,103 @@ impl ShellZipApp {
                     self.status.clear();
                     self.error = Some(message);
                 }
+                Outcome::NeedPassword(request) => {
+                    self.busy = false;
+                    self.ask = None;
+                    if request.generation == self.generation {
+                        self.password_ask = Some(PasswordAsk {
+                            request,
+                            text: String::new(),
+                        });
+                    }
+                }
             }
+        }
+    }
+
+    fn saved_password(&self, path: &Path) -> Option<Password> {
+        self.opened_secret
+            .as_ref()
+            .filter(|(saved, _)| saved == path)
+            .map(|(_, password)| password.clone())
+    }
+
+    fn password_window(&mut self, ctx: &egui::Context) {
+        let Some(ask) = self.password_ask.as_mut() else {
+            return;
+        };
+        let mut open = true;
+        let mut submit = false;
+        let mut cancel = false;
+        let prompt = if ask.request.again {
+            "That password was incorrect. Enter it again."
+        } else {
+            "Enter the password to open this archive."
+        };
+        egui::Window::new("Password")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_min_width(360.0);
+                ui.label(prompt);
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut ask.text)
+                        .password(true)
+                        .desired_width(f32::INFINITY)
+                        .id_salt("shellzip-open-password"),
+                );
+                field.request_focus();
+                if ui.button("OK").clicked()
+                    || ui.input(|input| input.key_pressed(egui::Key::Enter))
+                {
+                    submit = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        if !open || cancel {
+            self.password_ask = None;
+            return;
+        }
+        if !submit {
+            return;
+        }
+        let Some(ask) = self.password_ask.take() else {
+            return;
+        };
+        if ask.text.is_empty() {
+            self.error = Some("Enter a password.".to_string());
+            self.password_ask = Some(PasswordAsk {
+                request: ask.request,
+                text: String::new(),
+            });
+            return;
+        }
+        if ask.text.as_bytes().contains(&0) {
+            self.error = Some("The password cannot contain a NUL byte.".to_string());
+            return;
+        }
+        let Ok(password) = Password::new(ask.text) else {
+            return;
+        };
+        self.opened_secret = Some((ask.request.path.clone(), password.clone()));
+        self.retry_with_password(ask.request, password);
+    }
+
+    fn retry_with_password(&mut self, request: PasswordRequest, password: Password) {
+        match request.job {
+            PasswordJob::List => self.start_list_with(request.path, Some(password)),
+            PasswordJob::Test => self.spawn_test(request.path, Some(password)),
+            PasswordJob::Extract {
+                output,
+                flat,
+                overwrite,
+                names,
+            } => self.spawn_extract(request.path, output, flat, overwrite, names, Some(password)),
+            PasswordJob::Delete { names } => self.spawn_delete(request.path, names, Some(password)),
         }
     }
 
@@ -956,6 +1164,23 @@ impl ShellZipApp {
     }
 }
 
+fn needs_password(err: &Error) -> bool {
+    matches!(err, Error::Encrypted(_) | Error::BadPassword)
+}
+
+fn list_archive(
+    path: &Path,
+    password: Option<&Password>,
+) -> shellzip_core::Result<(shellzip_core::Opened, Vec<Entry>)> {
+    list_with(
+        path,
+        &ListOpts {
+            password: password.cloned(),
+            ..ListOpts::default()
+        },
+    )
+}
+
 fn is_sfx_name(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -966,6 +1191,7 @@ impl eframe::App for ShellZipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
         self.poll_ask();
+        self.password_window(ctx);
         crate::icons::warm(ctx);
         if self.busy || !self.loaded {
             ctx.request_repaint();

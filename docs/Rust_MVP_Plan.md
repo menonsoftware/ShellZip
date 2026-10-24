@@ -29,7 +29,7 @@ Derived from the WinRAR 7.23 analysis in `REA_WinRAR_Report.md`. Design choices 
 | Create ZIP (Deflate / Stored / Zstd method 93) | GUI yes | **M1** | `zip` crate; Zstd method optional |
 | Create `.tar`, `.tar.gz`, `.tar.zst` | no (extract only) | **M1** | `tar` + `flate2` + `zstd` |
 | Extract ZIP / TAR / GZ / ZST / XZ / BZ2 | yes | **M1** (ZIP, TAR, GZ, ZST), XZ/BZ2 **M2** | `xz2`, `bzip2` feature‑gated |
-| Extract 7z | via `7zxa.dll` | **M3** (feature `sevenz`) | `sevenz-rust2` |
+| Extract and create 7z | via `7zxa.dll` (extract) | **done** (feature `sevenz`) | `zesven`: LZMA2 and AES in `sevenz`; Deflate, BZip2, PPMd, and Zstd in `sevenz-codecs` |
 | Extract RAR4/RAR5 (incl. password, solid, multivolume) | yes | **M3** (feature `rar`) | `unrar` crate (binds UnRAR C++; license = extraction only) |
 | **Create RAR** | yes | **Never** | RAR encoder is proprietary; UnRAR licence forbids re‑creating the RAR compressor |
 | Password protection | AES‑256, `-p`/`-hp` | **M3** ZIP AES‑256 (AE‑2) | `zip` feature `aes-crypto` |
@@ -57,7 +57,7 @@ Derived from the WinRAR 7.23 analysis in `REA_WinRAR_Report.md`. Design choices 
 | Zstd | `zstd` (feature `zstdmt`) | Built‑in multithreading, long‑distance matching (`--long`) ≈ WinRAR `-mcl` |
 | XZ / BZ2 (M2) | `xz2`, `bzip2` | Extract parity with WinRAR's foreign‑format list |
 | RAR (M3) | `unrar` | Safe wrapper over UnRAR; extract/list/test only |
-| 7z (M3) | `sevenz-rust2` | Pure Rust 7z reader (LZMA/LZMA2/BZip2/Deflate; AES with feature) |
+| 7z | `zesven` | Pure Rust 7z reader and writer (LZMA/LZMA2/AES by default; more codecs and threads behind features). Replaces `sevenz-rust2`. |
 | Format sniffing | own `detect.rs` (magic bytes) + `infer` as fallback | WinRAR sniffs by signature, not extension **[observed: `rar lt out.zip` → RAR 5]** |
 | CLI | `clap` (derive) + `clap_complete` | `rar`‑like `command + switches` grammar |
 | Walk / masks | `walkdir`, `globset`, `ignore` (for `.gitignore` awareness, optional) | `-r`, `-x<mask>`, `-n<mask>` |
@@ -213,7 +213,7 @@ Acceptance: every RAR fixture lists/tests/extracts identically to `UnRAR.exe` (c
 
 ### Phase 5 — post‑MVP backlog (not scheduled)
 
-Explorer `IExplorerCommand` context menu via `windows` crate + sparse MSIX (same pattern as `RarExtPackage.msix`), multivolume ZIP, `.7z` creation (`sevenz-rust2` writer), encrypted `.tar.zst` envelope (AES‑GCM + Argon2id), recovery data via PAR2 (`par2` crate), solid dedup `-oi`‑style hard‑link detection, language packs.
+Explorer `IExplorerCommand` context menu via `windows` crate + sparse MSIX (same pattern as `RarExtPackage.msix`), multivolume ZIP, encrypted `.tar.zst` envelope (AES‑GCM + Argon2id), recovery data via PAR2 (`par2` crate), solid dedup `-oi`‑style hard‑link detection, language packs. 7z create/extract is in tree via `zesven`, not this backlog.
 
 ---
 
