@@ -45,6 +45,8 @@ pub fn add(args: &AddArgs, mode: UpdateMode, shared: &Shared) -> Result<i32, Err
             UpdateMode::Update if existed => "updated",
             UpdateMode::Update => "created",
             UpdateMode::Freshen => "freshened",
+            UpdateMode::Ask | UpdateMode::Skip => "updated",
+            UpdateMode::Sync => "synchronized",
         };
         println!(
             "{verb} {} ({} entries, {})",

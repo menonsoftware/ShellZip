@@ -36,6 +36,22 @@ fn stub_extracts_its_appended_zip() {
     assert_eq!(fs::read(dest.join("hello.txt")).unwrap(), b"hello-sfx");
 }
 
+#[cfg(windows)]
+#[test]
+fn built_stub_contains_the_shellzip_icon() {
+    let exe = fs::read(stub_bin()).unwrap();
+    let icon = include_bytes!("../assets/shellzip.ico");
+    let png = icon
+        .windows(8)
+        .position(|window| window == [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])
+        .expect("png inside the icon");
+    let sample = &icon[png..png + 32];
+    assert!(
+        exe.windows(sample.len()).any(|window| window == sample),
+        "the SFX stub was built without its icon"
+    );
+}
+
 fn stub_bin() -> std::path::PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_shellzip_sfx") {
         return std::path::PathBuf::from(path);

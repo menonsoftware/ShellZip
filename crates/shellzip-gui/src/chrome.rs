@@ -1,7 +1,8 @@
 //! Menu bar, icon toolbar, address bar, and status line.
 //!
-//! The commands are the ones ShellZip already performs. The menu holds the
-//! pack and extract options; the toolbar is Add, Extract To, Test, Delete, and Info.
+//! The commands are the ones ShellZip already performs. Compression is chosen
+//! in the add dialog. The menu holds extract options. The toolbar is Add,
+//! Extract To, Test, Delete, and Info.
 
 use egui::{Align2, Color32, FontId, Rect, Sense, Vec2};
 
@@ -10,7 +11,7 @@ use crate::icons::{self, Caret, Icon};
 use crate::theme::{ADD, DANGER, EXTRACT, HOVER, INK, MUTED, OK, OPEN, PANEL, TEST};
 use shellzip_core::{Overwrite, ZipMethod};
 
-/// Pack and extract choices edited from the Options menu.
+/// Pack choices remembered for the add dialog, and extract choices from the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PackSettings {
     /// `-m` level, 0 (store) through 5 (maximum).
@@ -389,14 +390,6 @@ fn options_menu(ui: &mut egui::Ui, options: &mut PackSettings) {
         )
         .ui(ui, |ui| {
             ui.set_min_width(220.0);
-            ui.label("Compression level");
-            let level = level_name(options.level);
-            ui.add(egui::Slider::new(&mut options.level, 0..=5).text(level));
-            ui.separator();
-            ui.label("Method");
-            ui.selectable_value(&mut options.method, ZipMethod::Deflate, "Deflate");
-            ui.selectable_value(&mut options.method, ZipMethod::Zstd, "Zstd");
-            ui.separator();
             ui.label("When a file exists");
             ui.selectable_value(&mut options.overwrite, Overwrite::Never, "Skip existing");
             ui.selectable_value(
@@ -408,17 +401,6 @@ fn options_menu(ui: &mut egui::Ui, options: &mut PackSettings) {
             ui.separator();
             ui.checkbox(&mut options.flat, "Flat extract");
         });
-}
-
-fn level_name(level: u8) -> &'static str {
-    match level {
-        0 => "store",
-        1 => "fastest",
-        2 => "fast",
-        3 => "normal",
-        4 => "good",
-        _ => "maximum",
-    }
 }
 
 fn tool(

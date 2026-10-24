@@ -85,6 +85,17 @@ impl Format {
         }
     }
 
+    /// Formats this build can create. RAR, 7z, xz, and bzip2 are extract-only.
+    pub fn can_create(&self) -> bool {
+        matches!(
+            self,
+            Self::Zip
+                | Self::Tar(Compression::None | Compression::Gzip | Compression::Zstd)
+                | Self::Gzip
+                | Self::Zstd
+        )
+    }
+
     /// Formats that can take a password. Tar and single-file streams cannot.
     pub fn accepts_password(&self) -> bool {
         match self {
@@ -93,6 +104,45 @@ impl Format {
             Self::Tar(_) | Self::Gzip | Self::Zstd | Self::Xz | Self::Bzip2 => false,
         }
     }
+}
+
+/// One archive type this build can create.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CreatableFormat {
+    /// Short name for the add dialog.
+    pub label: &'static str,
+    /// Extension without a leading dot. `tar.gz` is one extension.
+    pub extension: &'static str,
+}
+
+/// Formats this build can create. ZIP is first because it is the default.
+pub fn creatable_formats() -> &'static [CreatableFormat] {
+    &[
+        CreatableFormat {
+            label: "ZIP",
+            extension: "zip",
+        },
+        CreatableFormat {
+            label: "TAR",
+            extension: "tar",
+        },
+        CreatableFormat {
+            label: "TAR.GZ",
+            extension: "tar.gz",
+        },
+        CreatableFormat {
+            label: "TAR.ZST",
+            extension: "tar.zst",
+        },
+        CreatableFormat {
+            label: "GZIP",
+            extension: "gz",
+        },
+        CreatableFormat {
+            label: "ZSTD",
+            extension: "zst",
+        },
+    ]
 }
 
 /// Choose a container from a destination path's extension.
@@ -341,6 +391,20 @@ pub fn prefix_is_tar(prefix: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creatable_extensions_round_trip() {
+        for kind in creatable_formats() {
+            let format = format_from_extension(Path::new(&format!("bundle.{}", kind.extension)))
+                .unwrap_or_else(|err| panic!("{}: {err}", kind.extension));
+            assert!(format.can_create(), "{}", kind.label);
+            assert_eq!(format.label(), kind.label);
+        }
+        assert!(!Format::Xz.can_create());
+        assert!(!Format::Bzip2.can_create());
+        assert!(!Format::Rar5.can_create());
+        assert!(!Format::SevenZ.can_create());
+    }
 
     #[test]
     fn headers() {
