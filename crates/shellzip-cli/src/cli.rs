@@ -398,6 +398,8 @@ pub(crate) fn compress_opts(args: &AddArgs, update: UpdateMode) -> Result<Compre
         excludes: args.exclude.clone(),
         force: args.yes,
         update,
+        comment: None,
+        sync_keep: None,
         threads: args.threads.unwrap_or(0),
         zstd_long: args.long_window,
         input_bytes: None,

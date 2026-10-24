@@ -16,7 +16,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 use super::{ArchiveWriter, commit_output, copy_in, prepare_output, prepare_temp};
 use crate::entry::{EntryMeta, dos_parts};
 use crate::error::Error;
-use crate::options::{CompressOpts, ZipMethod};
+use crate::options::{CompressOpts, UpdateMode, ZipMethod};
 
 pub struct ZipArchiver {
     inner: Option<ZipWriter<io::BufWriter<std::fs::File>>>,
@@ -27,6 +27,8 @@ pub struct ZipArchiver {
     committed: bool,
     buf: Vec<u8>,
     opts: CompressOpts,
+    /// Comment copied from the archive being updated, when the caller did not set one.
+    kept_comment: Option<Vec<u8>>,
 }
 
 impl ZipArchiver {
@@ -45,6 +47,7 @@ impl ZipArchiver {
             committed: false,
             buf: Vec::new(),
             opts: opts.clone(),
+            kept_comment: None,
         })
     }
 
@@ -112,16 +115,37 @@ impl ArchiveWriter for ZipArchiver {
             .iter()
             .map(|name| crate::entry::member_key(name))
             .collect();
+        let keep = (self.opts.update == UpdateMode::Sync)
+            .then_some(self.opts.sync_keep.as_ref())
+            .flatten()
+            .map(|names| {
+                names
+                    .iter()
+                    .map(|name| crate::entry::member_key(name))
+                    .collect::<HashSet<_>>()
+            });
         let file = std::fs::File::open(&source)
             .map_err(|err| Error::io(format!("open {}", source.display()), err))?;
         let mut archive = ZipArchive::new(file).map_err(|err| {
             Error::Archive(format!("cannot add to `{}`: {err}", source.display()))
         })?;
+        if self.opts.comment.is_none() {
+            let bytes = archive.comment();
+            if !bytes.is_empty() {
+                self.kept_comment = Some(bytes.to_vec());
+            }
+        }
         let mut copied = HashSet::new();
         for index in 0..archive.len() {
             let entry = archive.by_index(index)?;
             let key = crate::entry::member_key(entry.name());
-            if key.is_empty() || replacing.contains(&key) || !copied.insert(key) {
+            if key.is_empty() || replacing.contains(&key) {
+                continue;
+            }
+            if keep.as_ref().is_some_and(|keep| !keep.contains(&key)) {
+                continue;
+            }
+            if !copied.insert(key) {
                 continue;
             }
             self.writer()?.raw_copy_file(entry)?;
@@ -135,10 +159,11 @@ impl ArchiveWriter for ZipArchiver {
                 "refusing to replace an existing zip without keeping its entries".to_string(),
             ));
         }
-        let writer = self
+        let mut writer = self
             .inner
             .take()
             .ok_or_else(|| Error::Archive("zip writer is closed".to_string()))?;
+        apply_comment(&mut writer, &self.opts, self.kept_comment.as_deref())?;
         let mut file = writer.finish()?;
         file.flush().map_err(|err| Error::io("flush zip", err))?;
         drop(file);
@@ -199,6 +224,31 @@ impl ZipArchiver {
             .start_file(name, options)
             .map_err(Error::from)
     }
+}
+
+fn apply_comment(
+    writer: &mut ZipWriter<io::BufWriter<std::fs::File>>,
+    opts: &CompressOpts,
+    kept: Option<&[u8]>,
+) -> Result<(), Error> {
+    if let Some(text) = &opts.comment {
+        if text.len() > usize::from(u16::MAX) {
+            return Err(Error::Usage(
+                "ZIP comment is longer than 65535 bytes".to_string(),
+            ));
+        }
+        writer.set_comment(text.as_str());
+        return Ok(());
+    }
+    if let Some(kept) = kept.filter(|bytes| !bytes.is_empty()) {
+        if kept.len() > usize::from(u16::MAX) {
+            return Err(Error::Archive(
+                "existing ZIP comment is longer than 65535 bytes".to_string(),
+            ));
+        }
+        writer.set_raw_comment(kept.to_vec().into_boxed_slice());
+    }
+    Ok(())
 }
 
 pub(crate) fn rel_name(rel: &Path) -> String {

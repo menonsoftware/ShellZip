@@ -25,7 +25,10 @@ mod progress;
 mod sfx;
 
 pub use crypto::Password;
-pub use detect::{Compression, Format, detect_bytes, detect_file, format_from_extension};
+pub use detect::{
+    Compression, CreatableFormat, Format, creatable_formats, detect_bytes, detect_file,
+    format_from_extension,
+};
 pub use entry::{
     Entry, EntryKind, EntryMeta, format_attrs, format_blake, format_bytes, format_crc, format_time,
 };
@@ -34,7 +37,7 @@ pub use extractor::{ArchiveReader, Opened, Verify};
 pub use options::{
     AddReport, CompressOpts, ConflictChoice, ConflictDecider, DEFAULT_STORE_EXTS, DeleteReport,
     ExtractOpts, ExtractReport, ListOpts, MAX_THREADS, Overwrite, StoreList, TestReport,
-    UpdateMode, ZipMethod,
+    UpdateMode, UpdatePrompt, ZipMethod,
 };
 pub use progress::{NopProgress, ProgressSink};
 pub use sfx::{SfxDirection, SfxTrailer, build, convert, locate, strip, stub_file_names};
@@ -50,6 +53,33 @@ pub fn add(
     progress: &dyn ProgressSink,
 ) -> Result<AddReport> {
     ops::add(dest, inputs, opts, progress)
+}
+
+/// Pack `inputs` into `dest`, asking `prompt` for each member that already exists.
+///
+/// Used when `opts.update` is [`UpdateMode::Ask`]. Other modes ignore `prompt`.
+///
+/// # Errors
+///
+/// Same as [`add`]. The prompt's [`Error::Interrupted`] cancels the pack.
+pub fn add_prompted(
+    dest: &std::path::Path,
+    inputs: &[std::path::PathBuf],
+    opts: &CompressOpts,
+    progress: &dyn ProgressSink,
+    prompt: &UpdatePrompt<'_>,
+) -> Result<AddReport> {
+    ops::add_prompted(dest, inputs, opts, progress, prompt)
+}
+
+/// Read the ZIP comment. Other formats return [`Error::Usage`].
+///
+/// # Errors
+///
+/// Returns [`Error::Usage`] when `path` is not a ZIP, and [`Error::Archive`]
+/// when the comment is not UTF-8.
+pub fn zip_comment(path: &std::path::Path) -> Result<String> {
+    ops::zip_comment(path)
 }
 
 /// Pack `inputs` and wrap the ZIP as a self-extractor at `dest`.

@@ -1,6 +1,6 @@
 //! Operations shared by the command line and the desktop window.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -15,8 +15,8 @@ use crate::error::Error;
 use crate::extractor::{ArchiveReader, Opened};
 use crate::fs::walk::{self, Planned};
 use crate::options::{
-    AddReport, CompressOpts, ConflictDecider, DeleteReport, ExtractOpts, ExtractReport, ListOpts,
-    TestReport, UpdateMode,
+    AddReport, CompressOpts, ConflictChoice, ConflictDecider, DeleteReport, ExtractOpts,
+    ExtractReport, ListOpts, TestReport, UpdateMode, UpdatePrompt,
 };
 use crate::progress::{ProgressReader, ProgressSink};
 
@@ -29,7 +29,33 @@ pub fn add(
     opts: &CompressOpts,
     progress: &dyn ProgressSink,
 ) -> Result<AddReport, Error> {
-    add_inner(dest, Some(dest), inputs, opts, progress)
+    add_inner(dest, Some(dest), inputs, opts, progress, None)
+}
+
+/// Pack `inputs` into `dest`, asking `prompt` when [`UpdateMode::Ask`] hits an existing member.
+pub fn add_prompted(
+    dest: &Path,
+    inputs: &[PathBuf],
+    opts: &CompressOpts,
+    progress: &dyn ProgressSink,
+    prompt: &UpdatePrompt<'_>,
+) -> Result<AddReport, Error> {
+    add_inner(dest, Some(dest), inputs, opts, progress, Some(prompt))
+}
+
+/// UTF-8 comment stored in a ZIP archive. An empty comment is an empty string.
+pub fn zip_comment(path: &Path) -> Result<String, Error> {
+    let format = detect_file(path)?;
+    if !matches!(format, Format::Zip) {
+        return Err(Error::Usage(
+            "only ZIP archives store a comment".to_string(),
+        ));
+    }
+    let file =
+        File::open(path).map_err(|err| Error::io(format!("open {}", path.display()), err))?;
+    let archive = zip::ZipArchive::new(file)?;
+    String::from_utf8(archive.comment().to_vec())
+        .map_err(|_| Error::Archive("ZIP comment is not UTF-8".to_string()))
 }
 
 /// Pack `inputs` into a temporary ZIP and wrap it as a self-extractor at `dest`.
@@ -57,7 +83,7 @@ pub fn add_sfx(
     let mut opts = opts.clone();
     opts.force = true;
     let result = (|| {
-        let report = add_inner(&scratch, Some(dest), inputs, &opts, progress)?;
+        let report = add_inner(&scratch, Some(dest), inputs, &opts, progress, None)?;
         let packed_bytes = crate::sfx::build(dest, stub, &scratch)?;
         Ok(AddReport {
             path: dest.to_path_buf(),
@@ -88,6 +114,7 @@ fn add_inner(
     inputs: &[PathBuf],
     opts: &CompressOpts,
     progress: &dyn ProgressSink,
+    prompt: Option<&UpdatePrompt<'_>>,
 ) -> Result<AddReport, Error> {
     if opts.level > 5 {
         return Err(Error::Usage(
@@ -101,9 +128,26 @@ fn add_inner(
             std::io::Error::new(std::io::ErrorKind::NotFound, "archive does not exist"),
         ));
     }
+    if opts.update == UpdateMode::Ask && prompt.is_none() {
+        return Err(Error::Usage(
+            "ask before overwrite needs a prompt".to_string(),
+        ));
+    }
+    if let Some(comment) = &opts.comment {
+        if comment.len() > usize::from(u16::MAX) {
+            return Err(Error::Usage(
+                "ZIP comment is longer than 65535 bytes".to_string(),
+            ));
+        }
+        if !comment.is_empty() && !matches!(format, Format::Zip) {
+            return Err(Error::Usage(
+                "archive comments are stored in ZIP archives".to_string(),
+            ));
+        }
+    }
     if opts.update != UpdateMode::Add && dest.exists() && !matches!(format, Format::Zip) {
         return Err(Error::Usage(
-            "update and freshen only rewrite ZIP archives".to_string(),
+            "only ZIP archives can be updated in place".to_string(),
         ));
     }
     if opts.password.is_some() && !matches!(format, Format::Zip) {
@@ -119,10 +163,16 @@ fn add_inner(
         ));
     }
     let mut planned = walk::plan(inputs, opts, skip)?;
+    let source_names: Vec<String> = planned.iter().map(|item| item.rel.clone()).collect();
+    let mut opts = opts.clone();
     if opts.update != UpdateMode::Add && !opts.force && dest.is_file() {
         let index = zip_mtimes(dest)?;
-        planned.retain(|item| keep_member(item, opts.update, &index));
-        if planned.is_empty() {
+        planned = select_members(planned, opts.update, &index, prompt)?;
+        let extras = opts.update == UpdateMode::Sync
+            && index
+                .keys()
+                .any(|key| source_names.iter().all(|name| &member_key(name) != key));
+        if planned.is_empty() && !extras {
             let packed = std::fs::metadata(dest).map(|meta| meta.len()).unwrap_or(0);
             return Ok(AddReport {
                 path: dest.to_path_buf(),
@@ -131,9 +181,11 @@ fn add_inner(
                 packed_bytes: packed,
             });
         }
+        if opts.update == UpdateMode::Sync {
+            opts.sync_keep = Some(source_names);
+        }
     }
     let total = planned.iter().map(|item| item.meta.size).sum();
-    let mut opts = opts.clone();
     opts.input_bytes = Some(total);
     progress.begin(&format!("add {}", dest.display()), total);
     let packed_bytes = if matches!(format, Format::Zip)
@@ -293,9 +345,14 @@ pub fn add_stdin(
     }
     let rel = crate::fs::safe_path::safe_rel(name)?;
     let format = format_from_extension(dest)?;
+    if opts.update == UpdateMode::Ask {
+        return Err(Error::Usage(
+            "ask before overwrite needs a prompt and is not available for stdin".to_string(),
+        ));
+    }
     if opts.update != UpdateMode::Add && !matches!(format, Format::Zip) {
         return Err(Error::Usage(
-            "update and freshen only rewrite ZIP archives".to_string(),
+            "only ZIP archives can be updated in place".to_string(),
         ));
     }
     match format {
@@ -410,19 +467,104 @@ fn zip_mtimes(path: &Path) -> Result<HashMap<String, Option<SystemTime>>, Error>
     Ok(index)
 }
 
-fn keep_member(
-    item: &Planned,
+enum MemberAction {
+    Write,
+    Drop,
+    Rename(String),
+}
+
+fn select_members(
+    planned: Vec<Planned>,
     mode: UpdateMode,
     existing: &HashMap<String, Option<SystemTime>>,
-) -> bool {
-    let key = member_key(&item.rel);
-    match (mode, existing.get(&key)) {
-        (UpdateMode::Add, _) => true,
-        (UpdateMode::Update, None) => true,
-        (UpdateMode::Update, Some(mtime)) => newer(item.meta.modified, *mtime),
-        (UpdateMode::Freshen, Some(mtime)) => newer(item.meta.modified, *mtime),
-        (UpdateMode::Freshen, None) => false,
+    prompt: Option<&UpdatePrompt<'_>>,
+) -> Result<Vec<Planned>, Error> {
+    let mut taken: HashSet<String> = existing.keys().cloned().collect();
+    for item in &planned {
+        taken.insert(member_key(&item.rel));
     }
+    let mut kept = Vec::with_capacity(planned.len());
+    for mut item in planned {
+        let key = member_key(&item.rel);
+        let present = existing.get(&key);
+        let action = match mode {
+            UpdateMode::Add => MemberAction::Write,
+            UpdateMode::Update => match present {
+                None => MemberAction::Write,
+                Some(mtime) if newer(item.meta.modified, *mtime) => MemberAction::Write,
+                Some(_) => MemberAction::Drop,
+            },
+            UpdateMode::Freshen => match present {
+                Some(mtime) if newer(item.meta.modified, *mtime) => MemberAction::Write,
+                _ => MemberAction::Drop,
+            },
+            UpdateMode::Skip => {
+                if present.is_some() {
+                    MemberAction::Drop
+                } else {
+                    MemberAction::Write
+                }
+            }
+            UpdateMode::Sync => match present {
+                None => MemberAction::Write,
+                Some(mtime) if newer(item.meta.modified, *mtime) => MemberAction::Write,
+                Some(_) => MemberAction::Drop,
+            },
+            UpdateMode::Ask => {
+                if present.is_none() {
+                    MemberAction::Write
+                } else {
+                    let prompt = prompt.ok_or_else(|| {
+                        Error::Usage("ask before overwrite needs a prompt".to_string())
+                    })?;
+                    match prompt(&item.rel)? {
+                        ConflictChoice::Overwrite => MemberAction::Write,
+                        ConflictChoice::Skip => MemberAction::Drop,
+                        ConflictChoice::Rename => {
+                            let rel = fresh_name(&item.rel, &taken);
+                            taken.insert(member_key(&rel));
+                            MemberAction::Rename(rel)
+                        }
+                    }
+                }
+            }
+        };
+        match action {
+            MemberAction::Drop => {}
+            MemberAction::Write => kept.push(item),
+            MemberAction::Rename(rel) => {
+                item.rel = rel;
+                kept.push(item);
+            }
+        }
+    }
+    Ok(kept)
+}
+
+/// `notes.txt` becomes `notes (2).txt`, then `(3)`, until the name is free.
+fn fresh_name(rel: &str, taken: &HashSet<String>) -> String {
+    let (dir, file) = match rel.rsplit_once('/') {
+        Some((dir, file)) => (Some(dir), file),
+        None => (None, rel),
+    };
+    let (stem, ext) = match file.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => (stem, Some(ext)),
+        _ => (file, None),
+    };
+    for index in 2..10_000 {
+        let name = match ext {
+            Some(ext) => format!("{stem} ({index}).{ext}"),
+            None => format!("{stem} ({index})"),
+        };
+        let full = match dir {
+            Some(dir) => format!("{dir}/{name}"),
+            None => name,
+        };
+        if !taken.contains(&member_key(&full)) {
+            return full;
+        }
+    }
+    format!("{rel}.new")
 }
 
 /// Source is newer than the archived copy, past the 2-second ZIP timestamp bucket.
@@ -527,19 +669,32 @@ fn stream_one(
     progress: &dyn ProgressSink,
 ) -> Result<AddReport, Error> {
     let rel_text = to_archive_path(rel);
-    if opts.update == UpdateMode::Freshen {
-        if !dest.is_file() {
-            return Err(Error::io(
-                format!("open {}", dest.display()),
-                std::io::Error::new(std::io::ErrorKind::NotFound, "archive does not exist"),
-            ));
-        }
-        let index = zip_mtimes(dest)?;
-        if !index.contains_key(&member_key(&rel_text)) {
-            return Err(Error::NoFiles);
-        }
+    if opts.update == UpdateMode::Freshen && !dest.is_file() {
+        return Err(Error::io(
+            format!("open {}", dest.display()),
+            std::io::Error::new(std::io::ErrorKind::NotFound, "archive does not exist"),
+        ));
     }
     let mut opts = opts.clone();
+    if dest.is_file() && opts.update != UpdateMode::Add && !opts.force {
+        let index = zip_mtimes(dest)?;
+        let key = member_key(&rel_text);
+        if opts.update == UpdateMode::Freshen && !index.contains_key(&key) {
+            return Err(Error::NoFiles);
+        }
+        if opts.update == UpdateMode::Skip && index.contains_key(&key) {
+            let packed = std::fs::metadata(dest).map(|meta| meta.len()).unwrap_or(0);
+            return Ok(AddReport {
+                path: dest.to_path_buf(),
+                entries: 0,
+                bytes: 0,
+                packed_bytes: packed,
+            });
+        }
+        if opts.update == UpdateMode::Sync {
+            opts.sync_keep = Some(vec![rel_text.clone()]);
+        }
+    }
     opts.input_bytes = known.or(opts.input_bytes);
     let mut writer = archiver::create_from_path(dest, &opts)?;
     writer.retain_existing(std::slice::from_ref(&rel_text))?;

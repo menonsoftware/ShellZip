@@ -8,17 +8,56 @@ use crate::error::Error;
 /// Called when an extracted file already exists.
 pub type ConflictDecider<'a> = dyn Fn(&Path) -> Result<ConflictChoice, Error> + 'a;
 
-/// How `szip a`, `u`, and `f` treat an existing ZIP.
+/// How an add treats members that are already in a ZIP.
+///
+/// The order matches the add dialog: replace, update, freshen, ask, skip, then synchronize.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UpdateMode {
-    /// Replace members with the same name and add the rest.
+    /// Add and replace files. Replace members with the same name and add the rest.
     #[default]
     Add,
-    /// Add new members and replace a member only when the source is newer.
+    /// Add and update files. Add new members and replace a member only when the source is newer.
     Update,
-    /// Replace a member only when it already exists and the source is newer.
+    /// Freshen existing files only. Replace a member only when it already exists and the source is newer.
     Freshen,
+    /// Ask before overwrite. The prompt decides each member that already exists.
+    Ask,
+    /// Skip existing files. Add members that are not already in the archive.
+    Skip,
+    /// Synchronize archive contents. Add and update, then drop members that were not in this run.
+    Sync,
 }
+
+impl UpdateMode {
+    /// Modes in the order shown by the add dialog.
+    pub const ALL: [Self; 6] = [
+        Self::Add,
+        Self::Update,
+        Self::Freshen,
+        Self::Ask,
+        Self::Skip,
+        Self::Sync,
+    ];
+
+    /// Label for the add dialog.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Add => "Add and replace files",
+            Self::Update => "Add and update files",
+            Self::Freshen => "Freshen existing files only",
+            Self::Ask => "Ask before overwrite",
+            Self::Skip => "Skip existing files",
+            Self::Sync => "Synchronize archive contents",
+        }
+    }
+}
+
+/// Called for each existing member when [`UpdateMode::Ask`] is selected.
+///
+/// [`ConflictChoice::Overwrite`] replaces the member, [`ConflictChoice::Skip`]
+/// leaves it, and [`ConflictChoice::Rename`] stores the source under a new name.
+/// Return [`Error::Interrupted`] to cancel the pack.
+pub type UpdatePrompt<'a> = dyn Fn(&str) -> Result<ConflictChoice, Error> + 'a;
 
 /// ZIP compression method selected with `--method`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -114,6 +153,14 @@ pub struct CompressOpts {
     pub force: bool,
     /// How an existing ZIP is merged. Ignored when [`Self::force`] is set.
     pub update: UpdateMode,
+    /// ZIP comment. `None` keeps the comment already stored in an updated archive.
+    ///
+    /// `Some("")` clears the comment. Other formats reject a non-empty comment.
+    pub comment: Option<String>,
+    /// Member names a [`UpdateMode::Sync`] run may keep, besides the files it rewrites.
+    ///
+    /// `add` fills this from the selected files. Leave it `None` for every other mode.
+    pub sync_keep: Option<Vec<String>>,
     /// Worker threads. `0` uses [`std::thread::available_parallelism`], capped at 64.
     pub threads: u16,
     /// Zstd window log (`--long`). `None` follows the total input size.
@@ -139,6 +186,8 @@ impl Default for CompressOpts {
             excludes: Vec::new(),
             force: false,
             update: UpdateMode::Add,
+            comment: None,
+            sync_keep: None,
             threads: 0,
             zstd_long: None,
             input_bytes: None,
@@ -364,5 +413,21 @@ mod tests {
         assert_eq!(opts.zstd_window_log(), 30, "--long");
         opts.threads = 10_000;
         assert_eq!(opts.thread_count(), MAX_THREADS);
+    }
+
+    #[test]
+    fn update_mode_labels_follow_the_add_dialog() {
+        let labels: Vec<&str> = UpdateMode::ALL.iter().map(|mode| mode.label()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Add and replace files",
+                "Add and update files",
+                "Freshen existing files only",
+                "Ask before overwrite",
+                "Skip existing files",
+                "Synchronize archive contents",
+            ]
+        );
     }
 }

@@ -207,4 +207,12 @@ mod tests {
         let err = parse(["shellzip-sfx", "--nope"].map(str::to_string)).unwrap_err();
         assert_eq!(err.exit_code(), 7);
     }
+
+    #[test]
+    fn stub_icon_file_is_a_windows_icon() {
+        let bytes = include_bytes!("../assets/shellzip.ico");
+        assert_eq!(&bytes[..4], &[0, 0, 1, 0]);
+        let count = u16::from_le_bytes([bytes[4], bytes[5]]);
+        assert!(count >= 5, "icon sizes: {count}");
+    }
 }

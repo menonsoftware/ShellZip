@@ -5,9 +5,11 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use shellzip_core::{
-    CompressOpts, Entry, ExtractOpts, add, delete, extract, format_bytes, format_crc, list, test,
+    CompressOpts, ConflictChoice, Entry, ExtractOpts, Password, UpdateMode, add, add_prompted,
+    add_sfx, delete, extract, format_bytes, format_crc, list, test,
 };
 
+use crate::add_dialog::{self, AddAction, AddRequest, AskPrompt, AskReply};
 use crate::chrome::{self, AddressEvent, MenuCommand, PackSettings, ToolCommand};
 use crate::explorer::{
     ArchiveIndex, Explorer, JumpTarget, Row, RowKind, Target, archive_prefix, folder_parent,
@@ -46,6 +48,8 @@ pub struct ShellZipApp {
     about: bool,
     info: Option<String>,
     pending_delete: Option<Vec<String>>,
+    add_dialog: Option<add_dialog::AddDialog>,
+    ask: Option<AskPrompt>,
     options: PackSettings,
     saved: PackSettings,
     generation: u64,
@@ -93,6 +97,8 @@ impl ShellZipApp {
             about: false,
             info: None,
             pending_delete: None,
+            add_dialog: None,
+            ask: None,
             options,
             saved: options,
             generation,
@@ -218,43 +224,104 @@ impl ShellZipApp {
             };
             files = picked;
         }
-        if files.is_empty() {
-            return;
-        }
-        self.pack_files(files);
+        self.open_add_dialog(files);
     }
 
-    fn pack_files(&mut self, files: Vec<PathBuf>) {
-        if self.busy || files.is_empty() {
+    fn open_add_dialog(&mut self, files: Vec<PathBuf>) {
+        if self.busy || files.is_empty() || self.add_dialog.is_some() {
             return;
         }
-        let Some(dest) = rfd::FileDialog::new()
-            .add_filter("ZIP", &["zip"])
-            .add_filter("tar", &["tar"])
-            .add_filter("tar.gz", &["tar.gz", "tgz"])
-            .add_filter("tar.zst", &["tar.zst", "tzst"])
-            .add_filter("gzip", &["gz"])
-            .add_filter("zstd", &["zst"])
-            .save_file()
-        else {
+        self.add_dialog = Some(add_dialog::AddDialog::prepare(
+            &self.current_dir(),
+            files,
+            &self.options,
+        ));
+    }
+
+    fn current_dir(&self) -> PathBuf {
+        match &self.place {
+            Place::Folder { path, .. } => path.clone(),
+            Place::Archive { path, .. } => path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from(".")),
+        }
+    }
+
+    fn start_add(&mut self, request: AddRequest) {
+        if self.busy {
             return;
+        }
+        self.options.level = request.level.min(5);
+        self.options.method = request.method;
+        let password = if request.password.is_empty() {
+            None
+        } else {
+            match Password::new(request.password) {
+                Ok(password) => Some(password),
+                Err(err) => {
+                    self.error = Some(err.to_string());
+                    return;
+                }
+            }
         };
-        let level = self.options.level;
-        let method = self.options.method;
-        // Adding into an existing ZIP keeps its other files. `-y` still replaces from the CLI.
-        let update_zip = existing_zip(&dest);
+        let stub = if request.sfx {
+            match find_stub() {
+                Ok(path) => Some(path),
+                Err(message) => {
+                    self.error = Some(message);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let merging_zip = stub.is_none()
+            && request.dest.is_file()
+            && request
+                .dest
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
+        let force = request.dest.exists() && !merging_zip;
         let generation = self.next_generation();
         let progress = Arc::clone(&self.progress);
         self.begin_job();
         let tx = self.tx.clone();
+        let asking = request.update == UpdateMode::Ask && stub.is_none();
+        if !asking {
+            self.ask = None;
+        }
+        let prompt = asking.then(|| {
+            let (names_tx, names_rx) = mpsc::channel();
+            let (replies_tx, replies_rx) = mpsc::channel();
+            self.ask = Some(AskPrompt {
+                names: names_rx,
+                replies: replies_tx,
+                pending: None,
+            });
+            (names_tx, replies_rx)
+        });
         worker::spawn(tx, move || {
             let opts = CompressOpts {
-                level,
-                zip_method: method,
-                force: !update_zip,
+                level: request.level.min(5),
+                zip_method: request.method,
+                force,
+                update: request.update,
+                comment: request.comment,
+                password,
                 ..CompressOpts::default()
             };
-            let report = add(&dest, &files, &opts, progress.as_ref())?;
+            let dest = request.dest;
+            let files = request.inputs;
+            let report = if let Some(stub) = stub {
+                add_sfx(&dest, &stub, &files, &opts, progress.as_ref())?
+            } else if let Some((names_tx, replies_rx)) = prompt {
+                let policy = std::sync::Mutex::new(None);
+                let decide = move |name: &str| decide_member(name, &policy, &names_tx, &replies_rx);
+                add_prompted(&dest, &files, &opts, progress.as_ref(), &decide)?
+            } else {
+                add(&dest, &files, &opts, progress.as_ref())?
+            };
             match list(&dest) {
                 Ok((opened, entries)) => Ok(Outcome::Listed {
                     generation,
@@ -393,16 +460,19 @@ impl ShellZipApp {
                     entries,
                 } => {
                     self.busy = false;
+                    self.ask = None;
                     if generation == self.generation {
                         self.apply_archive(path, format, entries);
                     }
                 }
                 Outcome::Finished(summary) => {
                     self.busy = false;
+                    self.ask = None;
                     self.status = summary;
                 }
                 Outcome::Failed(message) => {
                     self.busy = false;
+                    self.ask = None;
                     self.status.clear();
                     self.error = Some(message);
                 }
@@ -858,7 +928,31 @@ impl ShellZipApp {
                 return;
             }
         }
-        self.pack_files(dropped);
+        self.open_add_dialog(dropped);
+    }
+
+    fn poll_ask(&mut self) {
+        let Some(ask) = &mut self.ask else {
+            return;
+        };
+        if ask.pending.is_none()
+            && let Ok(name) = ask.names.try_recv()
+        {
+            ask.pending = Some(name);
+        }
+    }
+
+    fn answer_ask(&mut self, reply: AskReply) {
+        if let Some(ask) = &self.ask {
+            let _ = ask.replies.send(reply);
+        }
+        if let Some(ask) = &mut self.ask {
+            ask.pending = None;
+        }
+        if matches!(reply, AskReply::Cancel) {
+            self.progress.request_cancel();
+            self.status = "Cancelling...".to_string();
+        }
     }
 }
 
@@ -871,6 +965,7 @@ fn is_sfx_name(path: &Path) -> bool {
 impl eframe::App for ShellZipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
+        self.poll_ask();
         crate::icons::warm(ctx);
         if self.busy || !self.loaded {
             ctx.request_repaint();
@@ -952,6 +1047,9 @@ impl eframe::App for ShellZipApp {
         if status_event.cancel {
             self.progress.request_cancel();
             self.status = "Cancelling...".to_string();
+            if self.ask.as_ref().is_some_and(|ask| ask.pending.is_some()) {
+                self.answer_ask(AskReply::Cancel);
+            }
         }
 
         egui::CentralPanel::default()
@@ -969,6 +1067,24 @@ impl eframe::App for ShellZipApp {
 
         chrome::about(ctx, &mut self.about);
         chrome::info_window(ctx, &mut self.info);
+        let add_action = self
+            .add_dialog
+            .as_mut()
+            .and_then(|dialog| add_dialog::show(ctx, dialog));
+        match add_action {
+            Some(AddAction::Submit(request)) => {
+                self.add_dialog = None;
+                self.start_add(request);
+            }
+            Some(AddAction::Close) => self.add_dialog = None,
+            None => {}
+        }
+        let pending_name = self.ask.as_ref().and_then(|ask| ask.pending.clone());
+        if let Some(name) = pending_name
+            && let Some(reply) = add_dialog::ask_overwrite(ctx, &name)
+        {
+            self.answer_ask(reply);
+        }
         let mut delete_count = self.pending_delete.as_ref().map(Vec::len);
         if chrome::confirm_delete(ctx, &mut delete_count) {
             self.run_delete();
@@ -983,10 +1099,66 @@ impl eframe::App for ShellZipApp {
             }
             self.saved = self.options;
         }
-        if !submitted {
+        if !submitted && self.add_dialog.is_none() && self.ask.is_none() {
             self.shortcuts(ctx);
         }
     }
+}
+
+fn decide_member(
+    name: &str,
+    policy: &std::sync::Mutex<Option<ConflictChoice>>,
+    names: &std::sync::mpsc::Sender<String>,
+    replies: &std::sync::mpsc::Receiver<AskReply>,
+) -> Result<ConflictChoice, shellzip_core::Error> {
+    if let Some(choice) = *policy
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    {
+        return Ok(choice);
+    }
+    names
+        .send(name.to_string())
+        .map_err(|_| shellzip_core::Error::Interrupted)?;
+    match replies.recv() {
+        Ok(AskReply::Replace) => Ok(ConflictChoice::Overwrite),
+        Ok(AskReply::Skip) => Ok(ConflictChoice::Skip),
+        Ok(AskReply::Rename) => Ok(ConflictChoice::Rename),
+        Ok(AskReply::ReplaceAll) => {
+            *policy
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(ConflictChoice::Overwrite);
+            Ok(ConflictChoice::Overwrite)
+        }
+        Ok(AskReply::SkipAll) => {
+            *policy
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(ConflictChoice::Skip);
+            Ok(ConflictChoice::Skip)
+        }
+        Ok(AskReply::Cancel) | Err(_) => Err(shellzip_core::Error::Interrupted),
+    }
+}
+
+fn find_stub() -> Result<PathBuf, String> {
+    if let Some(value) = std::env::var_os("SZIP_SFX_STUB") {
+        let path = PathBuf::from(value);
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err(format!("SFX stub {} was not found", path.display()));
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        for name in shellzip_core::stub_file_names() {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+    Err("SFX stub not found. Build shellzip-sfx and place it next to ShellZip.".to_string())
 }
 
 fn starting_folder() -> PathBuf {
@@ -1004,14 +1176,6 @@ fn starting_folder() -> PathBuf {
         }
     }
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-}
-
-fn existing_zip(path: &Path) -> bool {
-    path.is_file()
-        && path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
 }
 
 fn folder_title(path: &Path) -> String {

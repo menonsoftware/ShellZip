@@ -6,8 +6,8 @@ use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
 use shellzip_core::{
-    CompressOpts, ExtractOpts, ListOpts, NopProgress, Overwrite, UpdateMode, add, add_stdin,
-    delete, extract, list, list_with, test, write_member,
+    CompressOpts, ConflictChoice, ExtractOpts, ListOpts, NopProgress, Overwrite, UpdateMode, add,
+    add_prompted, add_stdin, delete, extract, list, list_with, test, write_member, zip_comment,
 };
 
 fn opts(threads: u16) -> CompressOpts {
@@ -184,6 +184,187 @@ fn technical_list_fills_blake2sp() {
     );
     assert!(file.crc32.is_some());
     assert_eq!(file.host_os.as_deref(), Some("Unix"));
+}
+
+#[test]
+fn skip_leaves_existing_members_and_adds_new_ones() {
+    let tmp = tempfile::tempdir().unwrap();
+    let old = tmp.path().join("a.txt");
+    let extra = tmp.path().join("b.txt");
+    fs::write(&old, b"keep").unwrap();
+    let archive = tmp.path().join("notes.zip");
+    add(&archive, std::slice::from_ref(&old), &opts(1), &NopProgress).unwrap();
+    fs::write(&old, b"replaced").unwrap();
+    fs::write(&extra, b"added").unwrap();
+    let mut skip = opts(1);
+    skip.update = UpdateMode::Skip;
+    add(&archive, &[old, extra], &skip, &NopProgress).unwrap();
+    let mut sink = Vec::new();
+    write_member(&archive, Some("a.txt"), &mut sink, None).unwrap();
+    assert_eq!(sink, b"keep");
+    sink.clear();
+    write_member(&archive, Some("b.txt"), &mut sink, None).unwrap();
+    assert_eq!(sink, b"added");
+}
+
+#[test]
+fn ask_can_skip_replace_or_rename() {
+    let tmp = tempfile::tempdir().unwrap();
+    let old = tmp.path().join("a.txt");
+    fs::write(&old, b"keep").unwrap();
+    let archive = tmp.path().join("notes.zip");
+    add(&archive, std::slice::from_ref(&old), &opts(1), &NopProgress).unwrap();
+
+    fs::write(&old, b"nope").unwrap();
+    let mut ask = opts(1);
+    ask.update = UpdateMode::Ask;
+    add_prompted(
+        &archive,
+        std::slice::from_ref(&old),
+        &ask,
+        &NopProgress,
+        &|name| {
+            assert_eq!(name, "a.txt");
+            Ok(ConflictChoice::Skip)
+        },
+    )
+    .unwrap();
+    let mut sink = Vec::new();
+    write_member(&archive, Some("a.txt"), &mut sink, None).unwrap();
+    assert_eq!(sink, b"keep");
+
+    fs::write(&old, b"fresh").unwrap();
+    add_prompted(
+        &archive,
+        std::slice::from_ref(&old),
+        &ask,
+        &NopProgress,
+        &|_name| Ok(ConflictChoice::Overwrite),
+    )
+    .unwrap();
+    sink.clear();
+    write_member(&archive, Some("a.txt"), &mut sink, None).unwrap();
+    assert_eq!(sink, b"fresh");
+
+    fs::write(&old, b"copy").unwrap();
+    add_prompted(
+        &archive,
+        std::slice::from_ref(&old),
+        &ask,
+        &NopProgress,
+        &|_name| Ok(ConflictChoice::Rename),
+    )
+    .unwrap();
+    sink.clear();
+    write_member(&archive, Some("a.txt"), &mut sink, None).unwrap();
+    assert_eq!(sink, b"fresh", "the original member stays");
+    sink.clear();
+    write_member(&archive, Some("a (2).txt"), &mut sink, None).unwrap();
+    assert_eq!(sink, b"copy");
+}
+
+#[test]
+fn sync_drops_members_that_were_not_selected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let old = tmp.path().join("a.txt");
+    let extra = tmp.path().join("b.txt");
+    fs::write(&old, b"old").unwrap();
+    touch(&old, 1_700_000_000);
+    fs::write(&extra, b"gone").unwrap();
+    let archive = tmp.path().join("notes.zip");
+    add(
+        &archive,
+        &[old.clone(), extra.clone()],
+        &opts(1),
+        &NopProgress,
+    )
+    .unwrap();
+
+    fs::write(&old, b"fresh").unwrap();
+    touch(&old, 1_800_000_000);
+    let mut sync = opts(4);
+    sync.update = UpdateMode::Sync;
+    add(&archive, std::slice::from_ref(&old), &sync, &NopProgress).unwrap();
+    let mut sink = Vec::new();
+    write_member(&archive, Some("a.txt"), &mut sink, None).unwrap();
+    assert_eq!(sink, b"fresh");
+    let (_opened, entries) = list(&archive).unwrap();
+    assert!(entries.iter().all(|entry| entry.path != "b.txt"));
+
+    fs::write(&extra, b"extra").unwrap();
+    let mut update = opts(1);
+    update.update = UpdateMode::Update;
+    add(
+        &archive,
+        std::slice::from_ref(&extra),
+        &update,
+        &NopProgress,
+    )
+    .unwrap();
+    touch(&old, 1_500_000_000);
+    let mut only_old = opts(4);
+    only_old.update = UpdateMode::Sync;
+    add(
+        &archive,
+        std::slice::from_ref(&old),
+        &only_old,
+        &NopProgress,
+    )
+    .unwrap();
+    sink.clear();
+    write_member(&archive, Some("a.txt"), &mut sink, None).unwrap();
+    assert_eq!(
+        sink, b"fresh",
+        "an older source does not replace the member"
+    );
+    let (_opened, entries) = list(&archive).unwrap();
+    assert!(
+        entries.iter().all(|entry| entry.path != "b.txt"),
+        "synchronize removes members that were not selected"
+    );
+}
+
+#[test]
+fn zip_comment_is_kept_until_replaced() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("a.txt");
+    fs::write(&file, b"a").unwrap();
+    let archive = tmp.path().join("notes.zip");
+    let mut noted = opts(4);
+    noted.comment = Some("hello".to_string());
+    add(&archive, std::slice::from_ref(&file), &noted, &NopProgress).unwrap();
+    assert_eq!(zip_comment(&archive).unwrap(), "hello");
+
+    fs::write(&file, b"b").unwrap();
+    add(
+        &archive,
+        std::slice::from_ref(&file),
+        &opts(4),
+        &NopProgress,
+    )
+    .unwrap();
+    assert_eq!(
+        zip_comment(&archive).unwrap(),
+        "hello",
+        "an update keeps the comment"
+    );
+
+    let mut cleared = opts(1);
+    cleared.comment = Some(String::new());
+    add(
+        &archive,
+        std::slice::from_ref(&file),
+        &cleared,
+        &NopProgress,
+    )
+    .unwrap();
+    assert_eq!(zip_comment(&archive).unwrap(), "");
+
+    let mut noted = opts(1);
+    noted.comment = Some("kept".to_string());
+    add(&archive, std::slice::from_ref(&file), &noted, &NopProgress).unwrap();
+    delete(&archive, &["a.txt".to_string()], &NopProgress).unwrap();
+    assert_eq!(zip_comment(&archive).unwrap(), "kept");
 }
 
 #[test]
