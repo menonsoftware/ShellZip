@@ -17,14 +17,16 @@ shellzip-core = { path = "../shellzip-core" }
 windows-sys = { version = "0.59", default-features = false, features = [
     "Win32_Foundation",
     "Win32_System_Console",
+    "Win32_System_LibraryLoader",
     "Win32_UI_WindowsAndMessaging",
 ] }
+zeroize = { version = "1.9.1", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
 
-# MessageBoxW is FFI. The workspace forbids unsafe, so this binary opts out
-# and denies it everywhere except the two Win32 calls.
+# Win32 dialogs are FFI. The workspace forbids unsafe, so this binary opts out
+# and denies it everywhere except those calls.
 [lints.rust]
 unsafe_code = "deny"
 

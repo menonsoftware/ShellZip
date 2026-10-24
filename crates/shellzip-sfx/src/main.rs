@@ -1,12 +1,11 @@
 //! `shellzip-sfx` — extract the ZIP appended to this executable.
 //!
 //! Switches: `-s` silent, `-y` replace existing files, `-d <dir>` destination.
-//! Without a console on Windows, the same choices are dialogs.
+//! Without a console on Windows, questions and the password are dialogs.
 
 #![cfg_attr(all(not(test), target_os = "windows"), windows_subsystem = "windows")]
 
 use std::cell::Cell;
-use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use shellzip_core::{
@@ -52,30 +51,52 @@ fn run() -> Result<i32, Error> {
             return Err(Error::Usage("extraction cancelled".to_string()));
         }
     }
-    let password = password_for(&exe, args.silent, gui)?;
-    let mut opts = ExtractOpts::new(&dest);
-    opts.password = password;
-    opts.overwrite = if args.yes {
-        Overwrite::Always
-    } else if args.silent || !prompt::can_ask(gui) {
-        Overwrite::Never
+    let supplied = env_password()?;
+    let from_env = supplied.is_some();
+    let mut password = if from_env {
+        supplied
     } else {
-        Overwrite::Ask
+        optional_password(&exe, args.silent, gui)?
     };
-    let all = Cell::new(false);
-    let decide = |path: &Path| replace_choice(path, gui, &all);
-    let report = if opts.overwrite == Overwrite::Ask {
-        extract(&exe, &opts, Some(&decide), &NopProgress)?
-    } else {
-        extract(&exe, &opts, None, &NopProgress)?
-    };
-    if !args.silent {
-        prompt::notice(
-            &format!("Extracted {} to {}", report.extracted, dest.display()),
-            gui,
-        );
+    let retry = should_retry_password(from_env, args.silent, prompt::can_ask(gui));
+    loop {
+        let mut opts = ExtractOpts::new(&dest);
+        opts.password = password;
+        opts.overwrite = if args.yes {
+            Overwrite::Always
+        } else if args.silent || !prompt::can_ask(gui) {
+            Overwrite::Never
+        } else {
+            Overwrite::Ask
+        };
+        let all = Cell::new(false);
+        let decide = |path: &Path| replace_choice(path, gui, &all);
+        let result = if opts.overwrite == Overwrite::Ask {
+            extract(&exe, &opts, Some(&decide), &NopProgress)
+        } else {
+            extract(&exe, &opts, None, &NopProgress)
+        };
+        // Wipe the password before a success notice or another prompt.
+        opts.password = None;
+        match result {
+            Ok(report) => {
+                if !args.silent {
+                    prompt::notice(
+                        &format!("Extracted {} to {}", report.extracted, dest.display()),
+                        gui,
+                    );
+                }
+                return Ok(0);
+            }
+            Err(Error::BadPassword) if retry => {
+                password = Some(required_password(
+                    gui,
+                    "That password was incorrect. Enter it again.",
+                )?);
+            }
+            Err(err) => return Err(err),
+        }
     }
-    Ok(0)
 }
 
 fn replace_choice(path: &Path, gui: bool, all: &Cell<bool>) -> Result<ConflictChoice, Error> {
@@ -93,32 +114,37 @@ fn replace_choice(path: &Path, gui: bool, all: &Cell<bool>) -> Result<ConflictCh
     }
 }
 
-fn password_for(exe: &Path, silent: bool, gui: bool) -> Result<Option<Password>, Error> {
-    if let Some(password) = env_password()? {
-        return Ok(Some(password));
-    }
+/// Ask again after a rejected password that the person typed.
+fn should_retry_password(from_env: bool, silent: bool, can_ask: bool) -> bool {
+    !from_env && !silent && can_ask
+}
+
+fn optional_password(exe: &Path, silent: bool, gui: bool) -> Result<Option<Password>, Error> {
     let (_opened, entries) = list(exe)?;
     if !entries.iter().any(|entry| entry.encrypted) {
         return Ok(None);
     }
-    if silent || gui || !io::stdin().is_terminal() {
+    if silent || !prompt::can_ask(gui) {
         return Err(Error::Encrypted(exe.display().to_string()));
     }
-    eprint!("Password: ");
-    io::stderr()
-        .flush()
-        .map_err(|err| Error::io("write password prompt", err))?;
-    let mut line = String::new();
-    io::stdin()
-        .read_line(&mut line)
-        .map_err(|err| Error::io("read password", err))?;
-    while line.ends_with(['\n', '\r']) {
-        line.pop();
+    required_password(gui, "Enter the password to extract this archive.").map(Some)
+}
+
+fn required_password(gui: bool, text: &str) -> Result<Password, Error> {
+    let mut text = text.to_string();
+    loop {
+        match prompt::password(&text, gui)? {
+            None => return Err(Error::Usage("extraction cancelled".to_string())),
+            Some(password) if password.expose().is_empty() => {
+                drop(password);
+                if !gui {
+                    return Err(Error::Usage("password was empty".to_string()));
+                }
+                text = "Enter a password.".to_string();
+            }
+            Some(password) => return Ok(password),
+        }
     }
-    if line.is_empty() {
-        return Err(Error::Usage("password was empty".to_string()));
-    }
-    Ok(Some(Password::new(line)?))
 }
 
 fn env_password() -> Result<Option<Password>, Error> {
@@ -185,8 +211,8 @@ shellzip-sfx — extract the ZIP stored in this executable
   -d, --dest DIR   extract into DIR (default: the working directory)
   -h, --help       show this help
 
-An encrypted ZIP reads SZIP_PASSWORD. A console session can type a password.
-A Windows dialog cannot, so set SZIP_PASSWORD before opening the file."
+An encrypted ZIP asks for a password before extracting.
+-s reads SZIP_PASSWORD and does not ask."
     );
 }
 
@@ -206,6 +232,14 @@ mod tests {
     fn rejects_an_unknown_switch() {
         let err = parse(["shellzip-sfx", "--nope"].map(str::to_string)).unwrap_err();
         assert_eq!(err.exit_code(), 7);
+    }
+
+    #[test]
+    fn retries_a_typed_password_and_not_a_silent_one() {
+        assert!(should_retry_password(false, false, true));
+        assert!(!should_retry_password(true, false, true));
+        assert!(!should_retry_password(false, true, true));
+        assert!(!should_retry_password(false, false, false));
     }
 
     #[test]

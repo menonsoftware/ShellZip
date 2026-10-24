@@ -254,8 +254,10 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut AddDialog) {
         dialog.set_sfx(sfx);
     }
     ui.label(
-        egui::RichText::new("An SFX package is a ZIP wrapped in the ShellZip extractor.")
-            .color(MUTED),
+        egui::RichText::new(
+            "An SFX package is a ZIP wrapped in the ShellZip extractor. A password is requested when that package is opened.",
+        )
+        .color(MUTED),
     );
     ui.add_space(6.0);
     ui.label("Password");

@@ -96,9 +96,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/crypto.rs": {
-    "mtime": 1792838899.9157503,
-    "seen": 1792841017.3679655,
-    "ast_hash": "38e6daee10a857114b86e2a1cbb58497",
+    "mtime": 1792856414.6131296,
+    "seen": 1792856528.6743062,
+    "ast_hash": "763b85d7681e251c0b926de6bc8e2854",
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/detect.rs": {
@@ -522,27 +522,27 @@
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/Cargo.toml": {
-    "mtime": 1792853074.675276,
-    "seen": 1792853453.4576132,
-    "ast_hash": "6282a678cfaaacdfb747ae4045d0ab5b",
+    "mtime": 1792855373.119714,
+    "seen": 1792855799.47327,
+    "ast_hash": "997a42181ab2184b9d5a95a1afd7d04c",
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/src/main.rs": {
-    "mtime": 1792853279.119042,
-    "seen": 1792853453.457615,
-    "ast_hash": "74e78ee7c0c140e71c6ecc1d85df6119",
+    "mtime": 1792856427.8576267,
+    "seen": 1792856528.6743367,
+    "ast_hash": "b0ca16d986dda153d48db018616a1269",
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/src/prompt.rs": {
-    "mtime": 1792848302.1078937,
-    "seen": 1792848507.950816,
-    "ast_hash": "43482aa03707d64279d620c23a08309d",
+    "mtime": 1792856424.9447787,
+    "seen": 1792856528.6743376,
+    "ast_hash": "511390d6ea79c47b2aa9ccd6106df519",
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/tests/extract.rs": {
-    "mtime": 1792853281.026791,
-    "seen": 1792853453.4576163,
-    "ast_hash": "b47a6f6fcabf4f3fae552dbb0abac3c5",
+    "mtime": 1792855546.5552223,
+    "seen": 1792855799.4732769,
+    "ast_hash": "d46b24f024d0856c0eb57393f30ebbb3",
     "semantic_hash": ""
   },
   "scripts/register-open-with.ps1": {
@@ -564,9 +564,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/add_dialog.rs": {
-    "mtime": 1792853791.6652758,
-    "seen": 1792853819.0346441,
-    "ast_hash": "924f6f2abab54a4913e4a47125172034",
+    "mtime": 1792855373.9839704,
+    "seen": 1792855799.4732492,
+    "ast_hash": "72b6eda7511c380f39661d0ff2425c9c",
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/build.rs": {
