@@ -51,6 +51,10 @@ pub enum Icon {
     X,
     /// Leave the current folder.
     ArrowUp,
+    /// Delete the selected archive members.
+    Trash,
+    /// Details of the selection or archive.
+    Info,
 }
 
 /// Up or down triangle, painted so we do not depend on font glyphs.
@@ -78,6 +82,8 @@ impl Icon {
             Self::Loader => "bytes://lucide/loader-circle.svg",
             Self::X => "bytes://lucide/x.svg",
             Self::ArrowUp => "bytes://lucide/arrow-up.svg",
+            Self::Trash => "bytes://lucide/trash-2.svg",
+            Self::Info => "bytes://lucide/info.svg",
         }
     }
 
@@ -96,12 +102,14 @@ impl Icon {
             Self::Loader => include_bytes!("../assets/lucide/loader-circle.svg"),
             Self::X => include_bytes!("../assets/lucide/x.svg"),
             Self::ArrowUp => include_bytes!("../assets/lucide/arrow-up.svg"),
+            Self::Trash => include_bytes!("../assets/lucide/trash-2.svg"),
+            Self::Info => include_bytes!("../assets/lucide/info.svg"),
         }
     }
 }
 
 /// Every icon, so the SVG textures can be created before the file table asks for them.
-pub const ALL: [Icon; 13] = [
+pub const ALL: [Icon; 15] = [
     Icon::FolderOpen,
     Icon::FolderDown,
     Icon::CircleCheck,
@@ -115,6 +123,8 @@ pub const ALL: [Icon; 13] = [
     Icon::Loader,
     Icon::X,
     Icon::ArrowUp,
+    Icon::Trash,
+    Icon::Info,
 ];
 
 /// Rasterize the icons once, at the master pixel size.

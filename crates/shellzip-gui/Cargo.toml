@@ -11,11 +11,13 @@ name = "shellzip"
 path = "src/main.rs"
 
 [dependencies]
+directories = "6.0.0"
 eframe = "0.32"
 egui = "0.32"
 egui_extras = { version = "0.32", features = ["all_loaders"] }
 rfd = "0.15"
 shellzip-core = { path = "../shellzip-core", features = ["rar", "sevenz"] }
+toml = "1.1.8"
 
 [lints]
 workspace = true

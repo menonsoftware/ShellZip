@@ -1,7 +1,7 @@
 //! Menu bar, icon toolbar, address bar, and status line.
 //!
 //! The commands are the ones ShellZip already performs. The menu holds the
-//! pack and extract options; the toolbar is only Add, Extract To, Test, and Open.
+//! pack and extract options; the toolbar is Add, Extract To, Test, Delete, and Info.
 
 use egui::{Align2, Color32, FontId, Rect, Sense, Vec2};
 
@@ -11,7 +11,7 @@ use crate::theme::{ADD, DANGER, EXTRACT, HOVER, INK, MUTED, OK, OPEN, PANEL, TES
 use shellzip_core::{Overwrite, ZipMethod};
 
 /// Pack and extract choices edited from the Options menu.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PackSettings {
     /// `-m` level, 0 (store) through 5 (maximum).
     pub level: u8,
@@ -42,6 +42,10 @@ pub enum MenuCommand {
     SelectNone,
     /// Show the about window.
     About,
+    /// Delete selected members of the open ZIP.
+    Delete,
+    /// Show details for the open archive or the selection.
+    Info,
 }
 
 /// Toolbar buttons, in the same order as the reference layout.
@@ -53,8 +57,10 @@ pub enum ToolCommand {
     Extract,
     /// Test archive integrity.
     Test,
-    /// Open an archive.
-    Open,
+    /// Delete selected ZIP members.
+    Delete,
+    /// Show archive or selection details.
+    Info,
 }
 
 /// Address bar result.
@@ -90,6 +96,12 @@ pub fn menu_bar(ui: &mut egui::Ui, options: &mut PackSettings) -> Option<MenuCom
             if ui.button("Test").clicked() {
                 command = Some(MenuCommand::Test);
             }
+            if ui.button("Delete").clicked() {
+                command = Some(MenuCommand::Delete);
+            }
+            if ui.button("Info").clicked() {
+                command = Some(MenuCommand::Info);
+            }
             ui.separator();
             if ui.button("Select all").clicked() {
                 command = Some(MenuCommand::SelectAll);
@@ -109,7 +121,12 @@ pub fn menu_bar(ui: &mut egui::Ui, options: &mut PackSettings) -> Option<MenuCom
 }
 
 /// Large icons with captions, using the Lucide set already shipped with the window.
-pub fn toolbar(ui: &mut egui::Ui, busy: bool, archive_ready: bool) -> Option<ToolCommand> {
+pub fn toolbar(
+    ui: &mut egui::Ui,
+    busy: bool,
+    archive_ready: bool,
+    can_delete: bool,
+) -> Option<ToolCommand> {
     let mut command = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
@@ -136,11 +153,69 @@ pub fn toolbar(ui: &mut egui::Ui, busy: bool, archive_ready: bool) -> Option<Too
         ) {
             command = Some(ToolCommand::Test);
         }
-        if tool(ui, Icon::FolderOpen, OPEN, "Open", "Open an archive", !busy) {
-            command = Some(ToolCommand::Open);
+        if tool(
+            ui,
+            Icon::Trash,
+            DANGER,
+            "Delete",
+            "Delete selected ZIP members",
+            can_delete,
+        ) {
+            command = Some(ToolCommand::Delete);
+        }
+        if tool(
+            ui,
+            Icon::Info,
+            OPEN,
+            "Info",
+            "Details of this folder or archive",
+            !busy,
+        ) {
+            command = Some(ToolCommand::Info);
         }
     });
     command
+}
+
+/// Clickable parent folders. The current location is the last crumb.
+pub fn breadcrumbs(ui: &mut egui::Ui, jumps: &[Jump]) -> Option<AddressEvent> {
+    if !jumps
+        .iter()
+        .any(|jump| matches!(jump.target, JumpTarget::Prefix(_)))
+    {
+        return None;
+    }
+    let mut event = None;
+    let last = jumps.len().saturating_sub(1);
+    ui.horizontal_wrapped(|ui| {
+        for (index, jump) in jumps.iter().enumerate() {
+            if index > 0 {
+                ui.label(egui::RichText::new(">").color(MUTED));
+            }
+            let label = crumb_label(jump);
+            if index == last {
+                ui.strong(label);
+            } else if ui.button(label).clicked() {
+                event = Some(AddressEvent::Jump(jump.target.clone()));
+            }
+        }
+    });
+    event
+}
+
+fn crumb_label(jump: &Jump) -> String {
+    match &jump.target {
+        JumpTarget::Prefix(prefix) if !prefix.is_empty() => prefix
+            .rsplit('/')
+            .next()
+            .unwrap_or(prefix.as_str())
+            .to_string(),
+        _ => std::path::Path::new(&jump.label)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| jump.label.clone()),
+    }
 }
 
 /// Up button, editable path, and a dropdown of parent folders.
@@ -173,9 +248,15 @@ pub fn address_bar(
     event
 }
 
+/// What the status line wants the window to do.
+pub struct StatusEvent {
+    /// The error dismiss button was pressed.
+    pub dismiss_error: bool,
+    /// The cancel button was pressed.
+    pub cancel: bool,
+}
+
 /// Totals on the right. Progress, errors, and job notes stay on the left.
-///
-/// Returns true when the error's Dismiss button was pressed.
 pub fn status_bar(
     ui: &mut egui::Ui,
     summary: &str,
@@ -183,8 +264,9 @@ pub fn status_bar(
     progress: (String, String, u64, u64),
     error: Option<&str>,
     note: &str,
-) -> bool {
+) -> StatusEvent {
     let mut dismiss = false;
+    let mut cancel = false;
     ui.horizontal(|ui| {
         if busy {
             icons::show_spinning(ui, INK, icons::SIZE_STATUS);
@@ -197,6 +279,9 @@ pub fn status_bar(
             ui.add(egui::ProgressBar::new(fraction).desired_width(160.0));
             let text = if entry.is_empty() { label } else { entry };
             ui.label(egui::RichText::new(text).color(MUTED));
+            if ui.button("Cancel").clicked() {
+                cancel = true;
+            }
         } else if let Some(message) = error {
             icons::show(ui, Icon::TriangleAlert, DANGER, icons::SIZE_STATUS);
             ui.colored_label(DANGER, message);
@@ -215,7 +300,62 @@ pub fn status_bar(
             ui.label(summary);
         });
     });
-    dismiss
+    StatusEvent {
+        dismiss_error: dismiss,
+        cancel,
+    }
+}
+
+/// Details window. `text` is already formatted for display.
+pub fn info_window(ctx: &egui::Context, text: &mut Option<String>) {
+    let mut open = text.is_some();
+    if let Some(body) = text.clone() {
+        egui::Window::new("Info")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_min_width(360.0);
+                ui.label(body);
+            });
+    }
+    if !open {
+        *text = None;
+    }
+}
+
+/// Confirm deletion of ZIP members. Returns true when the user confirms.
+pub fn confirm_delete(ctx: &egui::Context, pending: &mut Option<usize>) -> bool {
+    let Some(count) = *pending else {
+        return false;
+    };
+    let mut open = true;
+    let mut confirmed = false;
+    let mut dismiss = false;
+    egui::Window::new("Delete")
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.label(format!("Delete {count} selected members from this ZIP?"));
+            ui.horizontal(|ui| {
+                if ui.button("Delete").clicked() {
+                    confirmed = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    dismiss = true;
+                }
+            });
+        });
+    if confirmed || dismiss {
+        open = false;
+    }
+    if confirmed || !open {
+        *pending = None;
+    }
+    confirmed
 }
 
 /// Short about window. The Lucide credit lives here so the status line stays a total.

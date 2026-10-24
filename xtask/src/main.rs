@@ -15,8 +15,10 @@ fn main() {
     let result = match command.as_str() {
         "bench" => bench(),
         "build-fixtures" => build_fixtures(),
+        "sign" => sign(),
+        "package-stubs" => package_stubs(),
         _ => {
-            eprintln!("usage: xtask bench | build-fixtures");
+            eprintln!("usage: xtask bench | build-fixtures | sign <sfx> | package-stubs [stub]");
             std::process::exit(2);
         }
     };
@@ -24,6 +26,56 @@ fn main() {
         eprintln!("xtask: {err}");
         std::process::exit(1);
     }
+}
+
+fn sign() -> Result<(), Box<dyn std::error::Error>> {
+    let path = std::env::args().nth(2).ok_or("usage: xtask sign <sfx>")?;
+    let status = Command::new("signtool")
+        .args(["sign", "/fd", "SHA256", "/a", &path])
+        .status()
+        .map_err(|err| {
+            format!(
+                "signtool was not found on PATH ({err}); the SFX stays unsigned until you sign it"
+            )
+        })?;
+    if status.success() {
+        println!("signed {path}");
+        Ok(())
+    } else {
+        Err(format!("signtool failed with {status}").into())
+    }
+}
+
+fn package_stubs() -> Result<(), Box<dyn std::error::Error>> {
+    let built = std::env::args()
+        .nth(2)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let name = if cfg!(windows) {
+                "shellzip-sfx.exe"
+            } else {
+                "shellzip-sfx"
+            };
+            PathBuf::from("target").join("minisize").join(name)
+        });
+    if !built.is_file() {
+        return Err(format!(
+            "stub {} is missing; run `cargo build -p shellzip-sfx --profile minisize` first",
+            built.display()
+        )
+        .into());
+    }
+    let shipped = if cfg!(windows) {
+        "szip-sfx-x86_64-pc-windows-msvc.exe"
+    } else {
+        "szip-sfx-x86_64-unknown-linux-gnu"
+    };
+    let dest_dir = PathBuf::from("dist");
+    fs::create_dir_all(&dest_dir)?;
+    let dest = dest_dir.join(shipped);
+    fs::copy(&built, &dest)?;
+    println!("copied {} -> {}", built.display(), dest.display());
+    Ok(())
 }
 
 fn bench() -> Result<(), Box<dyn std::error::Error>> {

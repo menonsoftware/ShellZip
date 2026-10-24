@@ -4,6 +4,7 @@
 //! and extracts xz and bzip2. ZIP contents can be encrypted with AES-256 AE-2.
 //! Names stay visible: ZIP cannot hide them. RAR and 7z extraction are optional
 //! features (`rar`, `sevenz`). This crate never creates RAR archives.
+//! A self-extracting package is a stub, a ZIP payload, and a 24-byte trailer.
 //!
 //! File bytes are copied through a fixed buffer. Entry names are checked
 //! before anything is created on disk.
@@ -21,6 +22,7 @@ mod hash;
 mod ops;
 mod options;
 mod progress;
+mod sfx;
 
 pub use crypto::Password;
 pub use detect::{Compression, Format, detect_bytes, detect_file, format_from_extension};
@@ -35,6 +37,7 @@ pub use options::{
     UpdateMode, ZipMethod,
 };
 pub use progress::{NopProgress, ProgressSink};
+pub use sfx::{SfxDirection, SfxTrailer, build, convert, locate, strip, stub_file_names};
 
 /// Library result.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -47,6 +50,17 @@ pub fn add(
     progress: &dyn ProgressSink,
 ) -> Result<AddReport> {
     ops::add(dest, inputs, opts, progress)
+}
+
+/// Pack `inputs` and wrap the ZIP as a self-extractor at `dest`.
+pub fn add_sfx(
+    dest: &std::path::Path,
+    stub: &std::path::Path,
+    inputs: &[std::path::PathBuf],
+    opts: &CompressOpts,
+    progress: &dyn ProgressSink,
+) -> Result<AddReport> {
+    ops::add_sfx(dest, stub, inputs, opts, progress)
 }
 
 /// List `path` after sniffing its contents.

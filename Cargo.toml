@@ -4,12 +4,14 @@ members = [
     "crates/shellzip-core",
     "crates/shellzip-cli",
     "crates/shellzip-gui",
+    "crates/shellzip-sfx",
     "xtask",
 ]
 default-members = [
     "crates/shellzip-core",
     "crates/shellzip-cli",
     "crates/shellzip-gui",
+    "crates/shellzip-sfx",
 ]
 
 [workspace.package]
@@ -24,3 +26,14 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+# Size-sensitive binaries. `cargo build -p shellzip-sfx --profile minisize`
+[profile.minisize]
+inherits = "release"
+opt-level = "z"
+panic = "abort"

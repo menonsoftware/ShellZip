@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=ShellZip
+Comment=Open, test, extract, and create archives
+Exec=shellzip %f
+Terminal=false
+Categories=Utility;Archiving;
+MimeType=application/zip;application/x-tar;application/gzip;application/zstd;application/vnd.rar;application/x-7z-compressed;
+StartupNotify=true

@@ -12,6 +12,7 @@ use crate::ui;
 
 /// Create and extract ZIP, tar, gzip, zstd, xz, and bzip2 archives.
 /// RAR and 7z can be listed, tested, and extracted. RAR is never created.
+/// `s` and `a --sfx` build a self-extracting ZIP.
 ///
 /// ZIP AES-256 (WinZip AE-2) encrypts file contents only. Names stay visible,
 /// which is WinRAR `-p`, not header encryption `-hp`.
@@ -82,6 +83,12 @@ pub enum Command {
     /// Test checksums and declared sizes.
     #[command(name = "t")]
     Test(ArchiveArgs),
+    /// Convert a ZIP into a self-extracting archive, or the reverse.
+    ///
+    /// A ZIP is wrapped with the `shellzip-sfx` stub and a 24-byte trailer.
+    /// An SFX package is unwrapped back to a ZIP. `a --sfx` creates one in one step.
+    #[command(name = "s")]
+    Sfx(SfxArgs),
     /// Write a shell completion script to stdout.
     Complete {
         /// Shell to generate.
@@ -134,6 +141,15 @@ pub struct AddArgs {
     /// Zstd window log, from 10 to 31. Default follows the total input size.
     #[arg(long = "long", value_name = "LOG2", value_parser = clap::value_parser!(u32).range(10..=31))]
     pub long_window: Option<u32>,
+    /// Wrap the new ZIP as a self-extracting archive (`-sfx`).
+    ///
+    /// The destination is the executable path, not a `.zip` path. The stub is
+    /// `shellzip-sfx` beside `szip`, `SZIP_SFX_STUB`, or `--sfx-stub`.
+    #[arg(long = "sfx")]
+    pub sfx: bool,
+    /// Stub binary prepended by `--sfx`.
+    #[arg(long = "sfx-stub", value_name = "PATH")]
+    pub sfx_stub: Option<PathBuf>,
     /// Read one member from stdin instead of a file path.
     ///
     /// `--stdin` stores it as `stdin`. `--stdin=NAME` stores `NAME` (`-siNAME` is the same switch).
@@ -148,6 +164,19 @@ pub struct AddArgs {
         require_equals = true
     )]
     pub stdin: Option<String>,
+}
+
+/// `szip s <archive>`.
+#[derive(Debug, Parser)]
+pub struct SfxArgs {
+    /// ZIP to wrap, or SFX package to unwrap.
+    pub archive: PathBuf,
+    /// Output path. Default is `name.exe` / `name.sfx` when wrapping, and `name.zip` when unwrapping.
+    #[arg(short = 'o', long = "output")]
+    pub output: Option<PathBuf>,
+    /// Stub binary used when wrapping a ZIP.
+    #[arg(long = "sfx-stub", value_name = "PATH")]
+    pub sfx_stub: Option<PathBuf>,
 }
 
 /// `szip d <archive> <masks…>`.
@@ -324,6 +353,7 @@ fn dispatch(cli: &mut Cli) -> Result<i32, Error> {
         Command::ListTechnical(args) => commands::list_technical(args, shared.password.as_ref()),
         Command::Print(args) => commands::print_entry(args, &shared),
         Command::Test(args) => commands::test(args, &shared),
+        Command::Sfx(args) => commands::sfx(args, &shared),
         Command::Complete { shell } => {
             let mut cmd = Cli::command();
             generate(*shell, &mut cmd, "szip", &mut std::io::stdout());
@@ -528,6 +558,14 @@ fn normalize_args(args: impl Iterator<Item = String>) -> Vec<String> {
             out.push("--mes".to_string());
         } else if arg == "-om" {
             out.push("--om".to_string());
+        } else if arg == "-sfx" {
+            out.push("--sfx".to_string());
+        } else if let Some(name) = arg.strip_prefix("-sfx")
+            && !name.is_empty()
+            && !name.starts_with('-')
+        {
+            out.push("--sfx".to_string());
+            out.push(format!("--sfx-stub={name}"));
         } else {
             out.push(arg);
         }
@@ -553,6 +591,7 @@ mod tests {
             "-psecret",
             "-mes",
             "-om",
+            "-sfxstub.bin",
         ]
         .into_iter()
         .map(str::to_string);
@@ -570,6 +609,8 @@ mod tests {
                 "--password=secret",
                 "--mes",
                 "--om",
+                "--sfx",
+                "--sfx-stub=stub.bin",
             ]
         );
     }

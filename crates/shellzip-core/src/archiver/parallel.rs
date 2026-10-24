@@ -76,6 +76,7 @@ pub(crate) fn add_zip(
             Err((_, err)) => return Err(err),
         };
         for (item, piece) in chunk.iter().zip(pieces) {
+            crate::progress::ensure_running(progress)?;
             progress.begin_entry(&item.rel, item.meta.size);
             match item.kind {
                 EntryKind::Dir => archiver.add_dir(Path::new(&item.rel), &item.meta)?,

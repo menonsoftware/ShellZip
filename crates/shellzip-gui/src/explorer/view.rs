@@ -1,8 +1,9 @@
-//! Virtualized name, size, type, and modified columns.
+//! Virtualized name, size, packed, type, modified, and CRC columns.
 
 use std::collections::HashSet;
 
 use egui_extras::{Column, TableBuilder};
+use shellzip_core::format_crc;
 
 use super::appearance;
 use super::model::{self, Row, RowKind, SortColumn, SortOrder};
@@ -147,8 +148,10 @@ pub fn show(
         .column(Column::exact(28.0).resizable(false))
         .column(Column::remainder().at_least(160.0).clip(true))
         .column(Column::initial(90.0).at_least(64.0).clip(true))
-        .column(Column::initial(180.0).at_least(110.0).clip(true))
-        .column(Column::initial(150.0).at_least(120.0).clip(true));
+        .column(Column::initial(90.0).at_least(64.0).clip(true))
+        .column(Column::initial(160.0).at_least(100.0).clip(true))
+        .column(Column::initial(150.0).at_least(120.0).clip(true))
+        .column(Column::initial(90.0).at_least(72.0).clip(true));
     if let Some(index) = scroll_to.take() {
         builder = builder.scroll_to_row(index, Some(egui::Align::Center));
     }
@@ -176,6 +179,15 @@ pub fn show(
         }
         if header_clicked(
             &mut header,
+            "Packed",
+            explorer.column == SortColumn::Packed,
+            explorer.order,
+        ) {
+            explorer.toggle(SortColumn::Packed);
+            resorted = true;
+        }
+        if header_clicked(
+            &mut header,
             "Type",
             explorer.column == SortColumn::Type,
             explorer.order,
@@ -190,6 +202,15 @@ pub fn show(
             explorer.order,
         ) {
             explorer.toggle(SortColumn::Modified);
+            resorted = true;
+        }
+        if header_clicked(
+            &mut header,
+            "CRC",
+            explorer.column == SortColumn::Crc,
+            explorer.order,
+        ) {
+            explorer.toggle(SortColumn::Crc);
             resorted = true;
         }
     });
@@ -222,11 +243,19 @@ pub fn show(
             });
             row.col(|ui| {
                 ui.add_space(6.0);
+                cell_text(ui, &packed_text(item), text);
+            });
+            row.col(|ui| {
+                ui.add_space(6.0);
                 cell_text(ui, &item.type_label, text);
             });
             row.col(|ui| {
                 ui.add_space(6.0);
                 cell_text(ui, &modified_text(item), text);
+            });
+            row.col(|ui| {
+                ui.add_space(6.0);
+                cell_text(ui, &crc_text(item), text);
             });
             // `row.response` is the union of every cell, including the empty
             // padding, because the labels and icons do not take the pointer.
@@ -280,4 +309,20 @@ fn size_text(row: &Row) -> String {
 
 fn modified_text(row: &Row) -> String {
     row.modified.map(model::format_modified).unwrap_or_default()
+}
+
+fn packed_text(row: &Row) -> String {
+    if matches!(row.kind, RowKind::Directory | RowKind::Parent) {
+        String::new()
+    } else {
+        row.packed.map(|size| size.to_string()).unwrap_or_default()
+    }
+}
+
+fn crc_text(row: &Row) -> String {
+    if matches!(row.kind, RowKind::Directory | RowKind::Parent) || row.crc32.is_none() {
+        String::new()
+    } else {
+        format_crc(row.crc32)
+    }
 }

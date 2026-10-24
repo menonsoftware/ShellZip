@@ -15,10 +15,12 @@ BIN_GUI := shellzip
 PKG_CLI := shellzip-cli
 PKG_GUI := shellzip-gui
 PKG_CORE := shellzip-core
+PKG_SFX := shellzip-sfx
+BIN_SFX := shellzip-sfx
 
 .PHONY: all build release build-cli build-gui build-core \
 	run run-release gui gui-release \
-	test test-cli test-core \
+	test test-cli test-core test-sfx build-sfx \
 	check clippy lint fmt fmt-check doc \
 	clean ci install install-gui bench help
 
@@ -38,6 +40,9 @@ build-gui:
 
 build-core:
 	$(CARGO) build -p $(PKG_CORE) $(CARGO_FLAGS)
+
+build-sfx:
+	$(CARGO) build -p $(PKG_SFX) --profile minisize $(CARGO_FLAGS)
 
 # CLI: make run ARGS="a out.zip src"   (defaults to --help)
 run:
@@ -61,6 +66,9 @@ test-cli:
 
 test-core:
 	$(CARGO) test -p $(PKG_CORE) $(CARGO_FLAGS)
+
+test-sfx:
+	$(CARGO) test -p $(PKG_SFX) $(CARGO_FLAGS)
 
 check:
 	$(CARGO) check --workspace --all-targets $(CARGO_FLAGS)
@@ -101,6 +109,8 @@ help:
 	@echo   make release          Release workspace build
 	@echo   make build-cli        Build szip only
 	@echo   make build-gui        Build the desktop app
+	@echo   make build-sfx        Build the size-optimized SFX stub
+	@echo   make test-sfx         Test the SFX stub
 	@echo   make run              Run szip --help
 	@echo   make run ARGS="..."   Run szip with arguments
 	@echo   make gui              Open the ShellZip window
