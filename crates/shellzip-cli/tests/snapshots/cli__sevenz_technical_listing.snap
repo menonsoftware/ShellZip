@@ -1,0 +1,6 @@
+---
+source: crates/shellzip-cli/tests/cli.rs
+expression: body
+---
+Name                           Size     Packed  Ratio  Modified          Attrs   CRC32     BLAKE2sp                                                          Method    Host      Flags
+hello.txt                         5          5   100%  [time]  -----   3610A686  [blake]  Copy      -         -

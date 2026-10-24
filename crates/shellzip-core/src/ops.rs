@@ -71,6 +71,7 @@ pub fn add_sfx(
     stub: &Path,
     inputs: &[PathBuf],
     opts: &CompressOpts,
+    payload: crate::sfx::SfxPayload,
     progress: &dyn ProgressSink,
 ) -> Result<AddReport, Error> {
     if opts.update != UpdateMode::Add {
@@ -78,13 +79,17 @@ pub fn add_sfx(
             "--sfx is only valid when creating an archive".to_string(),
         ));
     }
-    let scratch = scratch_zip(dest);
+    let scratch = scratch_archive(dest, payload);
     let _ = std::fs::remove_file(&scratch);
     let mut opts = opts.clone();
     opts.force = true;
+    if payload == crate::sfx::SfxPayload::SevenZ && opts.level > 0 {
+        // The stub is built with LZMA2 and AES only.
+        opts.sevenz.method = crate::options::SevenZMethod::Lzma2;
+    }
     let result = (|| {
         let report = add_inner(&scratch, Some(dest), inputs, &opts, progress, None)?;
-        let packed_bytes = crate::sfx::build(dest, stub, &scratch)?;
+        let packed_bytes = crate::sfx::build(dest, stub, &scratch, payload)?;
         Ok(AddReport {
             path: dest.to_path_buf(),
             entries: report.entries,
@@ -96,7 +101,7 @@ pub fn add_sfx(
     result
 }
 
-fn scratch_zip(dest: &Path) -> PathBuf {
+fn scratch_archive(dest: &Path, payload: crate::sfx::SfxPayload) -> PathBuf {
     // Parallel `szip a --sfx` calls must not share one temp ZIP. The counter
     // only makes the file name unique.
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -105,7 +110,11 @@ fn scratch_zip(dest: &Path) -> PathBuf {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "archive".to_string());
-    std::env::temp_dir().join(format!(".{name}.{}.{id}.szip-sfx.zip", std::process::id()))
+    std::env::temp_dir().join(format!(
+        ".{name}.{}.{id}.szip-sfx.{}",
+        std::process::id(),
+        payload.extension()
+    ))
 }
 
 fn add_inner(
@@ -134,26 +143,33 @@ fn add_inner(
         ));
     }
     if let Some(comment) = &opts.comment {
-        if comment.len() > usize::from(u16::MAX) {
+        if matches!(format, Format::Zip) && comment.len() > usize::from(u16::MAX) {
             return Err(Error::Usage(
                 "ZIP comment is longer than 65535 bytes".to_string(),
             ));
         }
-        if !comment.is_empty() && !matches!(format, Format::Zip) {
+        if !comment.is_empty() && !matches!(format, Format::Zip | Format::SevenZ) {
             return Err(Error::Usage(
-                "archive comments are stored in ZIP archives".to_string(),
+                "archive comments are stored in ZIP and 7z archives".to_string(),
             ));
         }
     }
-    if opts.update != UpdateMode::Add && dest.exists() && !matches!(format, Format::Zip) {
+    if opts.sevenz.encrypt_headers && !matches!(format, Format::SevenZ) {
         return Err(Error::Usage(
-            "only ZIP archives can be updated in place".to_string(),
+            "encrypting file names is a 7z option; ZIP names stay visible".to_string(),
         ));
     }
-    if opts.password.is_some() && !matches!(format, Format::Zip) {
+    if opts.update != UpdateMode::Add
+        && dest.exists()
+        && !matches!(format, Format::Zip | Format::SevenZ)
+    {
         return Err(Error::Usage(
-            "passwords encrypt ZIP file contents only; names stay visible, and other formats are not encrypted"
-                .to_string(),
+            "only ZIP and 7z archives can be updated in place".to_string(),
+        ));
+    }
+    if opts.password.is_some() && !matches!(format, Format::Zip | Format::SevenZ) {
+        return Err(Error::Usage(
+            "passwords encrypt ZIP and 7z archives; other formats are not encrypted".to_string(),
         ));
     }
     if opts.password.is_some() && dest.is_file() && !opts.force {
@@ -166,7 +182,7 @@ fn add_inner(
     let source_names: Vec<String> = planned.iter().map(|item| item.rel.clone()).collect();
     let mut opts = opts.clone();
     if opts.update != UpdateMode::Add && !opts.force && dest.is_file() {
-        let index = zip_mtimes(dest)?;
+        let index = member_times(dest, opts.password.as_ref())?;
         planned = select_members(planned, opts.update, &index, prompt)?;
         let extras = opts.update == UpdateMode::Sync
             && index
@@ -287,22 +303,31 @@ pub fn write_member(
     Ok(verify.bytes)
 }
 
-/// Delete ZIP members whose names match `masks`, rewriting via a temporary file.
+/// Delete ZIP or 7z members whose names match `masks`, rewriting via a temporary file.
+///
+/// `password` unlocks an encrypted 7z header and re-encrypts the members that stay.
 pub fn delete(
     path: &Path,
     masks: &[String],
+    password: Option<&crate::crypto::Password>,
     progress: &dyn ProgressSink,
 ) -> Result<DeleteReport, Error> {
     if masks.is_empty() {
         return Err(Error::NoFiles);
     }
     let format = detect_file(path)?;
-    if !matches!(format, Format::Zip) {
+    if !matches!(format, Format::Zip | Format::SevenZ) {
         return Err(Error::Usage(
-            "delete only rewrites ZIP archives".to_string(),
+            "delete only rewrites ZIP and 7z archives".to_string(),
         ));
     }
-    let (_opened, entries) = list(path)?;
+    let (_opened, entries) = list_with(
+        path,
+        &ListOpts {
+            password: password.cloned(),
+            ..ListOpts::default()
+        },
+    )?;
     let globs = build_globs(masks)?;
     let doomed: Vec<String> = entries
         .iter()
@@ -314,7 +339,20 @@ pub fn delete(
     }
     let kept = u64::try_from(entries.len()).unwrap_or(u64::MAX) - doomed.len() as u64;
     progress.begin(&format!("delete {}", path.display()), 0);
-    let mut writer = archiver::create_from_path(path, &CompressOpts::default())?;
+    // A header-encrypted 7z cannot be listed without the password. Keep that
+    // property; data-only encryption leaves names visible and stays that way.
+    let encrypt_headers = password.is_some()
+        && matches!(format, Format::SevenZ)
+        && matches!(list(path), Err(Error::Encrypted(_)));
+    let kept_opts = CompressOpts {
+        password: password.cloned(),
+        sevenz: crate::options::SevenZOpts {
+            encrypt_headers,
+            ..crate::options::SevenZOpts::default()
+        },
+        ..CompressOpts::default()
+    };
+    let mut writer = archiver::create_from_path(path, &kept_opts)?;
     writer.retain_existing(&doomed)?;
     let packed_bytes = writer.finish()?;
     progress.message(&format!("removed {} from {}", doomed.len(), path.display()));
@@ -350,9 +388,9 @@ pub fn add_stdin(
             "ask before overwrite needs a prompt and is not available for stdin".to_string(),
         ));
     }
-    if opts.update != UpdateMode::Add && !matches!(format, Format::Zip) {
+    if opts.update != UpdateMode::Add && !matches!(format, Format::Zip | Format::SevenZ) {
         return Err(Error::Usage(
-            "only ZIP archives can be updated in place".to_string(),
+            "only ZIP and 7z archives can be updated in place".to_string(),
         ));
     }
     match format {
@@ -362,12 +400,12 @@ pub fn add_stdin(
                 .map_err(|err| Error::io(format!("open {}", spooled.path.display()), err))?;
             stream_one(dest, &rel, &mut file, Some(spooled.len), opts, progress)
         }
-        Format::Zip | Format::Gzip | Format::Zstd => {
+        Format::Zip | Format::Gzip | Format::Zstd | Format::SevenZ => {
             stream_one(dest, &rel, input, None, opts, progress)
         }
         other => Err(Error::Unsupported {
             format: other.label(),
-            detail: "stdin packing supports .zip, .tar, .tar.gz, .tar.zst, .gz, and .zst"
+            detail: "stdin packing supports .zip, .7z, .tar, .tar.gz, .tar.zst, .gz, and .zst"
                 .to_string(),
         }),
     }
@@ -458,8 +496,17 @@ fn build_globs(patterns: &[String]) -> Result<GlobSet, Error> {
         .map_err(|err| Error::Usage(format!("invalid mask: {err}")))
 }
 
-fn zip_mtimes(path: &Path) -> Result<HashMap<String, Option<SystemTime>>, Error> {
-    let (_opened, entries) = list(path)?;
+fn member_times(
+    path: &Path,
+    password: Option<&crate::crypto::Password>,
+) -> Result<HashMap<String, Option<SystemTime>>, Error> {
+    let (_opened, entries) = list_with(
+        path,
+        &ListOpts {
+            password: password.cloned(),
+            ..ListOpts::default()
+        },
+    )?;
     let mut index = HashMap::with_capacity(entries.len());
     for entry in entries {
         index.insert(member_key(&entry.path), entry.modified);
@@ -677,7 +724,7 @@ fn stream_one(
     }
     let mut opts = opts.clone();
     if dest.is_file() && opts.update != UpdateMode::Add && !opts.force {
-        let index = zip_mtimes(dest)?;
+        let index = member_times(dest, opts.password.as_ref())?;
         let key = member_key(&rel_text);
         if opts.update == UpdateMode::Freshen && !index.contains_key(&key) {
             return Err(Error::NoFiles);

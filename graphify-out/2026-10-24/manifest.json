@@ -522,15 +522,15 @@
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/Cargo.toml": {
-    "mtime": 1792855373.119714,
-    "seen": 1792855799.47327,
-    "ast_hash": "997a42181ab2184b9d5a95a1afd7d04c",
+    "mtime": 1792857510.8949754,
+    "seen": 1792857670.0635228,
+    "ast_hash": "100dab5ef03ea7324c19e5159cefefbb",
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/src/main.rs": {
-    "mtime": 1792856427.8576267,
-    "seen": 1792856528.6743367,
-    "ast_hash": "b0ca16d986dda153d48db018616a1269",
+    "mtime": 1792857228.5480516,
+    "seen": 1792857670.0635266,
+    "ast_hash": "91a8307402bca610236af58a2a5722bb",
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/src/prompt.rs": {
@@ -573,6 +573,12 @@
     "mtime": 1792853303.4734023,
     "seen": 1792853453.4576142,
     "ast_hash": "06e059cfa3b4c92bc6b9c5d0f3618fde",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-sfx/src/setup.rs": {
+    "mtime": 1792857594.178436,
+    "seen": 1792857670.0635304,
+    "ast_hash": "83cae2400aa3809a896af11e88bbb80a",
     "semantic_hash": ""
   }
 }

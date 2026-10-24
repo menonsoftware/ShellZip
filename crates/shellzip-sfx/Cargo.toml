@@ -11,7 +11,7 @@ name = "shellzip-sfx"
 path = "src/main.rs"
 
 [dependencies]
-shellzip-core = { path = "../shellzip-core" }
+shellzip-core = { path = "../shellzip-core", features = ["sevenz"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", default-features = false, features = [

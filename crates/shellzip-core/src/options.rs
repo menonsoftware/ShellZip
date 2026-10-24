@@ -59,6 +59,59 @@ impl UpdateMode {
 /// Return [`Error::Interrupted`] to cancel the pack.
 pub type UpdatePrompt<'a> = dyn Fn(&str) -> Result<ConflictChoice, Error> + 'a;
 
+/// 7z compression method. Level 0 stores the bytes and ignores this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SevenZMethod {
+    /// LZMA2. The 7-Zip default.
+    #[default]
+    Lzma2,
+    /// Original LZMA.
+    Lzma,
+    /// PPMd. Needs the `sevenz-codecs` feature.
+    Ppmd,
+    /// BZip2. Needs the `sevenz-codecs` feature.
+    Bzip2,
+    /// Deflate. Needs the `sevenz-codecs` feature.
+    Deflate,
+    /// Zstd. Needs the `sevenz-codecs` feature.
+    Zstd,
+}
+
+impl SevenZMethod {
+    /// Label for the add dialog and listings.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Lzma2 => "LZMA2",
+            Self::Lzma => "LZMA",
+            Self::Ppmd => "PPMd",
+            Self::Bzip2 => "BZip2",
+            Self::Deflate => "Deflate",
+            Self::Zstd => "Zstd",
+        }
+    }
+}
+
+/// 7z settings. Other formats ignore them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SevenZOpts {
+    /// Codec used when the level is not 0.
+    pub method: SevenZMethod,
+    /// Compress files together. Default is on, matching 7-Zip.
+    pub solid: bool,
+    /// Encrypt names and metadata as well as file contents. This is `-hp`.
+    pub encrypt_headers: bool,
+}
+
+impl Default for SevenZOpts {
+    fn default() -> Self {
+        Self {
+            method: SevenZMethod::Lzma2,
+            solid: true,
+            encrypt_headers: false,
+        }
+    }
+}
+
 /// ZIP compression method selected with `--method`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ZipMethod {
@@ -167,10 +220,13 @@ pub struct CompressOpts {
     pub zstd_long: Option<u32>,
     /// Uncompressed input bytes, used to pick the zstd window. `None` means unknown.
     pub input_bytes: Option<u64>,
-    /// ZIP AES-256 password. `None` writes an unencrypted archive.
+    /// ZIP AES-256 password, or the 7z password. `None` writes an unencrypted archive.
     ///
-    /// Only file contents are encrypted. Names, sizes, and timestamps stay visible.
+    /// ZIP encrypts file contents only. Names, sizes, and timestamps stay visible.
+    /// 7z can also encrypt names when [`SevenZOpts::encrypt_headers`] is set.
     pub password: Option<Password>,
+    /// 7z codec, solid blocks, and header encryption. Ignored for other formats.
+    pub sevenz: SevenZOpts,
 }
 
 impl Default for CompressOpts {
@@ -192,6 +248,7 @@ impl Default for CompressOpts {
             zstd_long: None,
             input_bytes: None,
             password: None,
+            sevenz: SevenZOpts::default(),
         }
     }
 }
@@ -229,6 +286,18 @@ impl CompressOpts {
             0 | 1 => 1,
             2 => 3,
             3 => 6,
+            4 => 7,
+            _ => 9,
+        }
+    }
+
+    /// `zesven` level for `-m`. Level 0 is stored, not a compressing level.
+    pub fn sevenz_level(&self) -> u32 {
+        match self.level {
+            0 => 0,
+            1 => 1,
+            2 => 3,
+            3 => 5,
             4 => 7,
             _ => 9,
         }

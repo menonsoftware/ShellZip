@@ -4,15 +4,18 @@ use std::path::PathBuf;
 
 use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
-use shellzip_core::{CompressOpts, Error, Overwrite, Password, StoreList, UpdateMode, ZipMethod};
+use shellzip_core::{
+    CompressOpts, Error, Format, Overwrite, Password, SevenZMethod, SevenZOpts, StoreList,
+    UpdateMode, ZipMethod, format_from_extension,
+};
 use zeroize::Zeroize;
 
 use crate::commands::{self, Shared};
 use crate::ui;
 
-/// Create and extract ZIP, tar, gzip, zstd, xz, and bzip2 archives.
-/// RAR and 7z can be listed, tested, and extracted. RAR is never created.
-/// `s` and `a --sfx` build a self-extracting ZIP.
+/// Create and extract ZIP, 7z, tar, gzip, zstd, xz, and bzip2 archives.
+/// RAR can be listed, tested, and extracted. RAR is never created.
+/// `s` and `a --sfx` build a self-extracting ZIP or 7z archive.
 ///
 /// ZIP AES-256 (WinZip AE-2) encrypts file contents only. Names stay visible,
 /// which is WinRAR `-p`, not header encryption `-hp`.
@@ -108,9 +111,11 @@ pub struct AddArgs {
     /// Compression level, 0 (store) through 5 (maximum).
     #[arg(short = 'm', long = "level", default_value_t = 3, value_parser = clap::value_parser!(u8).range(0..=5))]
     pub level: u8,
-    /// ZIP method used above level 0. Ignored for tar and single-file streams.
-    #[arg(long, value_enum, default_value = "deflate")]
-    pub method: MethodArg,
+    /// Compression method. ZIP defaults to deflate; 7z defaults to LZMA2.
+    ///
+    /// LZMA2, LZMA, PPMd, and BZip2 are 7z methods. Deflate and Zstd work for ZIP and 7z.
+    #[arg(long, value_enum)]
+    pub method: Option<MethodArg>,
     /// Drop the top directory name from stored paths.
     #[arg(long = "ep1")]
     pub ep1: bool,
@@ -150,6 +155,20 @@ pub struct AddArgs {
     /// Stub binary prepended by `--sfx`.
     #[arg(long = "sfx-stub", value_name = "PATH")]
     pub sfx_stub: Option<PathBuf>,
+    /// Encrypt 7z file names and metadata as well as contents (`-hp`).
+    ///
+    /// ZIP cannot hide names. Requires a password.
+    #[arg(long = "hp")]
+    pub encrypt_headers: bool,
+    /// Pack a 7z archive as one solid block. This is the default.
+    #[arg(long = "solid")]
+    pub solid: bool,
+    /// Pack each 7z file in its own block (`-s-`).
+    #[arg(long = "no-solid")]
+    pub no_solid: bool,
+    /// Archive stored inside an `--sfx` package.
+    #[arg(long = "sfx-format", value_enum, default_value = "zip")]
+    pub sfx_format: SfxFormatArg,
     /// Read one member from stdin instead of a file path.
     ///
     /// `--stdin` stores it as `stdin`. `--stdin=NAME` stores `NAME` (`-siNAME` is the same switch).
@@ -260,19 +279,45 @@ pub struct ArchiveArgs {
 /// `--method` values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum MethodArg {
-    /// Deflate.
+    /// Deflate. The ZIP default, and a 7z codec.
     Deflate,
-    /// Zstd (ZIP method 93, or a zstd frame for `.tar.zst` and `.zst`).
+    /// Zstd (ZIP method 93, a zstd frame, or a 7z codec).
     Zstd,
+    /// LZMA2. The 7z default.
+    Lzma2,
+    /// LZMA. 7z only.
+    Lzma,
+    /// PPMd. 7z only.
+    Ppmd,
+    /// BZip2. 7z only.
+    Bzip2,
 }
 
-impl From<MethodArg> for ZipMethod {
-    fn from(method: MethodArg) -> Self {
-        match method {
-            MethodArg::Deflate => Self::Deflate,
-            MethodArg::Zstd => Self::Zstd,
+impl MethodArg {
+    fn is_sevenz_only(self) -> bool {
+        matches!(self, Self::Lzma2 | Self::Lzma | Self::Ppmd | Self::Bzip2)
+    }
+
+    fn sevenz(self) -> SevenZMethod {
+        match self {
+            Self::Deflate => SevenZMethod::Deflate,
+            Self::Zstd => SevenZMethod::Zstd,
+            Self::Lzma2 => SevenZMethod::Lzma2,
+            Self::Lzma => SevenZMethod::Lzma,
+            Self::Ppmd => SevenZMethod::Ppmd,
+            Self::Bzip2 => SevenZMethod::Bzip2,
         }
     }
+}
+
+/// Payload wrapped by `--sfx`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SfxFormatArg {
+    /// ZIP payload. The default.
+    Zip,
+    /// 7z payload, limited to LZMA2 so the stub can extract it.
+    #[value(name = "7z")]
+    SevenZ,
 }
 
 /// `--overwrite` values.
@@ -378,6 +423,33 @@ pub(crate) fn compress_opts(args: &AddArgs, update: UpdateMode) -> Result<Compre
             "do not pass files together with --stdin".to_string(),
         ));
     }
+    if args.solid && args.no_solid {
+        return Err(Error::Usage(
+            "pass only one of --solid and --no-solid".to_string(),
+        ));
+    }
+    let format = if args.sfx {
+        match args.sfx_format {
+            SfxFormatArg::Zip => Format::Zip,
+            SfxFormatArg::SevenZ => Format::SevenZ,
+        }
+    } else {
+        format_from_extension(&args.archive)?
+    };
+    let zip_method = match args.method {
+        Some(method) if method.is_sevenz_only() && matches!(format, Format::Zip) => {
+            return Err(Error::Usage(format!(
+                "{} is a 7z method; ZIP accepts deflate or zstd",
+                method.sevenz().label()
+            )));
+        }
+        Some(MethodArg::Zstd) => ZipMethod::Zstd,
+        Some(MethodArg::Deflate) | None | Some(_) => ZipMethod::Deflate,
+    };
+    let sevenz_method = match args.method {
+        Some(method) => method.sevenz(),
+        None => SevenZMethod::Lzma2,
+    };
     let store_exts = if args.no_store_list {
         StoreList {
             extensions: Vec::new(),
@@ -392,7 +464,7 @@ pub(crate) fn compress_opts(args: &AddArgs, update: UpdateMode) -> Result<Compre
         recurse: !args.no_recurse,
         ep1: args.ep1,
         follow_symlinks: args.follow_symlinks,
-        zip_method: args.method.into(),
+        zip_method,
         store_exts,
         includes: args.include.clone(),
         excludes: args.exclude.clone(),
@@ -404,6 +476,11 @@ pub(crate) fn compress_opts(args: &AddArgs, update: UpdateMode) -> Result<Compre
         zstd_long: args.long_window,
         input_bytes: None,
         password: None,
+        sevenz: SevenZOpts {
+            method: sevenz_method,
+            solid: !args.no_solid,
+            encrypt_headers: args.encrypt_headers,
+        },
     })
 }
 
@@ -560,6 +637,18 @@ fn normalize_args(args: impl Iterator<Item = String>) -> Vec<String> {
             out.push("--mes".to_string());
         } else if arg == "-om" {
             out.push("--om".to_string());
+        } else if arg == "-hp" {
+            out.push("--hp".to_string());
+        } else if let Some(secret) = arg.strip_prefix("-hp")
+            && !secret.is_empty()
+            && !secret.starts_with('-')
+        {
+            out.push("--hp".to_string());
+            out.push(format!("--password={secret}"));
+        } else if arg == "-s-" {
+            out.push("--no-solid".to_string());
+        } else if arg == "-s" {
+            out.push("--solid".to_string());
         } else if arg == "-sfx" {
             out.push("--sfx".to_string());
         } else if let Some(name) = arg.strip_prefix("-sfx")
@@ -594,6 +683,8 @@ mod tests {
             "-mes",
             "-om",
             "-sfxstub.bin",
+            "-s-",
+            "-hpsecret",
         ]
         .into_iter()
         .map(str::to_string);
@@ -613,6 +704,9 @@ mod tests {
                 "--om",
                 "--sfx",
                 "--sfx-stub=stub.bin",
+                "--no-solid",
+                "--hp",
+                "--password=secret",
             ]
         );
     }

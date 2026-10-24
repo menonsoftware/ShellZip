@@ -3,7 +3,7 @@
 use std::fs;
 use std::process::Command;
 
-use shellzip_core::{CompressOpts, NopProgress, Password, add, build};
+use shellzip_core::{CompressOpts, NopProgress, Password, SfxPayload, add, build};
 
 #[test]
 fn stub_extracts_its_appended_zip() {
@@ -24,7 +24,7 @@ fn stub_extracts_its_appended_zip() {
     .unwrap();
 
     let sfx = tmp.path().join("package.exe");
-    build(&sfx, &stub_bin(), &zip_path).unwrap();
+    build(&sfx, &stub_bin(), &zip_path, SfxPayload::Zip).unwrap();
 
     let dest = tmp.path().join("out");
     fs::create_dir(&dest).unwrap();
@@ -118,8 +118,64 @@ fn encrypted_sfx(dir: &std::path::Path) -> std::path::PathBuf {
     )
     .unwrap();
     let sfx = dir.join("package.exe");
-    build(&sfx, &stub_bin(), &zip_path).unwrap();
+    build(&sfx, &stub_bin(), &zip_path, SfxPayload::Zip).unwrap();
     sfx
+}
+
+#[test]
+fn stub_extracts_its_appended_7z() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("hello.txt");
+    fs::write(&src, b"hello-7z").unwrap();
+    let archive = tmp.path().join("in.7z");
+    add(
+        &archive,
+        &[src],
+        &CompressOpts {
+            level: 0,
+            threads: 1,
+            ..CompressOpts::default()
+        },
+        &NopProgress,
+    )
+    .unwrap();
+    let sfx = tmp.path().join("package.exe");
+    build(&sfx, &stub_bin(), &archive, SfxPayload::SevenZ).unwrap();
+    let dest = tmp.path().join("out");
+    fs::create_dir(&dest).unwrap();
+    let status = Command::new(&sfx)
+        .args(["-s", "-y", "-d", dest.to_str().unwrap()])
+        .status()
+        .unwrap();
+    assert!(status.success(), "stub exit {status}");
+    assert_eq!(fs::read(dest.join("hello.txt")).unwrap(), b"hello-7z");
+}
+
+#[test]
+fn stub_extracts_a_header_encrypted_7z_with_the_password() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("hello.txt");
+    fs::write(&src, b"hidden-7z").unwrap();
+    let archive = tmp.path().join("in.7z");
+    let mut opts = CompressOpts {
+        level: 1,
+        threads: 1,
+        password: Some(Password::new("sfx-test-password").unwrap()),
+        ..CompressOpts::default()
+    };
+    opts.sevenz.encrypt_headers = true;
+    add(&archive, &[src], &opts, &NopProgress).unwrap();
+    let sfx = tmp.path().join("package.exe");
+    build(&sfx, &stub_bin(), &archive, SfxPayload::SevenZ).unwrap();
+    let dest = tmp.path().join("out");
+    fs::create_dir(&dest).unwrap();
+    let status = Command::new(&sfx)
+        .args(["-s", "-y", "-d", dest.to_str().unwrap()])
+        .env("SZIP_PASSWORD", "sfx-test-password")
+        .status()
+        .unwrap();
+    assert!(status.success(), "stub exit {status}");
+    assert_eq!(fs::read(dest.join("hello.txt")).unwrap(), b"hidden-7z");
 }
 
 fn stub_bin() -> std::path::PathBuf {

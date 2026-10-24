@@ -18,7 +18,7 @@ console = "0.15"
 indicatif = "0.17"
 rpassword = "7.5.4"
 zeroize = "1"
-shellzip-core = { path = "../shellzip-core", features = ["rar", "sevenz"] }
+shellzip-core = { path = "../shellzip-core", features = ["rar", "sevenz-codecs", "sevenz-parallel"] }
 tracing = "0.1"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

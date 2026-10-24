@@ -78,6 +78,7 @@ gui-release:
 
 test:
 	$(CARGO) test --workspace $(CARGO_FLAGS)
+	$(CARGO) test -p $(PKG_CORE) --features rar,sevenz-codecs,sevenz-parallel $(CARGO_FLAGS)
 
 test-cli:
 	$(CARGO) test -p $(PKG_CLI) $(CARGO_FLAGS)
@@ -110,6 +111,7 @@ clean:
 
 # Same steps as .github/workflows/ci.yml
 ci: fmt-check clippy test
+	$(CARGO) clippy -p $(PKG_CORE) --no-default-features --features sevenz --all-targets -- -D warnings
 
 install:
 	$(CARGO) install --path crates/$(PKG_CLI) --locked --force

@@ -35,7 +35,7 @@ workspace = true   # unsafe_code = "forbid", clippy::all = warn
 
 ## Features
 
-- Optional formats and heavy deps are features: `rar = ["dep:unrar"]`, `sevenz = ["dep:sevenz-rust2"]`. Features are additive and must not change behaviour of code paths that don't use them.
+- Optional formats and heavy deps are features: `rar = ["dep:unrar"]`, `sevenz = ["dep:zesven"]`, `sevenz-codecs = ["sevenz", "zesven/deflate", "zesven/bzip2", "zesven/ppmd", "zesven/zstd"]`. Features are additive and must not change behaviour of code paths that don't use them.
 - Keep `default` small; document each feature in the crate-level `//!` docs.
 
 ## Binaries and profiles

@@ -2,7 +2,7 @@
 //!
 //! The path comes from the `directories` config directory, not the registry.
 
-use shellzip_core::{Overwrite, ZipMethod};
+use shellzip_core::{Overwrite, SevenZMethod, ZipMethod};
 
 use crate::chrome::PackSettings;
 
@@ -37,6 +37,8 @@ fn defaults() -> PackSettings {
     PackSettings {
         level: 3,
         method: ZipMethod::Deflate,
+        sevenz_method: SevenZMethod::Lzma2,
+        solid: true,
         overwrite: Overwrite::Never,
         flat: false,
     }
@@ -52,11 +54,15 @@ fn serialize(options: &PackSettings) -> String {
         "\
 level = {}
 method = \"{}\"
+sevenz_method = \"{}\"
+solid = {}
 overwrite = \"{}\"
 flat = {}
 ",
         options.level,
         method_name(options.method),
+        sevenz_name(options.sevenz_method),
+        options.solid,
         overwrite_name(options.overwrite),
         options.flat
     )
@@ -81,12 +87,37 @@ fn parse(text: &str) -> Option<PackSettings> {
         .get("flat")
         .and_then(toml::Value::as_bool)
         .unwrap_or(false);
+    let sevenz_method = match table.get("sevenz_method").and_then(toml::Value::as_str) {
+        Some("lzma") => SevenZMethod::Lzma,
+        Some("ppmd") => SevenZMethod::Ppmd,
+        Some("bzip2") => SevenZMethod::Bzip2,
+        Some("deflate") => SevenZMethod::Deflate,
+        Some("zstd") => SevenZMethod::Zstd,
+        _ => SevenZMethod::Lzma2,
+    };
+    let solid = table
+        .get("solid")
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(true);
     Some(PackSettings {
         level,
         method,
+        sevenz_method,
+        solid,
         overwrite,
         flat,
     })
+}
+
+fn sevenz_name(method: SevenZMethod) -> &'static str {
+    match method {
+        SevenZMethod::Lzma2 => "lzma2",
+        SevenZMethod::Lzma => "lzma",
+        SevenZMethod::Ppmd => "ppmd",
+        SevenZMethod::Bzip2 => "bzip2",
+        SevenZMethod::Deflate => "deflate",
+        SevenZMethod::Zstd => "zstd",
+    }
 }
 
 fn method_name(method: ZipMethod) -> &'static str {
@@ -114,6 +145,8 @@ mod tests {
         let options = PackSettings {
             level: 1,
             method: ZipMethod::Zstd,
+            sevenz_method: SevenZMethod::Ppmd,
+            solid: false,
             overwrite: Overwrite::Rename,
             flat: true,
         };

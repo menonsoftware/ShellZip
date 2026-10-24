@@ -126,8 +126,13 @@ fn should_retry_password(from_env: bool, silent: bool, can_ask: bool) -> bool {
 }
 
 fn optional_password(exe: &Path, silent: bool, gui: bool) -> Result<Option<Password>, Error> {
-    let (_opened, entries) = list(exe)?;
-    if !entries.iter().any(|entry| entry.encrypted) {
+    let encrypted = match list(exe) {
+        Ok((_, entries)) => entries.iter().any(|entry| entry.encrypted),
+        // A 7z archive with encrypted headers cannot be listed until a password is known.
+        Err(Error::Encrypted(_)) => true,
+        Err(err) => return Err(err),
+    };
+    if !encrypted {
         return Ok(None);
     }
     if silent || !prompt::can_ask(gui) {

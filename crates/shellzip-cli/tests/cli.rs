@@ -423,23 +423,215 @@ fn password_from_the_environment_is_not_written_to_the_log() {
 }
 
 #[test]
-fn rar_and_7z_are_not_created() {
+fn rar_is_not_created() {
     let tmp = tempfile::tempdir().unwrap();
     let file = tmp.path().join("hello.txt");
     fs::write(&file, b"hello\n").unwrap();
-    for name in ["notes.rar", "notes.7z"] {
-        szip()
-            .args([
-                "a",
-                "-m",
-                "0",
-                tmp.path().join(name).to_str().unwrap(),
-                file.to_str().unwrap(),
-            ])
-            .assert()
-            .failure()
-            .stderr(contains("not"));
-    }
+    szip()
+        .args([
+            "a",
+            "-m",
+            "0",
+            tmp.path().join("notes.rar").to_str().unwrap(),
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("not"));
+}
+
+#[test]
+fn sevenz_add_list_test_extract_round_trip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("hello.txt");
+    fs::write(&file, b"hello\n").unwrap();
+    let archive = tmp.path().join("notes.7z");
+    szip()
+        .args([
+            "a",
+            "-m",
+            "1",
+            archive.to_str().unwrap(),
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("created"));
+    szip()
+        .args(["l", archive.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("7Z"))
+        .stdout(contains("hello.txt"));
+    szip()
+        .args(["t", archive.to_str().unwrap()])
+        .assert()
+        .success();
+    let out = tmp.path().join("out");
+    szip()
+        .args([
+            "x",
+            "-y",
+            "-o",
+            out.to_str().unwrap(),
+            archive.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read(out.join("hello.txt")).unwrap(), b"hello\n");
+}
+
+#[test]
+fn sevenz_header_encryption_hides_names_and_exits_11() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("hello.txt");
+    fs::write(&file, b"hello\n").unwrap();
+    let archive = tmp.path().join("secret.7z");
+    szip()
+        .args([
+            "a",
+            "-m",
+            "1",
+            "-hpsecret",
+            archive.to_str().unwrap(),
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    szip()
+        .args(["l", archive.to_str().unwrap()])
+        .assert()
+        .code(11)
+        .stdout(contains("hello.txt").not());
+    szip()
+        .args(["l", "-pwrong", archive.to_str().unwrap()])
+        .assert()
+        .code(11);
+    szip()
+        .args(["l", "-psecret", archive.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("hello.txt"));
+}
+
+#[test]
+fn sevenz_update_freshen_delete_rewrite() {
+    let tmp = tempfile::tempdir().unwrap();
+    let keep = tmp.path().join("keep.txt");
+    let extra = tmp.path().join("extra.txt");
+    fs::write(&keep, b"old").unwrap();
+    fs::write(&extra, b"extra").unwrap();
+    let archive = tmp.path().join("notes.7z");
+    szip()
+        .args([
+            "a",
+            "-m",
+            "0",
+            archive.to_str().unwrap(),
+            keep.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    fs::write(&keep, b"new").unwrap();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
+    fs::File::options()
+        .write(true)
+        .open(&keep)
+        .unwrap()
+        .set_modified(later)
+        .unwrap();
+    szip()
+        .args([
+            "f",
+            archive.to_str().unwrap(),
+            keep.to_str().unwrap(),
+            extra.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let out = tmp.path().join("out");
+    szip()
+        .args([
+            "x",
+            "-y",
+            "-o",
+            out.to_str().unwrap(),
+            archive.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read(out.join("keep.txt")).unwrap(), b"new");
+    assert!(
+        !out.join("extra.txt").exists(),
+        "freshen must not add files"
+    );
+    szip()
+        .args(["d", archive.to_str().unwrap(), "keep.txt"])
+        .assert()
+        .success()
+        .stdout(contains("deleted"));
+    szip()
+        .args(["l", archive.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("keep.txt").not());
+}
+
+#[test]
+fn sevenz_method_on_zip_is_a_usage_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("hello.txt");
+    fs::write(&file, b"hello\n").unwrap();
+    szip()
+        .args([
+            "a",
+            "--method",
+            "lzma2",
+            tmp.path().join("notes.zip").to_str().unwrap(),
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("7z method"));
+}
+
+#[test]
+fn sevenz_technical_listing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("hello.txt");
+    fs::write(&file, b"hello").unwrap();
+    let archive = tmp.path().join("notes.7z");
+    szip()
+        .args([
+            "a",
+            "-m",
+            "0",
+            "--no-solid",
+            archive.to_str().unwrap(),
+            file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let output = szip()
+        .args(["lt", "--htb", archive.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    let body = text.split_once('\n').map(|(_, rest)| rest).unwrap_or(&text);
+    insta::with_settings!({
+        filters => vec![
+            (r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", "[time]"),
+            (r"[dl-][0-7]{4}", "[attrs]"),
+            (r"[0-9a-f]{64}", "[blake]"),
+        ]
+    }, {
+        insta::assert_snapshot!(body);
+    });
 }
 
 #[test]
@@ -490,6 +682,68 @@ fn sfx_wrap_list_test_extract_and_unwrap() {
         .success();
     assert_eq!(fs::read(out.join("hello.txt")).unwrap(), b"hello-sfx");
     let back = tmp.path().join("back.zip");
+    szip()
+        .args(["s", sfx.to_str().unwrap(), "-o", back.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("extracted"));
+    szip()
+        .args(["l", back.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("hello.txt"));
+}
+
+#[test]
+fn sfx_7z_wrap_list_test_extract_and_unwrap() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("hello.txt");
+    fs::write(&src, b"hello-7z").unwrap();
+    let archive = tmp.path().join("notes.7z");
+    szip()
+        .args([
+            "a",
+            "-m",
+            "0",
+            archive.to_str().unwrap(),
+            src.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let stub = tmp.path().join("stub.bin");
+    fs::write(&stub, b"MZ-test-stub").unwrap();
+    let sfx = tmp.path().join("notes.exe");
+    szip()
+        .args([
+            "s",
+            "--sfx-stub",
+            stub.to_str().unwrap(),
+            archive.to_str().unwrap(),
+            "-o",
+            sfx.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("created"));
+    szip()
+        .args(["l", sfx.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("hello.txt"));
+    szip().args(["t", sfx.to_str().unwrap()]).assert().success();
+    let out = tmp.path().join("out");
+    szip()
+        .args([
+            "x",
+            "-y",
+            "-o",
+            out.to_str().unwrap(),
+            sfx.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read(out.join("hello.txt")).unwrap(), b"hello-7z");
+    let back = tmp.path().join("back.7z");
     szip()
         .args(["s", sfx.to_str().unwrap(), "-o", back.to_str().unwrap()])
         .assert()

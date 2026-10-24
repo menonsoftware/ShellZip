@@ -9,7 +9,7 @@ use egui::{Align2, Color32, FontId, Rect, Sense, Vec2};
 use crate::explorer::{Jump, JumpTarget};
 use crate::icons::{self, Caret, Icon};
 use crate::theme::{ADD, DANGER, EXTRACT, HOVER, INK, MUTED, OK, OPEN, PANEL, TEST};
-use shellzip_core::{Overwrite, ZipMethod};
+use shellzip_core::{Overwrite, SevenZMethod, ZipMethod};
 
 /// Pack choices remembered for the add dialog, and extract choices from the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +18,10 @@ pub struct PackSettings {
     pub level: u8,
     /// ZIP method.
     pub method: ZipMethod,
+    /// 7z method. LZMA2 is the default.
+    pub sevenz_method: SevenZMethod,
+    /// Solid 7z blocks. Default is on.
+    pub solid: bool,
     /// What to do when a destination file exists.
     pub overwrite: Overwrite,
     /// Drop archive directories on extract.

@@ -28,3 +28,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - name: Test optional archive features
+        run: cargo test -p shellzip-core --features rar,sevenz-codecs,sevenz-parallel
+      - name: Clippy the SFX 7z subset
+        run: cargo clippy -p shellzip-core --no-default-features --features sevenz --all-targets -- -D warnings

@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 
-use shellzip_core::{Entry, Error, ProgressSink};
+use shellzip_core::{Entry, Error, Overwrite, ProgressSink};
 
 use crate::explorer::Row;
 
@@ -109,6 +109,44 @@ pub enum Outcome {
     Finished(String),
     /// The job failed. The text is safe to show.
     Failed(String),
+    /// The archive needs a password before the job can continue.
+    NeedPassword(PasswordRequest),
+}
+
+/// Enough to retry a job after the user types a password.
+pub struct PasswordRequest {
+    /// Navigation generation that started the job.
+    pub generation: u64,
+    /// Archive that asked.
+    pub path: PathBuf,
+    /// What to run again.
+    pub job: PasswordJob,
+    /// The previous password was rejected.
+    pub again: bool,
+}
+
+/// Work that stopped because a password was missing or wrong.
+pub enum PasswordJob {
+    /// Open the archive.
+    List,
+    /// Test checksums.
+    Test,
+    /// Extract into `output`.
+    Extract {
+        /// Destination folder.
+        output: PathBuf,
+        /// Drop archive directories.
+        flat: bool,
+        /// Collision policy.
+        overwrite: Overwrite,
+        /// Member names, or every member when `None`.
+        names: Option<Vec<String>>,
+    },
+    /// Remove these members.
+    Delete {
+        /// Archive paths to remove.
+        names: Vec<String>,
+    },
 }
 
 /// Run `job` on a new thread and send one [`Outcome`].
