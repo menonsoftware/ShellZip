@@ -6,10 +6,14 @@ use std::sync::mpsc::Sender;
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use shellzip_core::{Entry, Error, ExtractUpdate, Overwrite, ProgressSink};
+use shellzip_core::{
+    ArchiveSummary, Entry, Error, ExtractUpdate, Overwrite, ProgressSink, TestReport,
+};
 
 use crate::explorer::Row;
+use crate::report_dialog::ReportArchive;
 use crate::settings::DeleteArchive;
+use crate::view_dialog::PreviewBody;
 
 /// Identifies one worker result so a browse listing cannot finish an extract.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -264,6 +268,42 @@ pub enum Outcome {
         /// At least one file was written.
         wrote: bool,
     },
+    /// A test finished. Checksum and encrypted names stay on the report.
+    Tested {
+        /// Job that finished.
+        token: JobToken,
+        /// Members visited and any names that did not pass.
+        report: TestReport,
+    },
+    /// At most 1 MiB of one file, for the in-app viewer.
+    Previewed {
+        /// Job that read the file.
+        token: JobToken,
+        /// Name shown in the viewer title.
+        name: String,
+        /// Text or a binary notice.
+        body: PreviewBody,
+        /// The read stopped at 1 MiB.
+        truncated: bool,
+        /// Full size when known.
+        size: u64,
+    },
+    /// Header summary for the info dialog.
+    Summarized {
+        /// Job that read the headers.
+        token: JobToken,
+        /// Archive that was summarized.
+        path: PathBuf,
+        /// Header fields. A missing comment is `None`.
+        summary: ArchiveSummary,
+    },
+    /// Archive member rows for Generate report.
+    ReportListed {
+        /// Job that listed the archives.
+        token: JobToken,
+        /// One block per archive, in the requested order.
+        archives: Vec<ReportArchive>,
+    },
     /// The job failed. The text is safe to show.
     Failed {
         /// Job that failed.
@@ -303,6 +343,22 @@ pub enum PasswordJob {
     Delete {
         /// Archive paths to remove.
         names: Vec<String>,
+    },
+    /// Rename one member or folder prefix.
+    Rename {
+        /// Current member path, without a trailing slash.
+        from: String,
+        /// New member path.
+        to: String,
+    },
+    /// Preview one archive member.
+    View {
+        /// Member path stored in the archive.
+        member: String,
+        /// Name shown in the viewer title.
+        label: String,
+        /// Uncompressed size from the listing, when known.
+        size: Option<u64>,
     },
 }
 

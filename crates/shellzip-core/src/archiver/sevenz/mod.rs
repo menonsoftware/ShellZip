@@ -7,6 +7,7 @@
 mod options;
 mod rewrite;
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -20,6 +21,7 @@ use super::{ArchiveWriter, commit_output, prepare_output, prepare_temp};
 use crate::entry::{EntryMeta, to_archive_path};
 use crate::error::{Error, map_zesven};
 use crate::options::CompressOpts;
+use crate::progress::ProgressSink;
 
 /// Builds one 7z archive beside `path`, then moves it into place.
 pub struct SevenZArchiver {
@@ -149,6 +151,27 @@ impl ArchiveWriter for SevenZArchiver {
         self.committed = true;
         Ok(bytes)
     }
+}
+
+/// Rewrite an existing 7z, applying `names` while kept members are recompressed.
+///
+/// Returns members written and the length of the committed archive.
+pub(crate) fn rewrite_renamed(
+    path: &Path,
+    opts: &CompressOpts,
+    names: &HashMap<String, String>,
+    progress: &dyn ProgressSink,
+) -> Result<(u64, u64), Error> {
+    let mut archiver = SevenZArchiver::create(path, opts)?;
+    let Some(source) = archiver.source.take() else {
+        return Err(Error::Archive(
+            "refusing to rename a 7z that is not an existing archive".to_string(),
+        ));
+    };
+    let kept = rewrite::keep_mapped(&mut archiver, &source, &[], names, progress)?;
+    crate::progress::ensure_running(progress)?;
+    let packed = Box::new(archiver).finish()?;
+    Ok((kept, packed))
 }
 
 fn write_file_body(

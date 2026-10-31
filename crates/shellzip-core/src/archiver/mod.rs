@@ -1,5 +1,6 @@
 //! Archive writers. Callers stream payload through [`ArchiveWriter::add_file`].
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -7,6 +8,7 @@ use crate::detect::{Format, format_from_extension};
 use crate::entry::EntryMeta;
 use crate::error::Error;
 use crate::options::CompressOpts;
+use crate::progress::ProgressSink;
 
 mod parallel;
 #[cfg(feature = "sevenz")]
@@ -84,6 +86,35 @@ pub(crate) use parallel::add_zip;
 pub fn create_from_path(path: &Path, opts: &CompressOpts) -> Result<Box<dyn ArchiveWriter>, Error> {
     let format = format_from_extension(path)?;
     create(path, &format, opts)
+}
+
+/// Rewrite an existing ZIP or 7z, applying `names` (member key to archive name).
+///
+/// Returns the number of members written and the new archive length.
+/// ZIP copies compressed bytes. 7z compresses them again.
+pub(crate) fn rewrite_renamed(
+    path: &Path,
+    format: &Format,
+    opts: &CompressOpts,
+    names: &HashMap<String, String>,
+    progress: &dyn ProgressSink,
+) -> Result<(u64, u64), Error> {
+    match format {
+        Format::Zip => zip::rewrite_renamed(path, names, progress),
+        #[cfg(feature = "sevenz")]
+        Format::SevenZ => sevenz::rewrite_renamed(path, opts, names, progress),
+        #[cfg(not(feature = "sevenz"))]
+        Format::SevenZ => {
+            let _ = opts;
+            Err(Error::Unsupported {
+                format: format.label(),
+                detail: "rebuild with the `sevenz` feature to rename 7z members".to_string(),
+            })
+        }
+        _ => Err(Error::Usage(
+            "rename only rewrites ZIP and 7z archives".to_string(),
+        )),
+    }
 }
 
 pub(crate) fn prepare_output(

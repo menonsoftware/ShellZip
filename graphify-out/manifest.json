@@ -72,9 +72,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/archiver/mod.rs": {
-    "mtime": 1792862472.8477454,
-    "seen": 1792863951.1749742,
-    "ast_hash": "f40680e5db50b62b485ff64c203782a7",
+    "mtime": 1793481671.7111552,
+    "seen": 1793482584.6583424,
+    "ast_hash": "ceb84aa38618638127c613fbe87a7305",
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/archiver/stream.rs": {
@@ -90,9 +90,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/archiver/zip.rs": {
-    "mtime": 1792852644.5947022,
-    "seen": 1792853453.457584,
-    "ast_hash": "6652c75afddae8309e1f8c0b8b6a90a8",
+    "mtime": 1793482398.9879322,
+    "seen": 1793482584.6583478,
+    "ast_hash": "2d0e39bbc56ab7539b1910e7bbc90e8b",
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/crypto.rs": {
@@ -174,15 +174,15 @@
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/lib.rs": {
-    "mtime": 1793466283.7484198,
-    "seen": 1793466311.705867,
-    "ast_hash": "1846e51fd97520fe086c2c860eb2f6a6",
+    "mtime": 1793482008.3687096,
+    "seen": 1793482584.6583629,
+    "ast_hash": "7610fef82a01c2b0d1680f0c1e0d652c",
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/ops.rs": {
-    "mtime": 1793476017.559844,
-    "seen": 1793476155.3200243,
-    "ast_hash": "2c0b0906311821261dae05324b0ebef4",
+    "mtime": 1793482399.0199325,
+    "seen": 1793482584.6583636,
+    "ast_hash": "6e27fd8e8ed62efb610904db5865f25f",
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/options.rs": {
@@ -210,9 +210,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/app.rs": {
-    "mtime": 1793479161.7867393,
-    "seen": 1793479246.6731317,
-    "ast_hash": "943d7619973f5197031c5855eff3d81a",
+    "mtime": 1793482399.0849328,
+    "seen": 1793482584.6583767,
+    "ast_hash": "97bb53ec6b7e749127c383c7e9b117b0",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/icons.rs": {
@@ -222,9 +222,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/main.rs": {
-    "mtime": 1793474193.0905879,
-    "seen": 1793474495.0939748,
-    "ast_hash": "4e951f63fee44d60d3ac9b79933595f9",
+    "mtime": 1793481798.6998682,
+    "seen": 1793482584.6583855,
+    "ast_hash": "3e3ee84ae9cfeeb3754645ccac27d400",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/theme.rs": {
@@ -234,15 +234,15 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/worker.rs": {
-    "mtime": 1793462300.4401882,
-    "seen": 1793462433.2983172,
-    "ast_hash": "621329c865e0c300ce2735d30cdebbb4",
+    "mtime": 1793482399.1379302,
+    "seen": 1793482584.6583927,
+    "ast_hash": "4397cad278238699987022300ddcef6d",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/chrome.rs": {
-    "mtime": 1793479185.4988122,
-    "seen": 1793479246.673134,
-    "ast_hash": "f6ea37e46c73490298afa8d12ce3fa24",
+    "mtime": 1793481818.8607128,
+    "seen": 1793482584.6583774,
+    "ast_hash": "0fd3020ad127ff1a28e11a96d8b8499c",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/explorer/listing.rs": {
@@ -510,9 +510,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/settings.rs": {
-    "mtime": 1793477894.4898608,
-    "seen": 1793477980.433575,
-    "ast_hash": "e82a2a3dcf7b68491846ccee3aa8209e",
+    "mtime": 1793482399.1299336,
+    "seen": 1793482584.6583881,
+    "ast_hash": "a040db3390eb52cd1e9380d139ee0e2d",
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/Cargo.toml": {
@@ -576,9 +576,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/archiver/sevenz/mod.rs": {
-    "mtime": 1792863609.8387592,
-    "seen": 1792863951.1749783,
-    "ast_hash": "fc2e8d8e4ddc870d473913fcf4225bdc",
+    "mtime": 1793481706.9314308,
+    "seen": 1793482584.6583443,
+    "ast_hash": "3b71066a4be6b26d8dcf00965cc3e41a",
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/archiver/sevenz/options.rs": {
@@ -588,9 +588,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/archiver/sevenz/rewrite.rs": {
-    "mtime": 1792863609.8427618,
-    "seen": 1792863951.1749816,
-    "ast_hash": "3d577bab33e2acc7a7bba6519e74e9a7",
+    "mtime": 1793481903.6165013,
+    "seen": 1793482584.6583457,
+    "ast_hash": "52d098fc7703926e391b7e7a906f14e9",
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/extractor/sevenz/entry.rs": {
@@ -690,9 +690,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/progress_dialog.rs": {
-    "mtime": 1793477894.4858606,
-    "seen": 1793477980.4335735,
-    "ast_hash": "7ed08c044dfd250dae326c01d948adfe",
+    "mtime": 1793481797.8996136,
+    "seen": 1793482584.6583862,
+    "ast_hash": "4ceab1a9e4f26a98cb12e489a2f80c71",
     "semantic_hash": ""
   },
   "crates/shellzip-core/tests/property.rs": {
@@ -771,6 +771,414 @@
     "mtime": 1793451892.0,
     "seen": 1793472478.215211,
     "ast_hash": "cc78bc3d54aff2c351311e5c96c14e96",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-core/src/summary.rs": {
+    "mtime": 1793482399.0269327,
+    "seen": 1793482584.658367,
+    "ast_hash": "1a92e4223235e3ad3b51e52f0db08bdf",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-core/tests/rename_summary.rs": {
+    "mtime": 1793482399.0389323,
+    "seen": 1793482584.6583707,
+    "ast_hash": "c98e73222932c5158ea88842c1f47e8b",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-gui/src/info_dialog.rs": {
+    "mtime": 1793482399.1199327,
+    "seen": 1793482584.6583846,
+    "ast_hash": "77822fae9afc85a21f60f9815277b00e",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-gui/src/rename_dialog.rs": {
+    "mtime": 1793481528.2090852,
+    "seen": 1793482584.6583867,
+    "ast_hash": "ac48c882e226210dc0d82d6581fdf099",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-gui/src/report_dialog.rs": {
+    "mtime": 1793482489.2488058,
+    "seen": 1793482584.6583874,
+    "ast_hash": "918c35f5f2b82bfd88fd341f4ece208a",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-gui/src/test_dialog.rs": {
+    "mtime": 1793482399.1339333,
+    "seen": 1793482584.6583905,
+    "ast_hash": "7b578a21626cf608b5cd6ae62008ff90",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-gui/src/view_dialog.rs": {
+    "mtime": 1793482399.1359315,
+    "seen": 1793482584.6583917,
+    "ast_hash": "4f5edd30f6f8ec9cd960e4d8ece0fe10",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/gen.py": {
+    "mtime": 1793461942.0,
+    "seen": 1793482584.658398,
+    "ast_hash": "616a29a849c27c0be7bc3e4b643d9f7e",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/about_16.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.658433,
+    "ast_hash": "5c44cba2bbf398f7ed2832b56992c009",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/about_24.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584337,
+    "ast_hash": "20e94129fabae030210cc95b9bcb3ed2",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/about_32.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584346,
+    "ast_hash": "c674d9ac3ac7a5ce01d0610af93983fe",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/about_48.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584353,
+    "ast_hash": "c9fb9e4fb912d43c29c30878932038d8",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/add_16.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.658436,
+    "ast_hash": "e9079df54a559afea7d20509aa8d68ef",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/add_24.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584368,
+    "ast_hash": "976b7c5b9ab8f3972994e7ccaf029b39",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/add_32.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584375,
+    "ast_hash": "5ecb020140a6e8e56895267288034545",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/add_48.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584382,
+    "ast_hash": "fe7e58eb557199c7c252cc25b0b310ba",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/delete_16.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584387,
+    "ast_hash": "fc3fbb7d4cdc4cbeb004893e7cd621be",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/delete_24.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584394,
+    "ast_hash": "b4d77ad51d82a92f850b0f88554f7341",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/delete_32.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584399,
+    "ast_hash": "e3331d4508820e07a0db067a2c87f2c2",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/delete_48.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584406,
+    "ast_hash": "3c7ab430db8f51285cf0428091a7e40c",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/delete_disabled_16.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584415,
+    "ast_hash": "4985bf3705d17941caa7df107508407d",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/delete_disabled_24.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.658442,
+    "ast_hash": "30cb317cc4790f641a56df07dd08a58f",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/delete_disabled_32.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584425,
+    "ast_hash": "3bfe720c9873a2b3583622b1d1ff8f0c",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/delete_disabled_48.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584432,
+    "ast_hash": "f92769b8670e5708c46f91714160da04",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/extract_16.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584437,
+    "ast_hash": "ea39659d09a8a7938efbe117552fda5c",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/extract_24.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584444,
+    "ast_hash": "f37110711f2dee4f673bd97752009221",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/extract_32.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584451,
+    "ast_hash": "56161e0e18e45e9b75722675222e4ab0",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/extract_48.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584458,
+    "ast_hash": "1526c13807c861a6809e00acfe9bff69",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/extract_disabled_16.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584463,
+    "ast_hash": "3421134392953bed5b42c2b39e065485",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/extract_disabled_24.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584468,
+    "ast_hash": "658519090f16a3f50b5f399a5afe31dc",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/extract_disabled_32.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584473,
+    "ast_hash": "23bf9084989a286a6f4da924b14e48ef",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/extract_disabled_48.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.658448,
+    "ast_hash": "677d357738e1fcbc01900dff83954e99",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/info_16.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584487,
+    "ast_hash": "99be209aad8c4dc71a79e3690c6d2889",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/info_24.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584492,
+    "ast_hash": "fc9534096fc6f0add602f804c6b15612",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/info_32.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.65845,
+    "ast_hash": "e9d77067c03364741d9e641c1faa39e0",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/info_48.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584504,
+    "ast_hash": "52a4fb590dd3edfd3ef8c1764b823942",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/open_16.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584513,
+    "ast_hash": "cf760b7a977dca286bdc157de4ea91ed",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/open_24.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.658452,
+    "ast_hash": "3dc8c624c28649ee9af758432013559e",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/open_32.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584525,
+    "ast_hash": "d8ebf5ce710d676e251d0585a0c9be15",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/open_48.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584532,
+    "ast_hash": "3b5553e7584ebecc59ce82bc2eebde9e",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/refresh_16.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584537,
+    "ast_hash": "1ee1fb4dc7729d4f4d75a32ee3d12bf6",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/refresh_24.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584544,
+    "ast_hash": "5e7905664f670c92a32d12dbdf613f23",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/refresh_32.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584563,
+    "ast_hash": "d0975b17625964eff5da9510da253ab1",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/refresh_48.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584568,
+    "ast_hash": "2fc6a8a04d2f62deb189bef217d693cb",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/test_16.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584575,
+    "ast_hash": "412bc4101daef67678a929f0048430f1",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/test_24.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.658458,
+    "ast_hash": "888c41accee92733c53533cf4f62e938",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/test_32.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.658459,
+    "ast_hash": "fca78638173f9fe0312cadf2128d477a",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/test_48.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584594,
+    "ast_hash": "10daaa9f82b78b75fb4b53af4c36ee26",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/test_disabled_16.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584601,
+    "ast_hash": "f804e03345b6df2bef230d16285082e9",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/test_disabled_24.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584606,
+    "ast_hash": "5986b884a06808c07ea03307613696c2",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/test_disabled_32.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.658461,
+    "ast_hash": "d5cd001e23aa4f09fdf3a770df5ae8d7",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/test_disabled_48.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.658462,
+    "ast_hash": "6f8027e25dffa2ab5246ebd396016997",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/up_16.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584628,
+    "ast_hash": "1c083af07ee1459bc16d95f0784b5f2c",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/up_24.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.658463,
+    "ast_hash": "30f45715d27f579556571cc1c06cab53",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/up_32.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584637,
+    "ast_hash": "6bfc1348d337fe59ab00698e15a2700d",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/png/up_48.png": {
+    "mtime": 1793461970.0,
+    "seen": 1793482584.6584644,
+    "ast_hash": "9abe7669bee4ef9a1cca06de165815f5",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/svg/about.svg": {
+    "mtime": 1793461942.0,
+    "seen": 1793482584.658465,
+    "ast_hash": "d7e08365125db416f5a970383590c699",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/svg/add.svg": {
+    "mtime": 1793461942.0,
+    "seen": 1793482584.6584656,
+    "ast_hash": "376bc5f8599516d35f4ef65786f7f5a1",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/svg/delete.svg": {
+    "mtime": 1793461942.0,
+    "seen": 1793482584.6584663,
+    "ast_hash": "e4fcec2fb8ef50edd65cad201db5f0ea",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/svg/delete_disabled.svg": {
+    "mtime": 1793461942.0,
+    "seen": 1793482584.6584668,
+    "ast_hash": "cb6bbdd2651d6fcaa5ad0af871cd592e",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/svg/extract.svg": {
+    "mtime": 1793461942.0,
+    "seen": 1793482584.6584675,
+    "ast_hash": "de34ae3bc058b87994c7bee0af5c8e0e",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/svg/extract_disabled.svg": {
+    "mtime": 1793461942.0,
+    "seen": 1793482584.658468,
+    "ast_hash": "6e2bc991598e9611d786e3e3cf56a582",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/svg/info.svg": {
+    "mtime": 1793461942.0,
+    "seen": 1793482584.658469,
+    "ast_hash": "e7e61f57bdf22a0ac8f73b7c57da4d39",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/svg/open.svg": {
+    "mtime": 1793461942.0,
+    "seen": 1793482584.6584694,
+    "ast_hash": "8a023047ba39d15d7be335e45c9a2f95",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/svg/refresh.svg": {
+    "mtime": 1793461942.0,
+    "seen": 1793482584.6584702,
+    "ast_hash": "9b2e2098df64ef2c93e0cf45eef08f47",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/svg/test.svg": {
+    "mtime": 1793461942.0,
+    "seen": 1793482584.6584706,
+    "ast_hash": "6fe23b489b98b2fd41d22f55c17e4298",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/svg/test_disabled.svg": {
+    "mtime": 1793461942.0,
+    "seen": 1793482584.6584713,
+    "ast_hash": "f5a2d157eeba72fbf8c3aa3848dd0cd1",
+    "semantic_hash": ""
+  },
+  "grx/toolbar_icons/svg/up.svg": {
+    "mtime": 1793461942.0,
+    "seen": 1793482584.6584718,
+    "ast_hash": "e283f91974e38ca369e4bbac27be5048",
     "semantic_hash": ""
   }
 }
