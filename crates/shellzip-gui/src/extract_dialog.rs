@@ -25,6 +25,9 @@ const GROUP_INNER: f32 = 320.0;
 /// Inner width of the extract dialog. The path field and folder tree stay inside it.
 const DIALOG_WIDTH: f32 = 760.0;
 
+/// Tab body height. General, Advanced, and Options share it so the footer stays put.
+const TAB_BODY_HEIGHT: f32 = 380.0;
+
 /// Which page of the extract dialog is visible.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -188,21 +191,30 @@ pub fn show(
         .default_width(DIALOG_WIDTH)
         .min_width(DIALOG_WIDTH)
         .max_width(DIALOG_WIDTH)
+        .min_height(480.0)
+        .default_height(480.0)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
             ui.set_width(DIALOG_WIDTH);
-            ui.set_min_height(440.0);
+            ui.set_min_height(480.0);
             tabs(ui, dialog);
             ui.separator();
-            match dialog.tab {
-                Tab::General => general_tab(ui, dialog, cache),
-                Tab::Advanced => advanced_tab(ui, dialog),
-                Tab::Options => options_tab(ui, dialog),
-            }
-            if let Some(notice) = &dialog.notice {
-                ui.add_space(4.0);
-                ui.colored_label(colors(ui).danger, notice);
-            }
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), TAB_BODY_HEIGHT),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_min_height(TAB_BODY_HEIGHT);
+                    match dialog.tab {
+                        Tab::General => general_tab(ui, dialog, cache),
+                        Tab::Advanced => advanced_tab(ui, dialog),
+                        Tab::Options => options_tab(ui, dialog),
+                    }
+                    if let Some(notice) = &dialog.notice {
+                        ui.add_space(4.0);
+                        ui.colored_label(colors(ui).danger, notice);
+                    }
+                },
+            );
             ui.add_space(8.0);
             ui.separator();
             ui.horizontal(|ui| {
@@ -285,22 +297,23 @@ fn tabs(ui: &mut egui::Ui, dialog: &mut ExtractDialog) {
 fn general_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCache) {
     ui.label("Destination path (will be created if does not exist)");
     ui.horizontal(|ui| {
-        const GAP: f32 = 2.0;
-        let buttons = 28.0 + GAP + 28.0 + GAP + 26.0;
-        let field = (DIALOG_WIDTH - buttons - 16.0).max(48.0);
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut dialog.path)
-                .desired_width(field)
-                .hint_text("Folder"),
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let reserved = chrome::WELL_SIZE * 3.0 + ui.spacing().item_spacing.x * 2.0;
+        let width = (ui.available_width() - reserved).max(48.0);
+        let response = chrome::path_field(
+            ui,
+            &mut dialog.path,
+            width,
+            "Folder",
+            "shellzip-extract-path",
         );
         if response.changed() {
             dialog.tree_touched = false;
         }
-        ui.spacing_mut().item_spacing.x = GAP;
-        if chrome::icon_button(ui, Icon::FolderSearch, colors(ui).open, "Display", true).clicked() {
+        if chrome::well_button(ui, Icon::FolderSearch, "Display", true).clicked() {
             display_path(dialog);
         }
-        if chrome::icon_button(ui, Icon::FolderPlus, colors(ui).ink, "New folder", true).clicked() {
+        if chrome::well_button(ui, Icon::FolderPlus, "New folder", true).clicked() {
             begin_new_folder(dialog);
         }
         let busy = dialog.tree.is_loading();

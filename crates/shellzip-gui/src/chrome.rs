@@ -2,7 +2,7 @@
 //!
 //! The commands are the ones ShellZip already performs. Compression is chosen
 //! in the add dialog. Extract options are chosen in the extract dialog. The
-//! toolbar is Add, Extract To, Test, Delete, Info, and About.
+//! toolbar is Open, Add, Extract To, Test, Delete, Info, and About.
 
 use std::path::Path;
 
@@ -15,7 +15,7 @@ use crate::theme::{self, Preference};
 use shellzip_core::{SevenZMethod, ZipMethod};
 
 /// Height of the address field and the well buttons beside it.
-const WELL_SIZE: f32 = 26.0;
+pub(crate) const WELL_SIZE: f32 = 26.0;
 
 /// Pack choices remembered for the add dialog, and extract choices from the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +64,8 @@ pub enum MenuCommand {
 /// Toolbar buttons, in the same order as the reference layout.
 #[derive(Clone, Copy)]
 pub enum ToolCommand {
+    /// Pick an archive, or open the selected one.
+    Open,
     /// Create an archive, or add files to the open ZIP or 7z.
     Add,
     /// Extract into a chosen folder.
@@ -194,6 +196,16 @@ pub fn toolbar(
     };
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
+        if tool(
+            ui,
+            Icon::FolderOpen,
+            colors.open,
+            "Open",
+            "Open an archive",
+            !operation && !locked,
+        ) {
+            command = Some(ToolCommand::Open);
+        }
         if tool(
             ui,
             Icon::Plus,
@@ -329,13 +341,7 @@ pub fn address_bar(
         let spacing = ui.spacing().item_spacing.x;
         let reserved = WELL_SIZE * 2.0 + spacing * 2.0;
         let width = (ui.available_width() - reserved).max(48.0);
-        let response = ui.add_sized(
-            [width, WELL_SIZE],
-            egui::TextEdit::singleline(text)
-                .desired_width(width)
-                .margin(egui::Margin::symmetric(6, 4))
-                .id_salt("shellzip-address"),
-        );
+        let response = path_field(ui, text, width, "", "shellzip-address");
         if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
             event = Some(AddressEvent::Submit);
         }
@@ -559,6 +565,24 @@ fn dismiss_button(ui: &mut egui::Ui) -> egui::Response {
     }
     icons::paint(ui, Icon::X, colors.danger, rect);
     response.on_hover_text("Dismiss")
+}
+
+/// Single-line path field. Height matches [`WELL_SIZE`].
+pub(crate) fn path_field(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    width: f32,
+    hint: &str,
+    salt: &'static str,
+) -> egui::Response {
+    ui.add_sized(
+        [width, WELL_SIZE],
+        egui::TextEdit::singleline(text)
+            .desired_width(width)
+            .hint_text(hint)
+            .margin(egui::Margin::symmetric(6, 4))
+            .id_salt(salt),
+    )
 }
 
 /// Dialog footer button: a Lucide glyph and a label.
