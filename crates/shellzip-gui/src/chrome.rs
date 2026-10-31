@@ -9,9 +9,7 @@ use egui::{Align2, Color32, FontId, Rect, Sense, Vec2};
 use crate::explorer::{FolderTree, Jump, JumpTarget, TreeFocus, TreeRow};
 use crate::icons::{self, Caret, Icon};
 use crate::shell_icons::{self, IconCache, IconKey};
-use crate::theme::{
-    ADD, DANGER, EXTRACT, FOLDER, HOVER, INK, MUTED, OK, OPEN, PANEL, SELECT, SELECT_TEXT, TEST,
-};
+use crate::theme::{self, Preference};
 use shellzip_core::{SevenZMethod, ZipMethod};
 
 /// Pack choices remembered for the add dialog, and extract choices from the menu.
@@ -50,6 +48,8 @@ pub enum MenuCommand {
     Delete,
     /// Show details for the open archive or the selection.
     Info,
+    /// Light, dark, or follow the operating system.
+    Theme(Preference),
 }
 
 /// Toolbar buttons, in the same order as the reference layout.
@@ -78,7 +78,7 @@ pub enum AddressEvent {
 }
 
 /// File, Commands, Options, and Help.
-pub fn menu_bar(ui: &mut egui::Ui) -> Option<MenuCommand> {
+pub fn menu_bar(ui: &mut egui::Ui, theme: Preference) -> Option<MenuCommand> {
     let mut command = None;
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
@@ -114,6 +114,18 @@ pub fn menu_bar(ui: &mut egui::Ui) -> Option<MenuCommand> {
                 command = Some(MenuCommand::SelectNone);
             }
         });
+        ui.menu_button("Options", |ui| {
+            for (choice, label) in [
+                (Preference::System, "System"),
+                (Preference::Light, "Light"),
+                (Preference::Dark, "Dark"),
+            ] {
+                if ui.selectable_label(theme == choice, label).clicked() {
+                    choice.install(ui.ctx());
+                    command = Some(MenuCommand::Theme(choice));
+                }
+            }
+        });
         ui.menu_button("Help", |ui| {
             if ui.button("About ShellZip").clicked() {
                 command = Some(MenuCommand::About);
@@ -131,15 +143,23 @@ pub fn toolbar(
     can_delete: bool,
 ) -> Option<ToolCommand> {
     let mut command = None;
+    let colors = theme::palette(ui.ctx());
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        if tool(ui, Icon::Plus, ADD, "Add", "Create an archive", !busy) {
+        if tool(
+            ui,
+            Icon::Plus,
+            colors.add,
+            "Add",
+            "Create an archive",
+            !busy,
+        ) {
             command = Some(ToolCommand::Add);
         }
         if tool(
             ui,
             Icon::FolderDown,
-            EXTRACT,
+            colors.extract,
             "Extract To",
             "Extract into a folder",
             !busy && archive_ready,
@@ -149,7 +169,7 @@ pub fn toolbar(
         if tool(
             ui,
             Icon::CircleCheck,
-            TEST,
+            colors.test,
             "Test",
             "Test the archive",
             !busy && archive_ready,
@@ -159,7 +179,7 @@ pub fn toolbar(
         if tool(
             ui,
             Icon::Trash,
-            DANGER,
+            colors.danger,
             "Delete",
             "Delete selected ZIP members",
             can_delete,
@@ -169,7 +189,7 @@ pub fn toolbar(
         if tool(
             ui,
             Icon::Info,
-            OPEN,
+            colors.open,
             "Info",
             "Details of this folder or archive",
             !busy,
@@ -190,10 +210,11 @@ pub fn breadcrumbs(ui: &mut egui::Ui, jumps: &[Jump]) -> Option<AddressEvent> {
     }
     let mut event = None;
     let last = jumps.len().saturating_sub(1);
+    let muted = theme::palette(ui.ctx()).muted;
     ui.horizontal_wrapped(|ui| {
         for (index, jump) in jumps.iter().enumerate() {
             if index > 0 {
-                ui.label(egui::RichText::new(">").color(MUTED));
+                ui.label(egui::RichText::new(">").color(muted));
             }
             let label = crumb_label(jump);
             if index == last {
@@ -234,7 +255,15 @@ pub fn address_bar(
     let bar = global_rect(ui);
     ui.horizontal(|ui| {
         ui.add_enabled_ui(can_up, |ui| {
-            if icon_button(ui, Icon::ArrowUp, INK, "Up one level", true).clicked() {
+            if icon_button(
+                ui,
+                Icon::ArrowUp,
+                theme::palette(ui.ctx()).ink,
+                "Up one level",
+                true,
+            )
+            .clicked()
+            {
                 event = Some(AddressEvent::Up);
             }
         });
@@ -273,9 +302,10 @@ pub fn status_bar(
 ) -> StatusEvent {
     let mut dismiss = false;
     let mut cancel = false;
+    let colors = theme::palette(ui.ctx());
     ui.horizontal(|ui| {
         if busy {
-            icons::show_spinning(ui, INK, icons::SIZE_STATUS);
+            icons::show_spinning(ui, colors.ink, icons::SIZE_STATUS);
             let (label, entry, done, total) = progress;
             let fraction = if total == 0 {
                 0.0
@@ -284,23 +314,23 @@ pub fn status_bar(
             };
             ui.add(egui::ProgressBar::new(fraction).desired_width(160.0));
             let text = if entry.is_empty() { label } else { entry };
-            ui.label(egui::RichText::new(text).color(MUTED));
+            ui.label(egui::RichText::new(text).color(colors.muted));
             if ui.button("Cancel").clicked() {
                 cancel = true;
             }
         } else if let Some(message) = error {
-            icons::show(ui, Icon::TriangleAlert, DANGER, icons::SIZE_STATUS);
-            ui.colored_label(DANGER, message);
+            icons::show(ui, Icon::TriangleAlert, colors.danger, icons::SIZE_STATUS);
+            ui.colored_label(colors.danger, message);
             if dismiss_button(ui).clicked() {
                 dismiss = true;
             }
         } else if !note.is_empty() {
             if note.starts_with("OK") {
-                icons::show(ui, Icon::CircleCheck, OK, icons::SIZE_STATUS);
+                icons::show(ui, Icon::CircleCheck, colors.ok, icons::SIZE_STATUS);
             } else {
-                icons::show(ui, Icon::Archive, MUTED, icons::SIZE_STATUS);
+                icons::show(ui, Icon::Archive, colors.muted, icons::SIZE_STATUS);
             }
-            ui.label(egui::RichText::new(note).color(MUTED));
+            ui.label(egui::RichText::new(note).color(colors.muted));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(summary);
@@ -380,10 +410,10 @@ pub fn about(ctx: &egui::Context, open: &mut bool) {
         });
 }
 
-/// Gray chrome strip.
-pub fn bar_frame(x: i8, y: i8) -> egui::Frame {
+/// Chrome strip in the active palette.
+pub fn bar_frame(ctx: &egui::Context, x: i8, y: i8) -> egui::Frame {
     egui::Frame::new()
-        .fill(PANEL)
+        .fill(theme::palette(ctx).panel)
         .inner_margin(egui::Margin::symmetric(x, y))
 }
 
@@ -400,9 +430,10 @@ fn tool(
     } else {
         Sense::hover()
     };
+    let colors = theme::palette(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(Vec2::new(74.0, 58.0), sense);
     if enabled && response.hovered() {
-        ui.painter().rect_filled(rect, 3.0, HOVER);
+        ui.painter().rect_filled(rect, 3.0, colors.hover);
     }
     let tint = if enabled {
         tint
@@ -414,7 +445,7 @@ fn tool(
         Vec2::splat(icons::SIZE_TOOL),
     );
     icons::paint(ui, icon, tint, icon_rect);
-    let text = if enabled { INK } else { MUTED };
+    let text = if enabled { colors.ink } else { colors.muted };
     ui.painter().text(
         rect.center_bottom() + egui::vec2(0.0, -5.0),
         Align2::CENTER_BOTTOM,
@@ -426,11 +457,12 @@ fn tool(
 }
 
 fn dismiss_button(ui: &mut egui::Ui) -> egui::Response {
+    let colors = theme::palette(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(icons::SIZE_ROW), Sense::click());
     if response.hovered() {
-        ui.painter().rect_filled(rect, 2.0, HOVER);
+        ui.painter().rect_filled(rect, 2.0, colors.hover);
     }
-    icons::paint(ui, Icon::X, DANGER, rect);
+    icons::paint(ui, Icon::X, colors.danger, rect);
     response.on_hover_text("Dismiss")
 }
 
@@ -446,11 +478,12 @@ pub(crate) fn icon_button(
     } else {
         Sense::hover()
     };
+    let colors = theme::palette(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), sense);
     if enabled && response.hovered() {
-        ui.painter().rect_filled(rect, 2.0, HOVER);
+        ui.painter().rect_filled(rect, 2.0, colors.hover);
     }
-    let color = if enabled { tint } else { MUTED };
+    let color = if enabled { tint } else { colors.muted };
     let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(icons::SIZE_ROW));
     icons::paint(ui, icon, color, icon_rect);
     response.on_hover_text(tip)
@@ -487,7 +520,7 @@ fn parent_menu(
             ui.spacing_mut().item_spacing.y = 0.0;
             tree.reveal(focus);
             if let Some(message) = tree.loader_error() {
-                ui.label(egui::RichText::new(message).color(DANGER));
+                ui.label(egui::RichText::new(message).color(theme::palette(ui.ctx()).danger));
             }
             // `allocate_ui` fixes the popup height. A scroll area alone shrinks
             // to the three open rows, which is not the path-combo drop height.
@@ -530,16 +563,21 @@ pub(crate) fn tree_row(
     let width = ui.available_width();
     let mut navigate = None;
     let mut toggle = false;
+    let colors = theme::palette(ui.ctx());
     ui.allocate_ui_with_layout(
         egui::vec2(width, 22.0),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             let rect = ui.max_rect();
-            let text = if row.current { SELECT_TEXT } else { INK };
+            let text = if row.current {
+                colors.select_text
+            } else {
+                colors.ink
+            };
             if row.current {
-                ui.painter().rect_filled(rect, 0.0, SELECT);
+                ui.painter().rect_filled(rect, 0.0, colors.select);
             } else if ui.rect_contains_pointer(rect) {
-                ui.painter().rect_filled(rect, 0.0, HOVER);
+                ui.painter().rect_filled(rect, 0.0, colors.hover);
             }
             ui.add_space(4.0 + f32::from(row.depth) * 14.0);
             if row.expandable {
@@ -569,11 +607,11 @@ pub(crate) fn tree_row(
                 _ => Icon::Folder,
             };
             let tint = if matches!(fallback, Icon::Folder) {
-                FOLDER
+                colors.folder
             } else if row.current {
-                SELECT_TEXT
+                colors.select_text
             } else {
-                MUTED
+                colors.muted
             };
             if !shell_icons::paint(ui, cache, &row.icon, icons::SIZE_ROW) {
                 icons::show(ui, fallback, tint, icons::SIZE_ROW);
@@ -610,12 +648,13 @@ fn dropdown_height(space_below: f32) -> f32 {
 }
 
 fn caret_button(ui: &mut egui::Ui, tip: &str) -> egui::Response {
+    let colors = theme::palette(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(Vec2::new(22.0, 22.0), Sense::click());
     if response.hovered() {
-        ui.painter().rect_filled(rect, 2.0, HOVER);
+        ui.painter().rect_filled(rect, 2.0, colors.hover);
     }
     let caret = Rect::from_center_size(rect.center(), Vec2::new(9.0, 6.0));
-    icons::paint_caret(ui, Caret::Down, INK, caret);
+    icons::paint_caret(ui, Caret::Down, colors.ink, caret);
     response.on_hover_text(tip)
 }
 

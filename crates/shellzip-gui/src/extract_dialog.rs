@@ -15,7 +15,11 @@ use crate::explorer::{FolderTree, JumpTarget, TreeFocus};
 use crate::icons::{self, Caret, Icon};
 use crate::settings::{DeleteArchive, ExtractSettings, PathMode};
 use crate::shell_icons::IconCache;
-use crate::theme::{DANGER, HOVER, INK, MUTED, OK, OPEN};
+use crate::theme;
+
+fn colors(ui: &egui::Ui) -> theme::Palette {
+    *theme::palette(ui.ctx())
+}
 
 /// Every option group uses this inner width, on every page.
 const GROUP_INNER: f32 = 320.0;
@@ -88,6 +92,14 @@ pub struct ExtractDialog {
     tree_touched: bool,
     help: bool,
     notice: Option<String>,
+    /// Name prompt after **New folder**.
+    new_folder: Option<NewFolderPrompt>,
+}
+
+struct NewFolderPrompt {
+    parent: PathBuf,
+    name: String,
+    error: Option<String>,
 }
 
 impl ExtractDialog {
@@ -118,6 +130,7 @@ impl ExtractDialog {
             tree_touched: false,
             help: false,
             notice: None,
+            new_folder: None,
         }
     }
 
@@ -184,24 +197,29 @@ pub fn show(
             }
             if let Some(notice) = &dialog.notice {
                 ui.add_space(4.0);
-                ui.colored_label(DANGER, notice);
+                ui.colored_label(colors(ui).danger, notice);
             }
             ui.add_space(8.0);
             ui.separator();
             ui.horizontal(|ui| {
                 let dirty = dialog.settings != dialog.saved;
-                if chrome::icon_button(ui, Icon::Save, INK, "Save settings", dirty).clicked() {
+                if chrome::icon_button(ui, Icon::Save, colors(ui).ink, "Save settings", dirty)
+                    .clicked()
+                {
                     dialog.saved = dialog.settings;
                     action = Some(ExtractAction::Save(dialog.settings));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if chrome::icon_button(ui, Icon::CircleHelp, OPEN, "Help", true).clicked() {
+                    if chrome::icon_button(ui, Icon::CircleHelp, colors(ui).open, "Help", true)
+                        .clicked()
+                    {
                         dialog.help = true;
                     }
-                    if chrome::icon_button(ui, Icon::X, DANGER, "Cancel", true).clicked() {
+                    if chrome::icon_button(ui, Icon::X, colors(ui).danger, "Cancel", true).clicked()
+                    {
                         action = Some(ExtractAction::Close);
                     }
-                    if chrome::icon_button(ui, Icon::Check, OK, "OK", true).clicked()
+                    if chrome::icon_button(ui, Icon::Check, colors(ui).ok, "OK", true).clicked()
                         && let Some(request) = dialog.request()
                     {
                         action = Some(ExtractAction::Submit(request));
@@ -210,6 +228,7 @@ pub fn show(
             });
         });
     help_window(ctx, dialog);
+    new_folder_window(ctx, dialog);
     if !open {
         return Some(ExtractAction::Close);
     }
@@ -231,10 +250,11 @@ pub fn confirm_delete_archive(ctx: &egui::Context, path: &Path, open: &mut bool)
             ui.label(egui::RichText::new(path.display().to_string()).strong());
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if chrome::icon_button(ui, Icon::Trash, DANGER, "Delete", true).clicked() {
+                if chrome::icon_button(ui, Icon::Trash, colors(ui).danger, "Delete", true).clicked()
+                {
                     confirmed = true;
                 }
-                if chrome::icon_button(ui, Icon::X, INK, "Cancel", true).clicked() {
+                if chrome::icon_button(ui, Icon::X, colors(ui).ink, "Cancel", true).clicked() {
                     dismiss = true;
                 }
             });
@@ -276,7 +296,7 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCa
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
                 if recent.is_empty() {
-                    ui.label(egui::RichText::new("No recent folders").color(MUTED));
+                    ui.label(egui::RichText::new("No recent folders").color(colors(ui).muted));
                 }
                 for path in recent {
                     if ui.button(&path).clicked() {
@@ -286,11 +306,11 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCa
                     }
                 }
             });
-        if chrome::icon_button(ui, Icon::FolderSearch, OPEN, "Display", true).clicked() {
+        if chrome::icon_button(ui, Icon::FolderSearch, colors(ui).open, "Display", true).clicked() {
             display_path(dialog);
         }
-        if chrome::icon_button(ui, Icon::FolderPlus, INK, "New folder", true).clicked() {
-            create_folder(dialog);
+        if chrome::icon_button(ui, Icon::FolderPlus, colors(ui).ink, "New folder", true).clicked() {
+            begin_new_folder(dialog);
         }
     });
     ui.add_space(4.0);
@@ -362,7 +382,7 @@ fn advanced_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog) {
             egui::RichText::new(
                 "Creation and last access time are remembered. Archives only provide the modification time, so those two are not applied.",
             )
-            .color(MUTED)
+            .color(colors(ui).muted)
             .small(),
         );
     });
@@ -401,7 +421,7 @@ fn options_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog) {
             egui::RichText::new(
                 "The archive is deleted only after every member is extracted with no warnings.",
             )
-            .color(MUTED)
+            .color(colors(ui).muted)
             .small(),
         );
     });
@@ -419,16 +439,16 @@ fn option_group(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)
 fn history_button(ui: &mut egui::Ui) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
     if response.hovered() {
-        ui.painter().rect_filled(rect, 2.0, HOVER);
+        ui.painter().rect_filled(rect, 2.0, colors(ui).hover);
     }
     let caret = Rect::from_center_size(rect.center(), Vec2::new(9.0, 6.0));
-    icons::paint_caret(ui, Caret::Down, INK, caret);
+    icons::paint_caret(ui, Caret::Down, colors(ui).ink, caret);
     response.on_hover_text("Recent folders")
 }
 
 fn folder_tree(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCache) {
     if let Some(message) = dialog.tree.loader_error() {
-        ui.colored_label(DANGER, message);
+        ui.colored_label(colors(ui).danger, message);
     }
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -464,24 +484,152 @@ fn display_path(dialog: &mut ExtractDialog) {
     dialog.notice = None;
 }
 
-fn create_folder(dialog: &mut ExtractDialog) {
+fn begin_new_folder(dialog: &mut ExtractDialog) {
     let parent = new_folder_parent(dialog);
     if !parent.is_dir() {
         dialog.notice = Some(format!("{} is not a folder.", parent.display()));
         return;
     }
-    let created = unused_folder(&parent);
-    if let Err(err) = std::fs::create_dir(&created) {
-        dialog.notice = Some(format!("create {}: {err}", created.display()));
+    dialog.notice = None;
+    let name = suggested_new_folder_name(&parent);
+    dialog.new_folder = Some(NewFolderPrompt {
+        parent,
+        name,
+        error: None,
+    });
+}
+
+fn new_folder_window(ctx: &egui::Context, dialog: &mut ExtractDialog) {
+    let Some(prompt) = dialog.new_folder.as_mut() else {
+        return;
+    };
+    let mut open = true;
+    let mut confirmed = false;
+    let mut dismiss = false;
+    let parent_label = prompt.parent.display().to_string();
+    egui::Window::new("New folder")
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.set_min_width(360.0);
+            ui.label("Folder name");
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut prompt.name)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Name"),
+            );
+            if response.changed() {
+                prompt.error = None;
+            }
+            if ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                confirmed = true;
+            }
+            ui.label(
+                egui::RichText::new(format!("Create in {parent_label}"))
+                    .color(colors(ui).muted)
+                    .small(),
+            );
+            if let Some(error) = &prompt.error {
+                ui.colored_label(colors(ui).danger, error);
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if chrome::icon_button(ui, Icon::Check, colors(ui).ok, "Create", true).clicked() {
+                    confirmed = true;
+                }
+                if chrome::icon_button(ui, Icon::X, colors(ui).ink, "Cancel", true).clicked() {
+                    dismiss = true;
+                }
+            });
+        });
+    if dismiss || !open {
+        dialog.new_folder = None;
         return;
     }
-    dialog.tree.forget(&parent);
+    if confirmed {
+        match confirm_new_folder(dialog) {
+            Ok(()) => dialog.new_folder = None,
+            Err(message) => {
+                if let Some(prompt) = dialog.new_folder.as_mut() {
+                    prompt.error = Some(message);
+                }
+            }
+        }
+    }
+}
+
+fn confirm_new_folder(dialog: &mut ExtractDialog) -> Result<(), String> {
+    let prompt = dialog
+        .new_folder
+        .as_ref()
+        .ok_or_else(|| "New folder prompt is missing.".to_string())?;
+    let name = validate_folder_name(&prompt.name)?;
+    let created = prompt.parent.join(name);
+    if created.exists() {
+        return Err(format!("{} already exists.", created.display()));
+    }
+    std::fs::create_dir(&created).map_err(|err| format!("create {}: {err}", created.display()))?;
+    select_created_folder(dialog, &created);
+    Ok(())
+}
+
+fn select_created_folder(dialog: &mut ExtractDialog, created: &Path) {
+    if let Some(parent) = created.parent() {
+        dialog.tree.forget(parent);
+    }
     dialog.path = created.display().to_string();
-    dialog.focus = TreeFocus::folder(&created);
+    dialog.focus = TreeFocus::folder(created);
     dialog.tree.reveal(&dialog.focus);
-    dialog.selected = Some(created);
+    dialog.selected = Some(created.to_path_buf());
     dialog.tree_touched = true;
     dialog.notice = None;
+}
+
+const RESERVED_FOLDER_NAMES: &[&str] = &["CON", "PRN", "AUX", "NUL"];
+
+fn validate_folder_name(raw: &str) -> Result<String, String> {
+    let name = raw.trim();
+    if name.is_empty() {
+        return Err("Enter a folder name.".to_string());
+    }
+    if name != name.trim_end() || name.ends_with('.') {
+        return Err("Folder names cannot end with a space or period.".to_string());
+    }
+    if name.chars().any(char::is_control) {
+        return Err("The name contains invalid characters.".to_string());
+    }
+    if name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) {
+        return Err("The name cannot contain \\ / : * ? \" < > |.".to_string());
+    }
+    if name == "." || name == ".." {
+        return Err("That name is not allowed.".to_string());
+    }
+    if folder_name_is_reserved(name) {
+        return Err("That name is reserved by the system.".to_string());
+    }
+    Ok(name.to_string())
+}
+
+fn folder_name_is_reserved(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name);
+    let upper = stem.to_ascii_uppercase();
+    if RESERVED_FOLDER_NAMES.contains(&upper.as_str()) {
+        return true;
+    }
+    let bytes = upper.as_bytes();
+    bytes.len() == 4
+        && (upper.starts_with("COM") || upper.starts_with("LPT"))
+        && bytes[3].is_ascii_digit()
+        && bytes[3] != b'0'
+}
+
+fn suggested_new_folder_name(parent: &Path) -> String {
+    unused_folder(parent)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "New Folder".to_string())
 }
 
 fn new_folder_parent(dialog: &ExtractDialog) -> PathBuf {
@@ -556,7 +704,7 @@ fn help_window(ctx: &egui::Context, dialog: &mut ExtractDialog) {
         .show(ctx, |ui| {
             ui.set_min_width(460.0);
             ui.label(egui::RichText::new("General").strong());
-            ui.label("The destination is created if it does not exist. Display finds that folder in the tree. New folder creates it under the folder you selected or typed last.");
+            ui.label("The destination is created if it does not exist. Display finds that folder in the tree. New folder asks for a name, creates it under the folder you selected or typed last, and switches the destination to it.");
             ui.label("Extract and replace writes every selected file. Extract and update also writes missing files, and replaces a file only when the archive copy is newer. Freshen only replaces an older file that is already there.");
             ui.label("Ask before overwrite prompts for each existing file. Rename writes name (n).ext beside it. Keep broken files leaves a partial file when decoding fails. Display files in Explorer opens the destination when the extract finishes.");
             ui.add_space(6.0);
@@ -582,5 +730,19 @@ mod tests {
             dest,
             PathBuf::from(r"C:\Users\Administrator\Downloads\Programs\App")
         );
+    }
+
+    #[test]
+    fn validate_folder_name_accepts_simple_names() {
+        assert_eq!(validate_folder_name("Projects").unwrap(), "Projects");
+        assert_eq!(validate_folder_name("  Notes  ").unwrap(), "Notes");
+    }
+
+    #[test]
+    fn validate_folder_name_rejects_invalid_names() {
+        assert!(validate_folder_name("").is_err());
+        assert!(validate_folder_name("bad/name").is_err());
+        assert!(validate_folder_name("CON").is_err());
+        assert!(validate_folder_name("name.").is_err());
     }
 }

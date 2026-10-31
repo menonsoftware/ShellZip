@@ -1,4 +1,4 @@
-//! Pack and extract choices stored in a TOML file.
+//! Pack, extract, and theme choices stored in a TOML file.
 //!
 //! The path comes from the `directories` config directory, not the registry.
 //! Destination paths are remembered after a successful extract. Save settings
@@ -7,6 +7,7 @@
 use shellzip_core::{ExtractUpdate, Overwrite, SevenZMethod, ZipMethod};
 
 use crate::chrome::PackSettings;
+use crate::theme::Preference;
 
 /// How archive paths are written into the destination.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -74,7 +75,7 @@ impl Default for ExtractSettings {
     }
 }
 
-/// Pack options, extract options, and recent destination paths.
+/// Pack options, extract options, theme, and recent destination paths.
 pub struct StoredSettings {
     /// Compression choices.
     pub pack: PackSettings,
@@ -82,6 +83,8 @@ pub struct StoredSettings {
     pub extract: ExtractSettings,
     /// Recent destination paths, newest first.
     pub recent: Vec<String>,
+    /// Light, dark, or follow the operating system.
+    pub theme: Preference,
 }
 
 /// Load the saved options, or the defaults when the file is missing.
@@ -95,11 +98,12 @@ pub fn load() -> StoredSettings {
     parse(&text).unwrap_or_else(defaults)
 }
 
-/// Write pack options, extract options, and recent paths.
+/// Write pack options, extract options, the theme, and recent paths.
 pub fn save(
     pack: &PackSettings,
     extract: &ExtractSettings,
     recent: &[String],
+    theme: Preference,
 ) -> Result<(), String> {
     let Some(path) = settings_path() else {
         return Ok(());
@@ -108,7 +112,7 @@ pub fn save(
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("create {}: {err}", parent.display()))?;
     }
-    let body = serialize(pack, extract, recent)?;
+    let body = serialize(pack, extract, recent, theme)?;
     let tmp = path.with_extension("toml.tmp");
     std::fs::write(&tmp, body).map_err(|err| format!("write {}: {err}", tmp.display()))?;
     std::fs::rename(&tmp, &path).map_err(|err| format!("rename {}: {err}", path.display()))?;
@@ -125,6 +129,7 @@ fn defaults() -> StoredSettings {
         },
         extract: ExtractSettings::default(),
         recent: Vec::new(),
+        theme: Preference::System,
     }
 }
 
@@ -137,6 +142,7 @@ fn serialize(
     pack: &PackSettings,
     extract: &ExtractSettings,
     recent: &[String],
+    theme: Preference,
 ) -> Result<String, String> {
     let mut table = toml::Table::new();
     table.insert(
@@ -196,6 +202,10 @@ fn serialize(
     table.insert(
         "recent".to_string(),
         toml::Value::Array(recent.iter().cloned().map(toml::Value::String).collect()),
+    );
+    table.insert(
+        "theme".to_string(),
+        toml::Value::String(theme.as_str().to_string()),
     );
     toml::to_string(&table).map_err(|err| err.to_string())
 }
@@ -284,6 +294,11 @@ fn parse(text: &str) -> Option<StoredSettings> {
             recycle: bool_or("recycle", false),
         },
         recent,
+        theme: table
+            .get("theme")
+            .and_then(toml::Value::as_str)
+            .map(Preference::from_token)
+            .unwrap_or_default(),
     })
 }
 
@@ -363,10 +378,12 @@ mod tests {
             recycle: true,
         };
         let recent = vec![r"C:\work\out".to_string()];
-        let parsed = parse(&serialize(&pack, &extract, &recent).expect("toml")).expect("settings");
+        let parsed = parse(&serialize(&pack, &extract, &recent, Preference::Dark).expect("toml"))
+            .expect("settings");
         assert_eq!(parsed.pack, pack);
         assert_eq!(parsed.extract, extract);
         assert_eq!(parsed.recent, recent);
+        assert_eq!(parsed.theme, Preference::Dark);
     }
 
     #[test]
@@ -381,5 +398,6 @@ flat = true
         assert_eq!(parsed.extract.paths, PathMode::None);
         assert_eq!(parsed.extract.overwrite, Overwrite::Never);
         assert_eq!(parsed.pack.level, 3);
+        assert_eq!(parsed.theme, Preference::System);
     }
 }

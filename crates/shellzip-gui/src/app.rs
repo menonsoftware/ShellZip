@@ -19,7 +19,7 @@ use crate::explorer::{
 use crate::extract_dialog::{self, ExtractAction, ExtractRequest};
 use crate::settings::{self, DeleteArchive, ExtractSettings};
 use crate::shell_icons::IconCache;
-use crate::theme::{self, CANVAS};
+use crate::theme::{self, Preference};
 use crate::worker::ExtractJob;
 use crate::worker::{self, Outcome, PasswordJob, PasswordRequest, SharedProgress};
 
@@ -76,6 +76,8 @@ pub struct ShellZipApp {
     saved: PackSettings,
     extract: ExtractSettings,
     recent: Vec<String>,
+    /// Light, dark, or follow the operating system.
+    theme: Preference,
     generation: u64,
     icons: IconCache,
     tree: FolderTree,
@@ -88,7 +90,8 @@ impl ShellZipApp {
     /// Install image loaders, apply the file-manager theme, and list `launch` or the desktop.
     pub fn new(cc: &eframe::CreationContext<'_>, launch: Option<PathBuf>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
-        theme::apply(&cc.egui_ctx);
+        let stored = settings::load();
+        theme::apply(&cc.egui_ctx, stored.theme);
         let (tx, rx) = mpsc::channel();
         let launch = launch.filter(|path| path.exists());
         let open_file = launch.as_ref().is_some_and(|path| path.is_file());
@@ -102,7 +105,6 @@ impl ShellZipApp {
             None => starting_folder(),
         };
         let generation = 1;
-        let stored = settings::load();
         let options = stored.pack;
         if !open_file {
             spawn_directory(tx.clone(), path.clone(), generation);
@@ -134,6 +136,7 @@ impl ShellZipApp {
             saved: options,
             extract: stored.extract,
             recent: stored.recent,
+            theme: stored.theme,
             generation,
             icons: IconCache::new(),
             tree: FolderTree::new(),
@@ -1173,6 +1176,10 @@ impl ShellZipApp {
             MenuCommand::Delete => self.request_delete(),
             MenuCommand::Info => self.show_info(),
             MenuCommand::Exit => {}
+            MenuCommand::Theme(choice) => {
+                self.theme = choice;
+                self.persist_settings();
+            }
         }
     }
 
@@ -1276,7 +1283,7 @@ impl ShellZipApp {
     }
 
     fn persist_settings(&mut self) {
-        if let Err(err) = settings::save(&self.options, &self.extract, &self.recent)
+        if let Err(err) = settings::save(&self.options, &self.extract, &self.recent, self.theme)
             && self.error.is_none()
         {
             self.error = Some(err);
@@ -1355,9 +1362,9 @@ impl eframe::App for ShellZipApp {
 
         let mut menu_command = None;
         egui::TopBottomPanel::top("menu")
-            .frame(chrome::bar_frame(4, 0))
+            .frame(chrome::bar_frame(ctx, 4, 0))
             .show(ctx, |ui| {
-                menu_command = chrome::menu_bar(ui);
+                menu_command = chrome::menu_bar(ui, self.theme);
             });
         if matches!(menu_command, Some(MenuCommand::Exit)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1370,7 +1377,7 @@ impl eframe::App for ShellZipApp {
         let busy = self.busy;
         let mut tool_command = None;
         egui::TopBottomPanel::top("toolbar")
-            .frame(chrome::bar_frame(6, 2))
+            .frame(chrome::bar_frame(ctx, 6, 2))
             .show(ctx, |ui| {
                 tool_command = chrome::toolbar(ui, busy, archive_ready, can_delete);
             });
@@ -1382,7 +1389,7 @@ impl eframe::App for ShellZipApp {
         let focus = self.tree_focus();
         let mut address_event = None;
         egui::TopBottomPanel::top("address")
-            .frame(chrome::bar_frame(6, 4))
+            .frame(chrome::bar_frame(ctx, 6, 4))
             .show(ctx, |ui| {
                 address_event = chrome::address_bar(
                     ui,
@@ -1401,7 +1408,7 @@ impl eframe::App for ShellZipApp {
         let jump_list = self.address_jumps();
         let mut crumb = None;
         egui::TopBottomPanel::top("crumbs")
-            .frame(chrome::bar_frame(8, 2))
+            .frame(chrome::bar_frame(ctx, 8, 2))
             .show_animated(ctx, self.inside_archive(), |ui| {
                 crumb = chrome::breadcrumbs(ui, &jump_list);
             });
@@ -1417,7 +1424,7 @@ impl eframe::App for ShellZipApp {
             cancel: false,
         };
         egui::TopBottomPanel::bottom("status")
-            .frame(chrome::bar_frame(10, 4))
+            .frame(chrome::bar_frame(ctx, 10, 4))
             .show(ctx, |ui| {
                 status_event = chrome::status_bar(
                     ui,
@@ -1440,7 +1447,7 @@ impl eframe::App for ShellZipApp {
         }
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(CANVAS))
+            .frame(egui::Frame::new().fill(theme::palette(ctx).canvas))
             .show(ctx, |ui| {
                 if let Some(index) = crate::explorer::show(
                     ui,
