@@ -178,8 +178,7 @@ fn ratio_column(ui: &mut egui::Ui, percent: u64) {
                 egui::pos2(rect.left(), rect.bottom() - fill_height),
                 rect.right_bottom(),
             );
-            // `open` is the theme accent used for the Info glyph and links.
-            painter.rect_filled(fill, 2.0, colors.open);
+            painter.rect_filled(fill, 2.0, colors.rust);
         }
         ui.add_space(4.0);
         ui.label(format!("{percent}%"));

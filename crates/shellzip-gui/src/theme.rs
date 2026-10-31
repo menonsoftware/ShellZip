@@ -5,6 +5,9 @@
 
 use egui::{Color32, Stroke, Vec2};
 
+/// Copper-rust from the nautilus in `assets/icon.png` (`#BE6133`).
+pub const RUST: Color32 = Color32::from_rgb(0xBE, 0x61, 0x33);
+
 /// Which palette the window uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Preference {
@@ -83,6 +86,8 @@ pub struct Palette {
     pub test: Color32,
     /// Info toolbar glyph and links.
     pub open: Color32,
+    /// Progress bars and the archive-info ratio meter. Same copper as [`RUST`].
+    pub rust: Color32,
 }
 
 /// Light file manager. Selection is the Windows blue with white text.
@@ -104,6 +109,7 @@ pub const LIGHT: Palette = Palette {
     extract: Color32::from_rgb(194, 105, 10),
     test: Color32::from_rgb(22, 128, 61),
     open: Color32::from_rgb(37, 99, 235),
+    rust: RUST,
 };
 
 /// Dark file manager. The list is the well; fields and headers sit above it.
@@ -125,6 +131,7 @@ pub const DARK: Palette = Palette {
     extract: Color32::from_rgb(0xF0, 0xA0, 0x4B),
     test: Color32::from_rgb(0x4A, 0xDE, 0x80),
     open: Color32::from_rgb(0x7A, 0xA2, 0xFF),
+    rust: RUST,
 };
 
 /// The palette for the theme that is active this frame.
@@ -202,6 +209,8 @@ mod tests {
         assert_eq!(ctx.style().visuals.selection.bg_fill, DARK.select);
         assert_ne!(DARK.field, DARK.panel);
         assert_eq!(palette(&ctx).add, DARK.add);
+        assert_eq!(LIGHT.rust, RUST);
+        assert_eq!(DARK.rust, RUST);
     }
 
     #[test]

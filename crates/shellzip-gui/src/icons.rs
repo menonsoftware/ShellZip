@@ -20,8 +20,6 @@ type DarkSvgCache = Mutex<HashMap<&'static str, Arc<[u8]>>>;
 
 /// File-list row glyph.
 pub const SIZE_ROW: f32 = 16.0;
-/// Toolbar glyph.
-pub const SIZE_TOOL: f32 = 28.0;
 /// Status-line glyph.
 pub const SIZE_STATUS: f32 = 14.0;
 /// Sort and address-bar caret.
@@ -109,6 +107,10 @@ pub enum ToolIcon {
     Up,
     /// Reload the current folder or archive.
     Refresh,
+    /// Wrap the open ZIP or 7z as a self-extractor.
+    Sfx,
+    /// Show one selected file.
+    View,
 }
 
 impl Icon {
@@ -179,11 +181,16 @@ impl ToolIcon {
             Self::About => "about",
             Self::Up => "up",
             Self::Refresh => "refresh",
+            Self::Sfx => "sfx",
+            Self::View => "view",
         }
     }
 
     fn has_disabled_art(self) -> bool {
-        matches!(self, Self::Extract | Self::Test | Self::Delete)
+        matches!(
+            self,
+            Self::Extract | Self::Test | Self::Delete | Self::Sfx | Self::View
+        )
     }
 
     fn bytes(self, enabled: bool) -> &'static [u8] {
@@ -200,6 +207,10 @@ impl ToolIcon {
             (Self::About, _) => include_bytes!("../assets/toolbar/about.svg"),
             (Self::Up, _) => include_bytes!("../assets/toolbar/up.svg"),
             (Self::Refresh, _) => include_bytes!("../assets/toolbar/refresh.svg"),
+            (Self::Sfx, false) => include_bytes!("../assets/toolbar/sfx_disabled.svg"),
+            (Self::Sfx, true) => include_bytes!("../assets/toolbar/sfx.svg"),
+            (Self::View, false) => include_bytes!("../assets/toolbar/view_disabled.svg"),
+            (Self::View, true) => include_bytes!("../assets/toolbar/view.svg"),
         }
     }
 }
@@ -231,7 +242,7 @@ pub const ALL: [Icon; 22] = [
 ];
 
 /// Every toolbar glyph, so [`warm`] can rasterize them with the Lucide set.
-pub const TOOL_ALL: [ToolIcon; 9] = [
+pub const TOOL_ALL: [ToolIcon; 11] = [
     ToolIcon::Open,
     ToolIcon::Add,
     ToolIcon::Extract,
@@ -241,6 +252,8 @@ pub const TOOL_ALL: [ToolIcon; 9] = [
     ToolIcon::About,
     ToolIcon::Up,
     ToolIcon::Refresh,
+    ToolIcon::Sfx,
+    ToolIcon::View,
 ];
 
 /// Rasterize the icons once, at the master pixel size.
@@ -450,6 +463,10 @@ fn tool_cache_key(icon: ToolIcon, enabled: bool) -> &'static str {
         (ToolIcon::Up, false) => "up-off",
         (ToolIcon::Refresh, true) => "refresh-on",
         (ToolIcon::Refresh, false) => "refresh-off",
+        (ToolIcon::Sfx, true) => "sfx-on",
+        (ToolIcon::Sfx, false) => "sfx-off",
+        (ToolIcon::View, true) => "view-on",
+        (ToolIcon::View, false) => "view-off",
     }
 }
 

@@ -53,6 +53,18 @@ impl Explorer {
             .map(|row| row.key.clone());
     }
 
+    /// Select every unselected row except `..`, and deselect the rest.
+    pub fn invert_selection(&mut self, rows: &[Row]) {
+        let mut next = HashSet::new();
+        for row in rows {
+            if row.kind != RowKind::Parent && !self.selected.contains(&row.key) {
+                next.insert(row.key.clone());
+            }
+        }
+        self.anchor = next.iter().next().cloned();
+        self.selected = next;
+    }
+
     /// Whether `key` is part of the selection.
     pub fn is_selected(&self, key: &str) -> bool {
         self.selected.contains(key)
@@ -370,5 +382,37 @@ fn crc_text(row: &Row) -> String {
         String::new()
     } else {
         format_crc(row.crc32)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::explorer::model::{Row, RowKind, Target};
+
+    fn file(name: &str) -> Row {
+        Row {
+            name: name.to_string(),
+            kind: RowKind::File,
+            size: Some(1),
+            packed: None,
+            modified: None,
+            crc32: None,
+            type_label: String::new(),
+            key: name.to_string(),
+            target: Target::Path(name.into()),
+        }
+    }
+
+    #[test]
+    fn invert_selection_flips_every_row_except_parent() {
+        let rows = [Row::parent(), file("a.txt"), file("b.txt"), file("c.txt")];
+        let mut explorer = Explorer::new();
+        explorer.select_only("b.txt");
+        explorer.invert_selection(&rows);
+        assert!(!explorer.is_selected("b.txt"));
+        assert!(explorer.is_selected("a.txt"));
+        assert!(explorer.is_selected("c.txt"));
+        assert!(!explorer.is_selected(crate::explorer::model::PARENT_KEY));
     }
 }
