@@ -14,6 +14,7 @@ path = "src/main.rs"
 shellzip-core = { path = "../shellzip-core", features = ["sevenz"] }
 
 [target.'cfg(windows)'.dependencies]
+image = { workspace = true }
 windows-sys = { version = "0.59", default-features = false, features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

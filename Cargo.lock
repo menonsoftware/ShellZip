@@ -4928,6 +4928,7 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "trash",
  "windows-icons",
+ "winresource",
  "xdg-mime",
 ]
 
@@ -4935,6 +4936,7 @@ dependencies = [
 name = "shellzip-sfx"
 version = "0.1.0"
 dependencies = [
+ "image",
  "shellzip-core",
  "tempfile",
  "windows-sys 0.59.0",

@@ -1,7 +1,7 @@
 //! Setup window for a double-clicked self-extractor.
 //!
-//! The window matches the usual self-extracting layout: instructions, a
-//! destination folder, Browse, a progress bar, and Extract / Cancel.
+//! The window shows the ShellZip banner, instructions, a destination folder,
+//! Browse, a progress bar, and Extract / Cancel.
 //! Browse opens the system Browse For Folder dialog.
 
 /// Child-control ids. Extract is `IDOK` (1) and Cancel is `IDCANCEL` (2).
@@ -64,7 +64,7 @@ fn setup_template() -> Vec<u8> {
     push_u16(&mut buf, 0);
     push_u16(&mut buf, 0);
     push_u16(&mut buf, 340);
-    push_u16(&mut buf, 230);
+    push_u16(&mut buf, 350);
     push_u16(&mut buf, 0);
     push_u16(&mut buf, 0);
     push_wide(&mut buf, "ShellZip self-extracting archive");
@@ -77,8 +77,8 @@ fn setup_template() -> Vec<u8> {
             style: WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
             x: 0,
             y: 0,
-            width: 58,
-            height: 196,
+            width: 340,
+            height: 176,
             id: 100,
             class: CLASS_STATIC,
             title: "",
@@ -88,10 +88,10 @@ fn setup_template() -> Vec<u8> {
         &mut buf,
         Control {
             style: WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
-            x: 66,
-            y: 6,
-            width: 266,
-            height: 88,
+            x: 8,
+            y: 184,
+            width: 324,
+            height: 76,
             id: ID_INTRO as u16,
             class: CLASS_EDIT,
             title: "",
@@ -101,9 +101,9 @@ fn setup_template() -> Vec<u8> {
         &mut buf,
         Control {
             style: WS_CHILD | WS_VISIBLE,
-            x: 66,
-            y: 100,
-            width: 160,
+            x: 8,
+            y: 266,
+            width: 210,
             height: 10,
             id: 102,
             class: CLASS_STATIC,
@@ -120,9 +120,9 @@ fn setup_template() -> Vec<u8> {
                 | CBS_DROPDOWN
                 | CBS_AUTOHSCROLL
                 | CBS_HASSTRINGS,
-            x: 66,
-            y: 112,
-            width: 190,
+            x: 8,
+            y: 278,
+            width: 228,
             height: 70,
             id: ID_DEST as u16,
             class: CLASS_COMBO,
@@ -133,9 +133,9 @@ fn setup_template() -> Vec<u8> {
         &mut buf,
         Control {
             style: WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            x: 262,
-            y: 112,
-            width: 70,
+            x: 242,
+            y: 278,
+            width: 90,
             height: 14,
             id: ID_BROWSE as u16,
             class: CLASS_BUTTON,
@@ -146,9 +146,9 @@ fn setup_template() -> Vec<u8> {
         &mut buf,
         Control {
             style: WS_CHILD | WS_VISIBLE,
-            x: 66,
-            y: 134,
-            width: 160,
+            x: 8,
+            y: 298,
+            width: 210,
             height: 10,
             id: 105,
             class: CLASS_STATIC,
@@ -159,9 +159,9 @@ fn setup_template() -> Vec<u8> {
         &mut buf,
         Control {
             style: WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
-            x: 66,
-            y: 146,
-            width: 266,
+            x: 8,
+            y: 310,
+            width: 324,
             height: 12,
             id: ID_PROGRESS as u16,
             class: 0,
@@ -174,7 +174,7 @@ fn setup_template() -> Vec<u8> {
         Control {
             style: WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
             x: 188,
-            y: 204,
+            y: 326,
             width: 68,
             height: 16,
             id: 1,
@@ -187,7 +187,7 @@ fn setup_template() -> Vec<u8> {
         Control {
             style: WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             x: 264,
-            y: 204,
+            y: 326,
             width: 68,
             height: 16,
             id: 2,
@@ -282,7 +282,7 @@ mod win {
     use shellzip_core::{Error, ExtractOpts, Overwrite, Password, ProgressSink, extract, list};
     use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EndDialog, GWLP_USERDATA, GetDlgItem, GetWindowLongPtrW, GetWindowTextLengthW,
+        EndDialog, GWLP_USERDATA, GetDlgItem, GetParent, GetWindowLongPtrW, GetWindowTextLengthW,
         GetWindowTextW, PostMessageW, SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowTextW,
         WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_DRAWITEM, WM_INITDIALOG, WM_TIMER,
     };
@@ -326,6 +326,7 @@ mod win {
             extracted: 0,
             small_icon: std::ptr::null_mut(),
             big_icon: std::ptr::null_mut(),
+            banner: decode_banner(),
         };
         let shown = show(&mut state);
         finish_worker(&mut state);
@@ -388,6 +389,7 @@ mod win {
         extracted: u64,
         small_icon: windows_sys::Win32::UI::WindowsAndMessaging::HICON,
         big_icon: windows_sys::Win32::UI::WindowsAndMessaging::HICON,
+        banner: Option<Banner>,
     }
 
     impl Drop for SetupState {
@@ -856,10 +858,46 @@ mod win {
         item_data: usize,
     }
 
+    /// Bottom-up BGRA pixels for the setup banner.
+    struct Banner {
+        width: i32,
+        height: i32,
+        pixels: Vec<u8>,
+    }
+
+    fn decode_banner() -> Option<Banner> {
+        let rgba = image::load_from_memory(include_bytes!("../assets/banner.png"))
+            .ok()?
+            .into_rgba8();
+        let width = i32::try_from(rgba.width()).ok()?;
+        let height = i32::try_from(rgba.height()).ok()?;
+        if width <= 0 || height <= 0 {
+            return None;
+        }
+        let stride = usize::try_from(width).ok()?.checked_mul(4)?;
+        let rows = usize::try_from(height).ok()?;
+        let mut pixels = rgba.into_raw();
+        if pixels.len() != stride.checked_mul(rows)? {
+            return None;
+        }
+        for px in pixels.as_chunks_mut::<4>().0 {
+            px.swap(0, 2);
+        }
+        for y in 0..rows / 2 {
+            let top = y.saturating_mul(stride);
+            let bottom = (rows - 1 - y).saturating_mul(stride);
+            let (head, tail) = pixels.split_at_mut(bottom);
+            head[top..top + stride].swap_with_slice(&mut tail[..stride]);
+        }
+        Some(Banner {
+            width,
+            height,
+            pixels,
+        })
+    }
+
     #[allow(unsafe_code)]
     unsafe fn paint_banner(lparam: LPARAM) {
-        use windows_sys::Win32::UI::WindowsAndMessaging::DrawIconEx;
-
         if lparam == 0 {
             return;
         }
@@ -867,36 +905,100 @@ mod win {
         if draw.ctl_id != 100 {
             return;
         }
-        let rc = draw.rc_item;
-        let height = rc.bottom.saturating_sub(rc.top);
-        let band = height / 3;
         fill_band(
             draw.hdc,
-            rc,
-            rc.top,
-            rc.top.saturating_add(band),
-            rgb(0, 164, 232),
+            draw.rc_item,
+            draw.rc_item.top,
+            draw.rc_item.bottom,
+            rgb(14, 15, 19),
         );
-        fill_band(
-            draw.hdc,
-            rc,
-            rc.top.saturating_add(band),
-            rc.top.saturating_add(band.saturating_mul(2)),
-            rgb(0, 120, 212),
-        );
-        fill_band(
-            draw.hdc,
-            rc,
-            rc.top.saturating_add(band.saturating_mul(2)),
-            rc.bottom,
-            rgb(0, 84, 166),
-        );
-        let icon = load_icon(48);
-        if !icon.is_null() {
-            let x = rc.left + (rc.right.saturating_sub(rc.left).saturating_sub(48)) / 2;
-            let y = rc.top + (height / 5).max(12);
-            DrawIconEx(draw.hdc, x, y, icon, 48, 48, 0, std::ptr::null_mut(), 3);
-            destroy_icon(icon);
+        let parent = unsafe { GetParent(draw.hwnd_item) };
+        let Some(state) = (unsafe { state_mut(parent) }) else {
+            return;
+        };
+        let Some(banner) = state.banner.as_ref() else {
+            return;
+        };
+        blit_banner(draw, banner);
+    }
+
+    #[allow(unsafe_code)]
+    unsafe fn blit_banner(draw: &DrawItem, banner: &Banner) {
+        use windows_sys::Win32::Graphics::Gdi::{
+            BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, HALFTONE, RGBQUAD, SRCCOPY,
+            SetBrushOrgEx, SetStretchBltMode, StretchDIBits,
+        };
+
+        let dest = fitted(draw.rc_item, banner.width, banner.height);
+        let dest_w = dest.right.saturating_sub(dest.left);
+        let dest_h = dest.bottom.saturating_sub(dest.top);
+        if dest_w <= 0 || dest_h <= 0 {
+            return;
+        }
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: u32::try_from(size_of::<BITMAPINFOHEADER>()).unwrap_or(40),
+                biWidth: banner.width,
+                biHeight: banner.height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: 0,
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [RGBQUAD {
+                rgbBlue: 0,
+                rgbGreen: 0,
+                rgbRed: 0,
+                rgbReserved: 0,
+            }],
+        };
+        unsafe {
+            SetStretchBltMode(draw.hdc, HALFTONE);
+            SetBrushOrgEx(draw.hdc, 0, 0, std::ptr::null_mut());
+            StretchDIBits(
+                draw.hdc,
+                dest.left,
+                dest.top,
+                dest_w,
+                dest_h,
+                0,
+                0,
+                banner.width,
+                banner.height,
+                banner.pixels.as_ptr().cast(),
+                &info,
+                DIB_RGB_COLORS,
+                SRCCOPY,
+            );
+        }
+    }
+
+    fn fitted(rc: RECT, src_w: i32, src_h: i32) -> RECT {
+        let bounds_w = i64::from(rc.right.saturating_sub(rc.left));
+        let bounds_h = i64::from(rc.bottom.saturating_sub(rc.top));
+        let src_w = i64::from(src_w);
+        let src_h = i64::from(src_h);
+        if bounds_w <= 0 || bounds_h <= 0 || src_w <= 0 || src_h <= 0 {
+            return rc;
+        }
+        let (draw_w, draw_h) = if bounds_w * src_h <= bounds_h * src_w {
+            (bounds_w, bounds_w * src_h / src_w)
+        } else {
+            (bounds_h * src_w / src_h, bounds_h)
+        };
+        let draw_w = i32::try_from(draw_w).unwrap_or(0);
+        let draw_h = i32::try_from(draw_h).unwrap_or(0);
+        let left = rc.left + (rc.right.saturating_sub(rc.left).saturating_sub(draw_w)) / 2;
+        let top = rc.top + (rc.bottom.saturating_sub(rc.top).saturating_sub(draw_h)) / 2;
+        RECT {
+            left,
+            top,
+            right: left.saturating_add(draw_w),
+            bottom: top.saturating_add(draw_h),
         }
     }
 
@@ -976,6 +1078,13 @@ mod win {
     fn wide_os(text: &std::ffi::OsStr) -> Vec<u16> {
         use std::os::windows::ffi::OsStrExt;
         text.encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    #[test]
+    fn banner_pixels_are_bgra() {
+        let banner = decode_banner().expect("banner");
+        assert_eq!((banner.width, banner.height), (1280, 720));
+        assert_eq!(banner.pixels.len(), 1280 * 720 * 4);
     }
 }
 

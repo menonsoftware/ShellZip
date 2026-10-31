@@ -38,51 +38,85 @@ paragraph, starting from \"UnRAR source code\" words, is included in license, \
 or in documentation if license is not available, and in source code comments \
 of resulting package.";
 
-/// About window. `open` is cleared by the title-bar close button or Close.
+/// Banner art for the top of the About window. Native size is 1280×720.
+const BANNER: &[u8] = include_bytes!("../assets/banner.png");
+
+/// Fixed width of the About dialog. The banner is scaled into this width.
+const DIALOG_WIDTH: f32 = 520.0;
+
+/// About dialog. Modal, centered, and not resizable.
+///
+/// `open` is cleared by Close, Escape, or a click on the backdrop.
 pub fn show(ctx: &egui::Context, open: &mut bool) {
-    let mut close = false;
-    egui::Window::new("About ShellZip")
-        .open(open)
-        .collapsible(false)
-        .resizable(true)
-        .default_size([640.0, 560.0])
-        .min_width(520.0)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.set_min_width(520.0);
-            identity(ui);
-            ui.add_space(8.0);
-            license(ui);
-            ui.add_space(8.0);
-            notices(ui);
-            ui.add_space(8.0);
-            ui.separator();
-            let rows = credits::credits();
-            ui.label(format!(
-                "Third-party packages in this build ({})",
-                rows.len()
-            ));
-            ui.add_space(4.0);
-            package_table(ui, rows);
-            ui.add_space(8.0);
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui.button("Close").clicked() {
-                    close = true;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.hyperlink_to("Icons by Lucide (MIT)", "https://lucide.dev/icons/");
-                });
+    if !*open {
+        return;
+    }
+    let response = egui::Modal::new(egui::Id::new("shellzip-about")).show(ctx, |ui| {
+        ui.set_min_width(DIALOG_WIDTH);
+        ui.set_max_width(DIALOG_WIDTH);
+        ui.label(egui::RichText::new("About ShellZip").strong());
+        ui.separator();
+        let max_height = (ui.ctx().screen_rect().height() - 96.0).clamp(280.0, 560.0);
+        egui::ScrollArea::vertical()
+            .max_height(max_height)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.set_min_width(DIALOG_WIDTH);
+                identity(ui);
+                ui.add_space(8.0);
+                license(ui);
+                ui.add_space(8.0);
+                notices(ui);
+                ui.add_space(8.0);
+                ui.separator();
+                let rows = credits::credits();
+                ui.label(format!(
+                    "Third-party packages in this build ({})",
+                    rows.len()
+                ));
+                ui.add_space(4.0);
+                package_table(ui, rows);
+            });
+        ui.add_space(8.0);
+        ui.separator();
+        let mut close = false;
+        ui.horizontal(|ui| {
+            if ui.button("Close").clicked() {
+                close = true;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.hyperlink_to("Icons by Lucide (MIT)", "https://lucide.dev/icons/");
             });
         });
-    if close {
+        close
+    });
+    if response.inner || response.should_close() {
         *open = false;
     }
 }
 
+/// Scale the 16:9 banner so it stays inside the dialog and on a short screen.
+fn banner_size(ctx: &egui::Context) -> egui::Vec2 {
+    let aspect = 1280.0 / 720.0;
+    let max_height = (ctx.screen_rect().height() * 0.28).clamp(120.0, 200.0);
+    let height = (DIALOG_WIDTH / aspect).min(max_height);
+    egui::vec2(height * aspect, height)
+}
+
 fn identity(ui: &mut egui::Ui) {
     let colors = theme::palette(ui.ctx());
-    ui.label(egui::RichText::new("ShellZip").strong().size(22.0));
+    let size = banner_size(ui.ctx());
+    let spare = (DIALOG_WIDTH - size.x).max(0.0);
+    ui.horizontal(|ui| {
+        ui.add_space(spare / 2.0);
+        ui.add(
+            egui::Image::from_bytes("bytes://shellzip/banner.png", BANNER)
+                .sense(egui::Sense::empty())
+                .show_loading_spinner(false)
+                .fit_to_exact_size(size),
+        );
+    });
+    ui.add_space(8.0);
     ui.label(
         egui::RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).color(colors.muted),
     );
@@ -130,13 +164,13 @@ fn package_table(ui: &mut egui::Ui, rows: &[Credit]) {
     TableBuilder::new(ui)
         .id_salt("shellzip-about-credits")
         .striped(true)
-        .resizable(true)
+        .resizable(false)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .column(Column::initial(180.0).at_least(120.0).clip(true))
         .column(Column::initial(72.0).at_least(64.0).clip(true))
         .column(Column::remainder().at_least(180.0).clip(true))
-        .min_scrolled_height(220.0)
-        .max_scroll_height(280.0)
+        .min_scrolled_height(120.0)
+        .max_scroll_height(160.0)
         .header(22.0, |mut header| {
             header.col(|ui| {
                 ui.strong("Package");
@@ -162,4 +196,19 @@ fn package_table(ui: &mut egui::Ui, rows: &[Credit]) {
                 });
             });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BANNER;
+
+    #[test]
+    fn about_banner_is_a_wide_png() {
+        assert_eq!(
+            &BANNER[..8],
+            &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
+        );
+        let image = image::load_from_memory(BANNER).expect("banner png");
+        assert!(image.width() > image.height());
+    }
 }
