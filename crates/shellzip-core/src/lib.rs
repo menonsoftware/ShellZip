@@ -38,9 +38,10 @@ pub use entry::{
 pub use error::Error;
 pub use extractor::{ArchiveReader, Opened, Verify};
 pub use options::{
-    AddReport, CompressOpts, ConflictChoice, ConflictDecider, DEFAULT_STORE_EXTS, DeleteReport,
-    ExtractOpts, ExtractReport, ExtractUpdate, ListOpts, MAX_THREADS, Overwrite, SevenZMethod,
-    SevenZOpts, StoreList, TestReport, UpdateMode, UpdatePrompt, ZipMethod,
+    AddReport, CompressOpts, ConflictChoice, ConflictDecider, DEFAULT_MAX_BYTES, DEFAULT_MAX_RATIO,
+    DEFAULT_STORE_EXTS, DeleteReport, ExtractOpts, ExtractReport, ExtractUpdate, ListOpts,
+    MAX_THREADS, Overwrite, ReadLimits, SevenZMethod, SevenZOpts, StoreList, TestReport,
+    UpdateMode, UpdatePrompt, ZipMethod,
 };
 pub use progress::{NopProgress, ProgressSink};
 pub use sfx::{
@@ -154,12 +155,24 @@ pub fn extract(
 }
 
 /// Decode every member and verify checksums or sizes.
+///
+/// Uses [`ReadLimits::default`]: 64 GiB and a 1_000_000:1 ratio.
 pub fn test(
     path: &std::path::Path,
     password: Option<&Password>,
     progress: &dyn ProgressSink,
 ) -> Result<TestReport> {
-    ops::test(path, password, progress)
+    test_with(path, password, progress, &ReadLimits::default())
+}
+
+/// [`test()`] with caller-chosen byte and ratio caps.
+pub fn test_with(
+    path: &std::path::Path,
+    password: Option<&Password>,
+    progress: &dyn ProgressSink,
+    limits: &ReadLimits,
+) -> Result<TestReport> {
+    ops::test(path, password, progress, limits)
 }
 
 /// Open `path` for indexed reads.

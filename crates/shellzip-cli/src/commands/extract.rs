@@ -17,6 +17,7 @@ pub fn extract(args: &ExtractArgs, flat: bool, shared: &Shared) -> Result<i32, E
     opts.skip_encrypted = args.skip_encrypted;
     opts.allow_unsafe_links = args.allow_unsafe_links;
     opts.mark_of_the_web = args.mark_of_the_web;
+    args.limits.apply(&mut opts);
     opts.password = shared.password.clone();
     opts.includes = args.include.clone();
     if !args.files.is_empty() {

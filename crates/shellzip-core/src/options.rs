@@ -268,6 +268,33 @@ impl Default for CompressOpts {
 /// Hard cap on `--threads`, matching the observed WinRAR limit.
 pub const MAX_THREADS: usize = 64;
 
+/// Default uncompressed-byte cap for extract and test (64 GiB).
+pub const DEFAULT_MAX_BYTES: u64 = 64 << 30;
+
+/// Default uncompressed-to-packed ratio. `0` turns the ratio check off.
+///
+/// One million to one still allows ordinary text and still stops a zip bomb
+/// whose payload is orders of magnitude larger than the archive.
+pub const DEFAULT_MAX_RATIO: u64 = 1_000_000;
+
+/// Byte and ratio caps shared by extract and test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadLimits {
+    /// Stop after this many uncompressed bytes.
+    pub max_bytes: u64,
+    /// Uncompressed bytes allowed per packed byte. `0` disables the check.
+    pub max_ratio: u64,
+}
+
+impl Default for ReadLimits {
+    fn default() -> Self {
+        Self {
+            max_bytes: DEFAULT_MAX_BYTES,
+            max_ratio: DEFAULT_MAX_RATIO,
+        }
+    }
+}
+
 impl CompressOpts {
     /// Deflate level for `-m`.
     pub fn deflate_level(&self) -> i64 {
@@ -371,6 +398,8 @@ pub struct ExtractOpts {
     pub exact_paths: Option<Vec<String>>,
     /// Stop after this many uncompressed bytes have been written.
     pub max_bytes: u64,
+    /// Uncompressed bytes allowed per packed byte. `0` disables the ratio cap.
+    pub max_ratio: u64,
     /// Password for ZIP AES, RAR, and 7z. `None` only reads clear members.
     pub password: Option<Password>,
     /// Skip encrypted members instead of failing (`-mes`).
@@ -382,7 +411,10 @@ pub struct ExtractOpts {
 }
 
 impl ExtractOpts {
-    /// Extract into `output` with the default safety cap (64 GiB).
+    /// Extract into `output` with the default safety caps.
+    ///
+    /// The byte cap is [`DEFAULT_MAX_BYTES`] (64 GiB). The ratio cap is
+    /// [`DEFAULT_MAX_RATIO`] (1_000_000:1).
     pub fn new(output: impl Into<PathBuf>) -> Self {
         Self {
             output: output.into(),
@@ -394,11 +426,20 @@ impl ExtractOpts {
             keep_broken: false,
             includes: Vec::new(),
             exact_paths: None,
-            max_bytes: 64 << 30,
+            max_bytes: DEFAULT_MAX_BYTES,
+            max_ratio: DEFAULT_MAX_RATIO,
             password: None,
             skip_encrypted: false,
             allow_unsafe_links: false,
             mark_of_the_web: false,
+        }
+    }
+
+    /// Caps used while decoding this extract.
+    pub fn limits(&self) -> ReadLimits {
+        ReadLimits {
+            max_bytes: self.max_bytes,
+            max_ratio: self.max_ratio,
         }
     }
 }

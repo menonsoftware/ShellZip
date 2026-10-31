@@ -30,6 +30,7 @@ zesven = { version = "3.2", default-features = false, features = ["lzma2", "aes"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
+proptest = { version = "1.12.0", default-features = false, features = ["std", "regex-syntax"] }
 sha2 = "0.10"
 tempfile = "3"
 zesven = { version = "3.2", default-features = false, features = ["lzma2", "aes"] }

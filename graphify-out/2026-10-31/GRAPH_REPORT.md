@@ -1,17 +1,17 @@
 # Graph Report - ShellZip  (2026-10-31)
 
 ## Corpus Check
-- 93 files · ~84,967 words
+- 96 files · ~97,097 words
 - Verdict: corpus is large enough that graph structure adds value.
-- Unclassified: 26 file(s) not represented in the graph (top: .mdc 11, .rar 8, (none) 4)
+- Unclassified: 27 file(s) not represented in the graph (top: .mdc 11, .rar 8, (none) 4)
 
 ## Summary
-- 2005 nodes · 4901 edges · 102 communities (87 shown, 15 thin omitted)
-- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 139 edges (avg confidence: 0.85)
+- 2054 nodes · 5036 edges · 100 communities (83 shown, 17 thin omitted)
+- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 149 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `780e8d61`
+- Built from commit: `3e77df6c`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -28,16 +28,15 @@
 - setup.rs
 - archiver/zip.rs
 - ShellZipApp
-- NopProgress
+- CompressOpts
 - Format
-- round_trip.rs
+- about.rs
 - src/entry.rs
 - extractor/tar.rs
 - UpdateMode
 - Error
 - extract.rs
 - Scaffold templates
-- .go_up
 - src/cli.rs
 - Icon
 - Command
@@ -45,7 +44,7 @@
 - shellzip-gui/src/main.rs
 - shellzip-core
 - model.rs
-- safe_path.rs
+- EntryKind
 - Overwrite
 - Test patterns
 - 4. Phased implementation (Cursor task list)
@@ -53,7 +52,7 @@
 - Tier 1 — What can be proven (direct evidence)
 - Rust review checklist
 - archiver/tar.rs
-- src/options.rs
+- SevenZMethod
 - Rust performance
 - shell_icons/mod.rs
 - settings.rs
@@ -71,7 +70,7 @@
 - ToolCommand
 - tests/cli.rs
 - CrcWriter
-- Entry
+- Budget
 - milestone2.rs
 - HWND
 - SetupState
@@ -82,61 +81,60 @@
 - EntryMeta
 - milestone3.rs
 - DrawItem
-- extractor/sevenz/mod.rs
+- Password
 - add_dialog.rs
 - extract_dialog.rs
 - sevenz.rs
 - .retry_with_password
-- Target
-- zip_threads.rs
-- JumpTarget
+- Row
+- write
+- jumps
 - app.rs
 - folder_formats.rs
-- ProgressSink
-- UpdateMode
-- tests/extract.rs
-- progress.rs
-- extractor/mod.rs
-- shellzip-sfx/src/main.rs
-- archiver/mod.rs
-- theme.rs
 - Password
+- add.rs
+- NopProgress
+- ExtractOpts
+- StoreList
+- tests/extract.rs
+- ArchiveWriter
+- theme.rs
+- sort_rows
 - chrome.rs
 - MethodArg
 - ArchiveIndex
 - run
 - OpKind
 - Context
-- pathbuf
-- copy_sevenz_index
+- MemberAction
+- sevenz/options.rs
 - stream_one
-- Overwrite
 - sized_texture
-- Tab
+- prepare_output
 
 ## God Nodes (most connected - your core abstractions)
 1. `ShellZipApp` - 89 edges
-2. `Password` - 66 edges
-3. `ProgressSink` - 66 edges
+2. `Password` - 67 edges
+3. `ProgressSink` - 67 edges
 4. `CompressOpts` - 65 edges
 5. `Entry` - 44 edges
 6. `EntryMeta` - 38 edges
 7. `Icon` - 38 edges
 8. `Format` - 36 edges
-9. `FolderTree` - 32 edges
-10. `ExtractOpts` - 30 edges
+9. `ExtractOpts` - 32 edges
+10. `FolderTree` - 32 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `zip_comment()` --calls--> `detect_file()`  [INFERRED]
+  crates/shellzip-core/src/ops.rs → crates/shellzip-core/src/detect.rs
 - `compress_opts()` --calls--> `format_from_extension()`  [INFERRED]
   crates/shellzip-cli/src/cli.rs → crates/shellzip-core/src/detect.rs
 - `flags_text()` --references--> `Entry`  [EXTRACTED]
   crates/shellzip-cli/src/commands/list.rs → crates/shellzip-core/src/entry.rs
+- `test()` --calls--> `test_with()`  [INFERRED]
+  crates/shellzip-cli/src/commands/test.rs → crates/shellzip-core/src/lib.rs
 - `xtask` --depends_on--> `shellzip-core`  [EXTRACTED]
   xtask/Cargo.toml → crates/shellzip-core/Cargo.toml
-- `compress_file()` --calls--> `method_for()`  [INFERRED]
-  crates/shellzip-core/src/archiver/parallel.rs → crates/shellzip-core/src/archiver/zip.rs
-- `compress_file()` --calls--> `options_for()`  [INFERRED]
-  crates/shellzip-core/src/archiver/parallel.rs → crates/shellzip-core/src/archiver/zip.rs
 
 ## Import Cycles
 - 1-file cycle: `crates/shellzip-core/src/archiver/parallel.rs -> crates/shellzip-core/src/archiver/parallel.rs`
@@ -144,6 +142,7 @@
 - 1-file cycle: `crates/shellzip-gui/src/add_dialog.rs -> crates/shellzip-gui/src/add_dialog.rs`
 - 1-file cycle: `crates/shellzip-gui/src/explorer/model.rs -> crates/shellzip-gui/src/explorer/model.rs`
 - 1-file cycle: `crates/shellzip-gui/src/chrome.rs -> crates/shellzip-gui/src/chrome.rs`
+- 1-file cycle: `crates/shellzip-gui/src/credits.rs -> crates/shellzip-gui/src/credits.rs`
 - 1-file cycle: `crates/shellzip-gui/src/explorer/listing.rs -> crates/shellzip-gui/src/explorer/listing.rs`
 - 1-file cycle: `crates/shellzip-gui/src/icons.rs -> crates/shellzip-gui/src/icons.rs`
 - 1-file cycle: `crates/shellzip-gui/src/shell_icons/platform.rs -> crates/shellzip-gui/src/shell_icons/platform.rs`
@@ -158,9 +157,8 @@
 - 3-file cycle: `crates/shellzip-cli/src/cli.rs -> crates/shellzip-cli/src/commands/mod.rs -> crates/shellzip-cli/src/commands/sfx.rs -> crates/shellzip-cli/src/cli.rs`
 - 3-file cycle: `crates/shellzip-cli/src/cli.rs -> crates/shellzip-cli/src/commands/mod.rs -> crates/shellzip-cli/src/commands/list.rs -> crates/shellzip-cli/src/cli.rs`
 - 3-file cycle: `crates/shellzip-cli/src/cli.rs -> crates/shellzip-cli/src/commands/mod.rs -> crates/shellzip-cli/src/commands/add.rs -> crates/shellzip-cli/src/cli.rs`
-- 3-file cycle: `crates/shellzip-cli/src/cli.rs -> crates/shellzip-cli/src/commands/mod.rs -> crates/shellzip-cli/src/commands/delete.rs -> crates/shellzip-cli/src/cli.rs`
 
-## Communities (102 total, 15 thin omitted)
+## Communities (100 total, 17 thin omitted)
 
 ### Community 0 - "worker.rs"
 Cohesion: 0.08
@@ -171,16 +169,16 @@ Cohesion: 0.17
 Nodes (16): ALL, Caret, caret(), Down, Up, MASTER_POINTS, paint(), paint_caret() (+8 more)
 
 ### Community 2 - "ops.rs"
-Cohesion: 0.12
-Nodes (21): member_key(), delete(), build_globs(), Counting, delete(), extract(), filter_is_restrictive(), find_member() (+13 more)
+Cohesion: 0.15
+Nodes (21): member_key(), add_inner(), add_prompted(), build_globs(), Counting, delete(), extract(), filter_is_restrictive() (+13 more)
 
 ### Community 3 - "policy.rs"
-Cohesion: 0.17
-Nodes (20): admit_existing(), archive_is_newer(), Destination, destination(), Skip, Write, disk_mtime(), exists() (+12 more)
+Cohesion: 0.14
+Nodes (30): admit_existing(), archive_is_newer(), Destination, destination(), Skip, Write, disk_mtime(), exists() (+22 more)
 
 ### Community 4 - "src/sfx.rs"
-Cohesion: 0.05
-Nodes (48): SfxArgs, default_output(), existing(), find_stub(), has_trailer(), sfx(), test_sevenz(), AES_METHOD (+40 more)
+Cohesion: 0.07
+Nodes (41): SfxArgs, default_output(), existing(), find_stub(), has_trailer(), sfx(), AES_METHOD, decoder_rejected() (+33 more)
 
 ### Community 5 - "Password"
 Cohesion: 0.15
@@ -191,12 +189,12 @@ Cohesion: 0.11
 Nodes (9): commit_output(), Kind, Gzip, Zstd, SingleArchiver, Stream, Gzip, Idle (+1 more)
 
 ### Community 7 - "shellzip-sfx/src/main.rs"
-Cohesion: 0.11
-Nodes (8): Ask, Bars, byte_style(), sink(), ConflictChoice, Overwrite, Rename, Skip
+Cohesion: 0.05
+Nodes (22): Ask, Bars, byte_style(), sink(), ConflictChoice, Overwrite, Rename, Skip (+14 more)
 
 ### Community 8 - "path"
-Cohesion: 0.15
-Nodes (19): EntryKind, Dir, File, Other, Symlink, capture(), mode_bits(), archive_rel() (+11 more)
+Cohesion: 0.19
+Nodes (14): to_archive_path(), capture(), archive_rel(), blocked(), build_set(), canonicalish(), collapse_duplicates(), Filters (+6 more)
 
 ### Community 9 - "setup.rs"
 Cohesion: 0.06
@@ -206,45 +204,45 @@ Nodes (11): CB_ADDSTRING, ID_BROWSE, ID_DEST, ID_INTRO, ID_PROGRESS, INTRO, PBM_
 Cohesion: 0.17
 Nodes (7): apply_comment(), method_for(), options_for(), rel_name(), target_text(), ZipArchiver, dos_parts()
 
-### Community 13 - "Format"
-Cohesion: 0.11
-Nodes (22): CreatableFormat, detect_bytes(), detect_header(), find_embedded(), find_subslice(), Format, Bzip2, Gzip (+14 more)
+### Community 12 - "CompressOpts"
+Cohesion: 0.12
+Nodes (11): add(), add_sfx(), add_stdin(), add(), add_sfx(), scratch_archive(), AddReport, CompressOpts (+3 more)
 
-### Community 14 - "round_trip.rs"
-Cohesion: 0.26
-Nodes (16): adding_to_an_existing_zip_keeps_the_other_files(), byte_cap_stops_extraction(), existing_tar_is_left_in_place_without_force(), extract_all(), gzip_rejects_a_second_file(), opts_fast(), overwrite_skip_and_rename(), pack_tree() (+8 more)
+### Community 13 - "Format"
+Cohesion: 0.10
+Nodes (28): create(), create_from_path(), creatable_extensions_round_trip(), CreatableFormat, detect_bytes(), detect_file(), detect_header(), find_embedded() (+20 more)
+
+### Community 14 - "about.rs"
+Cohesion: 0.18
+Nodes (14): identity(), license(), MIT_LICENSE, notices(), package_table(), show(), UNRAR_NOTICE, assert_credits() (+6 more)
 
 ### Community 15 - "src/entry.rs"
-Cohesion: 0.16
-Nodes (8): ListArgs, display_name(), flags_text(), list_technical(), format_attrs(), format_blake(), format_bytes(), byte_phrase()
+Cohesion: 0.27
+Nodes (7): ArchiveArgs, ListArgs, display_name(), flags_text(), list(), list_technical(), format_blake()
 
 ### Community 16 - "extractor/tar.rs"
 Cohesion: 0.12
-Nodes (26): Compression, Bzip2, Gzip, None, Xz, Zstd, copy_single(), copy_tar_index() (+18 more)
+Nodes (25): Compression, Bzip2, Gzip, None, Xz, Zstd, copy_single(), copy_tar_index() (+17 more)
 
 ### Community 17 - "UpdateMode"
-Cohesion: 0.20
-Nodes (8): ArchiveArgs, DeleteArgs, PrintArgs, delete(), list(), Shared, print_entry(), test()
+Cohesion: 0.24
+Nodes (7): DeleteArgs, PrintArgs, TestArgs, delete(), Shared, print_entry(), test()
 
 ### Community 18 - "Error"
-Cohesion: 0.13
-Nodes (13): tune(), Error, Archive, BadChecksum, BadPassword, Encrypted, Interrupted, Io (+5 more)
+Cohesion: 0.20
+Nodes (14): Error, Archive, BadChecksum, BadPassword, Encrypted, Interrupted, Io, Memory (+6 more)
 
 ### Community 19 - "extract.rs"
-Cohesion: 0.22
-Nodes (9): ExtractArgs, Overwrite, overwrite_mode(), OverwriteArg, Always, Ask, Rename, Skip (+1 more)
+Cohesion: 0.17
+Nodes (10): ExtractArgs, LimitArgs, Overwrite, overwrite_mode(), OverwriteArg, Always, Ask, Rename (+2 more)
 
 ### Community 20 - "Scaffold templates"
 Cohesion: 0.10
 Nodes (19): Criterion benchmark, Example, Extra binary in an existing crate, Finish checklist, Integration test file, New module in an existing crate, New `szip` subcommand, New workspace crate (+11 more)
 
-### Community 21 - ".go_up"
-Cohesion: 0.22
-Nodes (4): is_sfx_name(), starting_folder(), is_supported_archive(), location_text()
-
 ### Community 22 - "src/cli.rs"
-Cohesion: 0.15
-Nodes (8): Cli, dispatch(), init_tracing(), normalize_args(), password_from_env(), prompt_password(), run(), take_password()
+Cohesion: 0.10
+Nodes (9): Cli, dispatch(), init_tracing(), normalize_args(), password_from_env(), prompt_password(), run(), take_password() (+1 more)
 
 ### Community 23 - "Icon"
 Cohesion: 0.08
@@ -255,24 +253,24 @@ Cohesion: 0.14
 Nodes (13): Command, Add, Complete, Delete, Extract, ExtractFlat, Freshen, List (+5 more)
 
 ### Community 25 - "xtask/src/main.rs"
-Cohesion: 0.15
-Nodes (23): bench(), build_fixtures(), build_sevenz_fixtures(), collect_files(), crc32(), find_rar(), find_tool(), FIXTURE_PASSWORD (+15 more)
+Cohesion: 0.07
+Nodes (46): copy_zone(), MAX_ZONE_BYTES, propagate(), zone_path(), adding_to_an_existing_zip_keeps_the_other_files(), byte_cap_stops_extraction(), existing_tar_is_left_in_place_without_force(), extract_all() (+38 more)
 
 ### Community 27 - "shellzip-core"
 Cohesion: 0.40
 Nodes (5): shellzip-cli, shellzip-core, shellzip-gui, shellzip-sfx, xtask
 
 ### Community 29 - "model.rs"
-Cohesion: 0.13
-Nodes (17): format_time(), archive_prefix(), compare_column(), compare_name(), compare_option(), extension(), file_type_label(), format_modified() (+9 more)
+Cohesion: 0.14
+Nodes (16): format_bytes(), format_time(), archive_prefix(), byte_phrase(), dir_partial(), file_partial(), format_modified(), format_modified_is_day_month_year() (+8 more)
 
-### Community 30 - "safe_path.rs"
-Cohesion: 0.31
-Nodes (12): symlink_destination(), ensure_dir(), extend_long_path(), is_inside(), is_reserved(), join_stays_inside(), lexical_absolute(), looks_like_drive() (+4 more)
+### Community 30 - "EntryKind"
+Cohesion: 0.12
+Nodes (7): EntryKind, Dir, File, Other, Symlink, format_attrs(), mode_bits()
 
 ### Community 31 - "Overwrite"
-Cohesion: 0.15
-Nodes (13): ExtractUpdate, Freshen, Replace, Update, ExtractAction, Close, Save, Submit (+5 more)
+Cohesion: 0.18
+Nodes (10): Overwrite, Always, Ask, Never, Rename, ExtractRequest, DeleteArchive, Always (+2 more)
 
 ### Community 32 - "Test patterns"
 Cohesion: 0.11
@@ -295,12 +293,12 @@ Cohesion: 0.13
 Nodes (13): 1. Correctness, 2. Error handling, 3. Security, 4. Ownership and performance, 5. Concurrency, 6. Tests, 7. API and docs, 8. Manifest and tooling (+5 more)
 
 ### Community 37 - "archiver/tar.rs"
-Cohesion: 0.12
+Cohesion: 0.11
 Nodes (8): CompWriter, Gzip, Plain, Zstd, dir_name(), header_for(), TarArchiver, unix_secs()
 
-### Community 38 - "src/options.rs"
-Cohesion: 0.09
-Nodes (15): DEFAULT_STORE_EXTS, MAX_THREADS, SevenZMethod, Bzip2, Deflate, Lzma, Lzma2, Ppmd (+7 more)
+### Community 38 - "SevenZMethod"
+Cohesion: 0.22
+Nodes (8): SevenZMethod, Bzip2, Deflate, Lzma, Lzma2, Ppmd, Zstd, update_mode_labels_follow_the_add_dialog()
 
 ### Community 39 - "Rust performance"
 Cohesion: 0.29
@@ -311,8 +309,8 @@ Cohesion: 0.07
 Nodes (49): caches_a_raster_from_the_provider(), decode_png(), extension_of(), icon_keys_follow_extension_path_and_folder(), IconCache, IconKey, Computer, Extension (+41 more)
 
 ### Community 41 - "settings.rs"
-Cohesion: 0.16
-Nodes (24): ZipMethod, Deflate, Zstd, PackSettings, defaults(), delete_name(), ExtractSettings, load() (+16 more)
+Cohesion: 0.15
+Nodes (25): ExtractUpdate, Freshen, Replace, Update, PackSettings, defaults(), delete_name(), ExtractSettings (+17 more)
 
 ### Community 42 - "Rust quality gate"
 Cohesion: 0.29
@@ -339,36 +337,36 @@ Cohesion: 0.36
 Nodes (6): lists_a_folder_and_a_text_file(), read_directory(), read_subdirs(), row_for(), subdirs_skip_files(), TempDir
 
 ### Community 49 - "extractor/zip.rs"
-Cohesion: 0.16
-Nodes (11): annotate(), entry_from(), extract_zip(), extract_zip_index(), host_label(), list_zip(), method_name(), open_zip() (+3 more)
+Cohesion: 0.13
+Nodes (11): annotate(), entry_from(), extract_zip_index(), hash_capped(), host_label(), list_zip(), method_name(), open_zip() (+3 more)
 
 ### Community 50 - "Explorer"
 Cohesion: 0.12
 Nodes (11): SortColumn, Crc, Modified, Name, Packed, Size, Type, SortOrder (+3 more)
 
 ### Community 52 - "view.rs"
-Cohesion: 0.19
+Cohesion: 0.24
 Nodes (9): format_crc(), cell_text(), crc_text(), header_clicked(), modified_text(), packed_text(), paint_header_cell(), show() (+1 more)
 
 ### Community 54 - "RowKind"
-Cohesion: 0.24
-Nodes (10): named(), Row, RowKind, Archive, Directory, File, Parent, Symlink (+2 more)
+Cohesion: 0.20
+Nodes (10): extension(), file_type_label(), rank(), RowKind, Archive, Directory, File, Parent (+2 more)
 
 ### Community 55 - "ToolCommand"
 Cohesion: 0.33
 Nodes (6): ToolCommand, Add, Delete, Extract, Info, Test
 
 ### Community 56 - "tests/cli.rs"
-Cohesion: 0.16
-Nodes (21): add_list_test_extract_round_trip(), add_sfx_writes_a_listable_package(), add_to_an_existing_zip_keeps_previous_files(), help_explains_that_zip_encryption_leaves_names_visible(), log_file_receives_debug_events(), rar_is_not_created(), reads_a_tar_from_the_system_tool(), reads_a_zip_from_compress_archive() (+13 more)
+Cohesion: 0.15
+Nodes (22): add_list_test_extract_round_trip(), add_sfx_writes_a_listable_package(), add_to_an_existing_zip_keeps_previous_files(), help_explains_that_zip_encryption_leaves_names_visible(), log_file_receives_debug_events(), max_size_stops_extract_and_test(), rar_is_not_created(), reads_a_tar_from_the_system_tool() (+14 more)
 
 ### Community 57 - "CrcWriter"
-Cohesion: 0.14
-Nodes (4): Fanout, blake2sp_matches_the_reference_vector(), Blake2spWriter, CrcWriter
+Cohesion: 0.17
+Nodes (3): blake2sp_matches_the_reference_vector(), Blake2spWriter, CrcWriter
 
-### Community 58 - "Entry"
-Cohesion: 0.24
-Nodes (7): Entry, Opened, list(), list_with(), list(), list_with(), ListOpts
+### Community 58 - "Budget"
+Cohesion: 0.17
+Nodes (8): archive_packed_len(), Budget, BudgetWriter, BudgetWriter<'_, W>, copy_limited(), ratio_cap_rejects_a_member_that_expands_too_far(), ratio_error(), zero_ratio_disables_the_check()
 
 ### Community 60 - "milestone2.rs"
 Cohesion: 0.26
@@ -388,87 +386,79 @@ Nodes (7): add_choice(), browse_folder(), prepare_window(), set_text(), set_wind
 
 ### Community 66 - "sevenz/entry.rs"
 Cohesion: 0.09
-Nodes (18): coder_dictionary(), coder_label(), entry_from(), entry_key(), file(), folder_dictionary(), folder_label(), host_os() (+10 more)
+Nodes (17): coder_dictionary(), coder_label(), entry_from(), entry_key(), file(), folder_dictionary(), folder_label(), host_os() (+9 more)
 
 ### Community 67 - "EntryMeta"
 Cohesion: 0.13
-Nodes (12): archive_path(), CloneMeta, EntryMeta, seven_meta(), SevenZArchiver, spool(), Spooled, write_file_body() (+4 more)
+Nodes (11): archive_path(), CloneMeta, EntryMeta, seven_meta(), SevenZArchiver, spool(), Spooled, write_file_body() (+3 more)
 
 ### Community 68 - "milestone3.rs"
-Cohesion: 0.20
+Cohesion: 0.18
 Nodes (11): assert_matches_unrar(), encrypting_an_existing_zip_requires_force(), extract_bytes(), find_unrar(), FIXTURE_PASSWORD, fixtures_root(), password(), passwords_are_rejected_for_tar() (+3 more)
 
-### Community 70 - "extractor/sevenz/mod.rs"
-Cohesion: 0.18
-Nodes (13): Budget, mark_extracted(), restore_entry_time(), finish_staged(), Member, extract_sevenz(), ExtractOne, write_member() (+5 more)
+### Community 70 - "Password"
+Cohesion: 0.09
+Nodes (16): Member, copy_sevenz_index(), extract_sevenz(), ExtractOne, list_sevenz(), ProgressWrite, ProgressWrite<'_, W>, Tee (+8 more)
 
 ### Community 71 - "add_dialog.rs"
 Cohesion: 0.08
-Nodes (45): creatable_formats(), SevenZOpts, AddAction, Close, Submit, AddDialog, AddRequest, adopt_extension() (+37 more)
+Nodes (47): creatable_formats(), ZipMethod, Deflate, Zstd, AddAction, Close, Submit, AddDialog (+39 more)
 
 ### Community 72 - "extract_dialog.rs"
-Cohesion: 0.16
-Nodes (27): advanced_tab(), begin_new_folder(), colors(), confirm_delete_archive(), confirm_new_folder(), destination_uses_the_archive_name_without_its_extension(), display_path(), ExtractDialog (+19 more)
+Cohesion: 0.11
+Nodes (36): advanced_tab(), begin_new_folder(), colors(), confirm_delete_archive(), confirm_new_folder(), destination_uses_the_archive_name_without_its_extension(), DIALOG_WIDTH, display_path() (+28 more)
 
 ### Community 73 - "sevenz.rs"
-Cohesion: 0.14
-Nodes (18): codec_method(), write_options(), add_lists_and_extracts_through_the_core(), aes_hides_bytes_and_header_encryption_hides_names(), bzip2_and_deflate_round_trip(), committed_sevenz_fixtures_list_when_present(), extract_bytes(), fast() (+10 more)
+Cohesion: 0.22
+Nodes (16): add_lists_and_extracts_through_the_core(), aes_hides_bytes_and_header_encryption_hides_names(), bzip2_and_deflate_round_trip(), committed_sevenz_fixtures_list_when_present(), extract_bytes(), fast(), FIXTURE_PASSWORD, header_encryption_is_a_password_error_for_every_nonce() (+8 more)
 
 ### Community 74 - ".retry_with_password"
-Cohesion: 0.29
-Nodes (4): find_stub(), list_archive(), needs_password(), JobToken
+Cohesion: 0.23
+Nodes (5): find_stub(), list_archive(), needs_password(), Extract, JobToken
 
-### Community 75 - "Target"
-Cohesion: 0.24
-Nodes (10): dir_partial(), file_partial(), insert(), Partial, Target, ArchiveDir, ArchiveMember, Parent (+2 more)
+### Community 75 - "Row"
+Cohesion: 0.25
+Nodes (9): named(), Row, Target, ArchiveDir, ArchiveMember, Parent, Path, totals() (+1 more)
 
-### Community 77 - "JumpTarget"
-Cohesion: 0.21
-Nodes (13): AddressEvent, Jump, Refresh, Submit, Up, breadcrumbs(), crumb_label(), folder_chain() (+5 more)
+### Community 77 - "jumps"
+Cohesion: 0.20
+Nodes (6): starting_folder(), folder_chain(), folder_parent(), jumps(), Prefix, location_text()
 
 ### Community 78 - "app.rs"
 Cohesion: 0.08
-Nodes (24): decide_member(), folder_still_shown(), folder_title(), PasswordAsk, PendingArchiveDelete, Place, Archive, Folder (+16 more)
+Nodes (24): decide_member(), folder_still_shown(), folder_title(), is_sfx_name(), PasswordAsk, PendingArchiveDelete, Place, Archive (+16 more)
 
 ### Community 79 - "folder_formats.rs"
 Cohesion: 0.35
 Nodes (12): assert_tree(), Case, cases(), extract_all(), nested_folder_round_trips_every_writable_format(), opts(), parallel_zip_round_trips_a_folder_of_spilled_files(), planned_names() (+4 more)
 
-### Community 80 - "ProgressSink"
-Cohesion: 0.11
-Nodes (15): ProgressWrite, add(), add_prompted(), add_sfx(), add_stdin(), add(), add_inner(), add_prompted() (+7 more)
+### Community 80 - "Password"
+Cohesion: 0.07
+Nodes (28): Password, Entry, ArchiveReader, only_first(), Opened, resolve(), unsupported(), Verify (+20 more)
 
-### Community 81 - "UpdateMode"
+### Community 81 - "add.rs"
 Cohesion: 0.14
 Nodes (15): AddArgs, compress_opts(), SfxFormatArg, SevenZ, Zip, add(), pack_sfx(), UpdateMode (+7 more)
 
-### Community 82 - "tests/extract.rs"
-Cohesion: 0.29
+### Community 83 - "ExtractOpts"
+Cohesion: 0.33
+Nodes (11): mark_extracted(), partial_path(), restore_entry_time(), write_atomic(), finish_staged(), extract_regular(), extract_single(), extract_tar() (+3 more)
+
+### Community 85 - "tests/extract.rs"
+Cohesion: 0.33
 Nodes (9): built_stub_contains_the_shellzip_icon(), encrypted_sfx(), silent_encrypted_stub_fails_without_a_password(), silent_encrypted_stub_rejects_a_wrong_password(), stub_bin(), stub_extracts_a_header_encrypted_7z_with_the_password(), stub_extracts_an_encrypted_zip_when_the_password_is_set(), stub_extracts_its_appended_7z() (+1 more)
 
-### Community 83 - "progress.rs"
-Cohesion: 0.13
-Nodes (6): CountWait, ensure_running(), ProgressReader, ProgressReader<'a, R>, ProgressReader<'_, R>, reader_and_ensure_running_honor_pause()
-
-### Community 84 - "extractor/mod.rs"
-Cohesion: 0.16
-Nodes (9): detect_file(), ArchiveReader, only_first(), resolve(), unsupported(), Verify, open(), open() (+1 more)
-
-### Community 85 - "shellzip-sfx/src/main.rs"
-Cohesion: 0.21
-Nodes (12): Args, env_password(), main(), optional_password(), parse(), parses_attached_dest_and_switches(), print_help(), rejects_an_unknown_switch() (+4 more)
-
-### Community 86 - "archiver/mod.rs"
-Cohesion: 0.16
-Nodes (9): ArchiveWriter, create(), create_from_path(), prepare_output(), prepare_temp(), temp_beside(), creatable_extensions_round_trip(), format_from_extension() (+1 more)
-
 ### Community 87 - "theme.rs"
-Cohesion: 0.17
-Nodes (11): apply(), apply_installs_both_themes(), DARK, LIGHT, Palette, palette(), Preference, Dark (+3 more)
+Cohesion: 0.13
+Nodes (14): directories_use_the_yellow_folder(), row_glyph(), selected_glyphs_use_the_selection_ink(), apply(), apply_installs_both_themes(), DARK, LIGHT, Palette (+6 more)
+
+### Community 88 - "sort_rows"
+Cohesion: 0.40
+Nodes (5): compare_column(), compare_name(), compare_option(), sort_keeps_parent_and_folders_above_files(), sort_rows()
 
 ### Community 89 - "chrome.rs"
-Cohesion: 0.22
-Nodes (14): address_bar(), caret_button(), dismiss_button(), dropdown_height(), global_rect(), icon_button(), parent_menu(), RunningStatus (+6 more)
+Cohesion: 0.14
+Nodes (24): address_bar(), AddressEvent, Jump, Refresh, Submit, Up, breadcrumbs(), caret_button() (+16 more)
 
 ### Community 90 - "MethodArg"
 Cohesion: 0.25
@@ -483,52 +473,44 @@ Cohesion: 0.25
 Nodes (7): ComInit, dword_words(), finish_worker(), init_common_controls(), run(), show(), windows_accepts_the_setup_dialog_template()
 
 ### Community 93 - "OpKind"
-Cohesion: 0.22
-Nodes (10): listed_effect(), ListedEffect, Browse, Finish, Operation, OpKind, Add, Delete (+2 more)
+Cohesion: 0.25
+Nodes (9): listed_effect(), ListedEffect, Browse, Finish, Operation, OpKind, Add, Delete (+1 more)
 
 ### Community 94 - "Context"
-Cohesion: 0.33
-Nodes (4): about(), bar_frame(), confirm_delete(), info_window()
+Cohesion: 0.40
+Nodes (3): bar_frame(), confirm_delete(), info_window()
 
-### Community 95 - "pathbuf"
-Cohesion: 0.31
-Nodes (6): copy_zone(), MAX_ZONE_BYTES, propagate(), zone_path(), main(), windows_sdk_bin()
+### Community 95 - "MemberAction"
+Cohesion: 0.50
+Nodes (4): MemberAction, Drop, Rename, Write
 
-### Community 96 - "copy_sevenz_index"
-Cohesion: 0.32
-Nodes (3): copy_sevenz_index(), ProgressWrite<'_, W>, Tee
-
-### Community 97 - "stream_one"
+### Community 98 - "stream_one"
 Cohesion: 0.36
 Nodes (5): add_stdin(), Counting<'_, R>, spool_stdin(), Spooled, stream_one()
 
-### Community 99 - "Overwrite"
-Cohesion: 0.40
-Nodes (5): Overwrite, Always, Ask, Never, Rename
-
-### Community 101 - "Tab"
-Cohesion: 0.50
-Nodes (4): Tab, Advanced, General, Options
+### Community 101 - "prepare_output"
+Cohesion: 0.48
+Nodes (3): prepare_output(), prepare_temp(), temp_beside()
 
 ## Knowledge Gaps
-- **211 isolated node(s):** `shellzip-cli`, `Add`, `Update`, `Freshen`, `Delete` (+206 more)
+- **210 isolated node(s):** `shellzip-cli`, `Add`, `Update`, `Freshen`, `Delete` (+205 more)
   These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 591 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **15 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **17 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Error` connect `Error` to `worker.rs`, `ops.rs`, `policy.rs`, `src/sfx.rs`, `Password`, `stream.rs`, `shellzip-sfx/src/main.rs`, `path`, `setup.rs`, `archiver/zip.rs`, `Format`, `round_trip.rs`, `src/entry.rs`, `extractor/tar.rs`, `UpdateMode`, `extract.rs`, `src/cli.rs`, `safe_path.rs`, `CompressOpts`, `archiver/tar.rs`, `src/options.rs`, `prompt.rs`, `extractor/zip.rs`, `EntryMeta`, `milestone3.rs`, `extractor/sevenz/mod.rs`, `sevenz.rs`, `app.rs`, `folder_formats.rs`, `UpdateMode`, `extractor/mod.rs`, `shellzip-sfx/src/main.rs`, `archiver/mod.rs`, `pathbuf`, `metadata.rs`?**
-  _High betweenness centrality (0.098) - this node is a cross-community bridge._
+- **Why does `Error` connect `Error` to `worker.rs`, `ops.rs`, `policy.rs`, `src/sfx.rs`, `Password`, `stream.rs`, `shellzip-sfx/src/main.rs`, `path`, `setup.rs`, `archiver/zip.rs`, `Format`, `src/entry.rs`, `extractor/tar.rs`, `UpdateMode`, `extract.rs`, `src/cli.rs`, `xtask/src/main.rs`, `EntryKind`, `CompressOpts`, `archiver/tar.rs`, `prompt.rs`, `extractor/zip.rs`, `EntryMeta`, `milestone3.rs`, `Password`, `write`, `app.rs`, `folder_formats.rs`, `Password`, `add.rs`, `sevenz/options.rs`?**
+  _High betweenness centrality (0.096) - this node is a cross-community bridge._
 - **What connects `shellzip-cli`, `Add`, `Update` to the rest of the system?**
-  _211 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _210 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `worker.rs` be split into smaller, more focused modules?**
   _Cohesion score 0.07692307692307693 - nodes in this community are weakly interconnected._
-- **Why does `Password` connect `Password` to `ops.rs`, `src/sfx.rs`, `Password`, `setup.rs`, `ShellZipApp`, `src/entry.rs`, `extractor/tar.rs`, `UpdateMode`, `src/cli.rs`, `src/options.rs`, `.on_menu`, `extractor/zip.rs`, `Entry`, `SetupState`, `sevenz/entry.rs`, `extractor/sevenz/mod.rs`, `.retry_with_password`, `app.rs`, `ProgressSink`, `extractor/mod.rs`, `shellzip-sfx/src/main.rs`, `run`, `copy_sevenz_index`?**
-  _High betweenness centrality (0.057) - this node is a cross-community bridge._
-- **Should `ops.rs` be split into smaller, more focused modules?**
-  _Cohesion score 0.1206896551724138 - nodes in this community are weakly interconnected._
-- **Why does `CompressOpts` connect `ProgressSink` to `ops.rs`, `src/sfx.rs`, `stream.rs`, `path`, `archiver/zip.rs`, `round_trip.rs`, `Error`, `src/cli.rs`, `CompressOpts`, `archiver/tar.rs`, `src/options.rs`, `settings.rs`, `milestone2.rs`, `EntryMeta`, `add_dialog.rs`, `sevenz.rs`, `folder_formats.rs`, `UpdateMode`, `archiver/mod.rs`, `Password`, `stream_one`?**
-  _High betweenness centrality (0.052) - this node is a cross-community bridge._
+- **Why does `Password` connect `Password` to `ops.rs`, `src/sfx.rs`, `Password`, `Password`, `shellzip-sfx/src/main.rs`, `setup.rs`, `.retry_with_password`, `ShellZipApp`, `CompressOpts`, `.on_menu`, `app.rs`, `src/entry.rs`, `UpdateMode`, `extractor/zip.rs`, `ExtractOpts`, `src/cli.rs`, `run`, `SetupState`?**
+  _High betweenness centrality (0.075) - this node is a cross-community bridge._
+- **Should `policy.rs` be split into smaller, more focused modules?**
+  _Cohesion score 0.13968253968253969 - nodes in this community are weakly interconnected._
+- **Why does `ShellZipApp` connect `ShellZipApp` to `worker.rs`, `add_dialog.rs`, `extract_dialog.rs`, `settings.rs`, `.retry_with_password`, `shell_icons/mod.rs`, `.on_menu`, `jumps`, `app.rs`, `tree.rs`, `Password`, `Explorer`, `.go_up`, `theme.rs`, `OpKind`?**
+  _High betweenness centrality (0.058) - this node is a cross-community bridge._
 - **Should `src/sfx.rs` be split into smaller, more focused modules?**
-  _Cohesion score 0.053998632946001365 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06610259122157588 - nodes in this community are weakly interconnected._

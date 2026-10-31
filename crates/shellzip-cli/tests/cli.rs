@@ -784,3 +784,39 @@ fn add_sfx_writes_a_listable_package() {
         .success()
         .stdout(contains("note.txt"));
 }
+
+#[test]
+fn max_size_stops_extract_and_test() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("big.txt");
+    fs::write(&src, vec![1u8; 32]).unwrap();
+    let archive = tmp.path().join("big.zip");
+    szip()
+        .args([
+            "a",
+            "-m",
+            "0",
+            archive.to_str().unwrap(),
+            src.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let out = tmp.path().join("out");
+    szip()
+        .args([
+            "x",
+            "--max-size",
+            "4",
+            "-o",
+            out.to_str().unwrap(),
+            archive.to_str().unwrap(),
+        ])
+        .assert()
+        .code(7)
+        .stderr(contains("refusing"));
+    szip()
+        .args(["t", "--max-size", "4", archive.to_str().unwrap()])
+        .assert()
+        .code(7)
+        .stderr(contains("refusing"));
+}

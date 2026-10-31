@@ -20,7 +20,7 @@ pub trait ProgressSink: Send + Sync {
     ///
     /// Called from the archive thread only. The default returns at once.
     /// A paused RAR entry still finishes its current staged copy, then waits
-    /// on the next [`ensure_running`] check.
+    /// on the next `ensure_running` check.
     fn wait_if_paused(&self) {}
 }
 

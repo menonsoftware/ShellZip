@@ -37,7 +37,7 @@ endif
 	release-cli release-gui release-sfx \
 	run run-release gui gui-release explore \
 	test test-cli test-core test-sfx build-sfx \
-	check clippy lint fmt fmt-check doc \
+	check clippy lint fmt fmt-check doc deny \
 	clean ci install install-gui bench help
 
 all: build
@@ -121,7 +121,10 @@ clean:
 	$(CARGO) clean
 
 # Same steps as .github/workflows/ci.yml
-ci: fmt-check clippy test
+deny:
+	$(CARGO) deny check
+
+ci: fmt-check clippy test deny
 	$(CARGO) clippy -p $(PKG_CORE) --no-default-features --features sevenz --all-targets -- -D warnings
 
 install:
@@ -155,7 +158,8 @@ help:
 	@echo   make lint             fmt-check + clippy
 	@echo   make fmt              rustfmt
 	@echo   make doc              rustdoc and open it
-	@echo   make ci               fmt-check + clippy + test
+	@echo   make deny             cargo deny check
+	@echo   make ci               fmt-check + clippy + test + deny
 	@echo   make install          cargo install szip
 	@echo   make install-gui      cargo install shellzip
 	@echo   make bench            Release ZIP timings into docs/BENCH.md

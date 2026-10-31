@@ -438,9 +438,10 @@ pub fn test(
     path: &Path,
     password: Option<&crate::crypto::Password>,
     progress: &dyn ProgressSink,
+    limits: &crate::options::ReadLimits,
 ) -> Result<TestReport, Error> {
     let mut opened = Opened::open_with(path, password.cloned())?;
-    opened.test(progress, password)
+    opened.test(progress, password, limits)
 }
 
 /// Open an archive for indexed reads.

@@ -1,10 +1,10 @@
 //! Failures and the process exit codes they map to.
 //!
 //! Codes follow the RAR convention: `0` success, `1` warning, `2` fatal,
-//! `3` bad checksum, `5` write, `6` open, `7` user, `10` no files,
-//! `11` password, `255` interrupted. A 7z error from `zesven` uses the same
-//! codes: a wrong or missing password is 11, a CRC mismatch is 3, and
-//! cancellation is 255.
+//! `3` bad checksum, `5` write, `6` open, `7` user, `8` memory, `9` create,
+//! `10` no files, `11` password, `255` interrupted. A 7z error from `zesven`
+//! uses the same codes: a wrong or missing password is 11, a CRC mismatch is 3,
+//! a memory limit is 8, and cancellation is 255.
 
 use std::io;
 use std::path::PathBuf;
@@ -53,6 +53,9 @@ pub enum Error {
     /// Caller passed an invalid combination of options.
     #[error("{0}")]
     Usage(String),
+    /// The process ran out of memory or a decoder hit its memory budget.
+    #[error("{0}")]
+    Memory(String),
     /// The operation was cancelled.
     #[error("interrupted")]
     Interrupted,
@@ -63,6 +66,12 @@ impl Error {
     pub fn io(context: impl Into<String>, source: io::Error) -> Self {
         if source.kind() == io::ErrorKind::Interrupted {
             return Self::Interrupted;
+        }
+        if source.kind() == io::ErrorKind::OutOfMemory {
+            return Self::Memory(context.into());
+        }
+        if source.kind() == io::ErrorKind::QuotaExceeded {
+            return Self::Usage(source.to_string());
         }
         if source.kind() == io::ErrorKind::InvalidData {
             let text = source.to_string().to_ascii_lowercase();
@@ -81,18 +90,28 @@ impl Error {
     /// RAR-compatible process exit code for this error.
     pub fn exit_code(&self) -> i32 {
         match self {
-            Self::Io { source, .. } => match source.kind() {
-                io::ErrorKind::NotFound => 6,
-                io::ErrorKind::PermissionDenied
-                | io::ErrorKind::StorageFull
-                | io::ErrorKind::WriteZero => 5,
-                io::ErrorKind::Interrupted => 255,
-                _ => 2,
-            },
+            Self::Io { context, source } => {
+                if source.kind() == io::ErrorKind::Interrupted {
+                    return 255;
+                }
+                // WinRAR uses 9 when the output file cannot be created, and 5
+                // when a later write fails.
+                if context.starts_with("create ") {
+                    return 9;
+                }
+                match source.kind() {
+                    io::ErrorKind::NotFound => 6,
+                    io::ErrorKind::PermissionDenied
+                    | io::ErrorKind::StorageFull
+                    | io::ErrorKind::WriteZero => 5,
+                    _ => 2,
+                }
+            }
             Self::BadChecksum { .. } => 3,
             Self::NoFiles => 10,
             Self::Encrypted(_) | Self::BadPassword => 11,
             Self::Usage(_) | Self::UnsafePath(_) => 7,
+            Self::Memory(_) => 8,
             Self::Interrupted => 255,
             Self::Unsupported { .. } | Self::Archive(_) => 2,
         }
@@ -152,6 +171,7 @@ pub(crate) fn map_zesven(err: zesven::Error, had_password: bool) -> Error {
             entry: entry_name.unwrap_or_else(|| "7z entry".to_string()),
         },
         zesven::Error::Cancelled => Error::Interrupted,
+        zesven::Error::ResourceLimitExceeded(detail) => Error::Memory(detail),
         zesven::Error::UnsupportedMethod { method_id } => Error::Unsupported {
             format: "7Z".to_string(),
             detail: format!("compression method {method_id:#x} is not in this build"),
@@ -161,8 +181,7 @@ pub(crate) fn map_zesven(err: zesven::Error, had_password: bool) -> Error {
             detail: feature.to_string(),
         },
         zesven::Error::PathTraversal { path, .. } => Error::UnsafePath(path),
-        zesven::Error::ResourceLimitExceeded(detail)
-        | zesven::Error::InvalidFormat(detail)
+        zesven::Error::InvalidFormat(detail)
         | zesven::Error::CorruptHeader { reason: detail, .. } => Error::Archive(detail),
         other => Error::Archive(other.to_string()),
     }
@@ -178,5 +197,41 @@ impl From<walkdir::Error> for Error {
             Some(source) => Self::io(path, source),
             None => Self::Archive(format!("failed to walk {path}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_codes_match_the_rar_table() {
+        let create = Error::io(
+            "create out.txt",
+            io::Error::new(io::ErrorKind::PermissionDenied, "denied"),
+        );
+        assert_eq!(create.exit_code(), 9);
+        let write = Error::io(
+            "flush out.txt",
+            io::Error::new(io::ErrorKind::WriteZero, "full"),
+        );
+        assert_eq!(write.exit_code(), 5);
+        let missing = Error::io(
+            "open missing.zip",
+            io::Error::new(io::ErrorKind::NotFound, "gone"),
+        );
+        assert_eq!(missing.exit_code(), 6);
+        assert_eq!(Error::Memory("decoder budget".to_string()).exit_code(), 8);
+        assert_eq!(Error::NoFiles.exit_code(), 10);
+        assert_eq!(Error::BadPassword.exit_code(), 11);
+        assert_eq!(Error::Interrupted.exit_code(), 255);
+        assert_eq!(
+            Error::BadChecksum {
+                entry: "a".to_string()
+            }
+            .exit_code(),
+            3
+        );
+        assert_eq!(Error::Usage("no".to_string()).exit_code(), 7);
     }
 }

@@ -1,7 +1,7 @@
 //! Overwrite policy and atomic file replacement.
 
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::error::Error;
@@ -15,22 +15,51 @@ use crate::options::{ConflictChoice, ConflictDecider, ExtractOpts, ExtractUpdate
 pub struct Budget {
     written: u64,
     max: u64,
+    max_ratio: u64,
+    /// Packed size of the whole archive, when the file length is known.
+    archive_packed: Option<u64>,
 }
 
 impl Budget {
-    /// Budget that allows `max` uncompressed bytes.
-    pub fn new(max: u64) -> Self {
-        Self { written: 0, max }
+    /// Budget for `path`, using its packed length as the ratio baseline.
+    ///
+    /// A self-extracting stub is not counted: the trailer records the payload length.
+    pub fn for_archive(path: &Path, max_bytes: u64, max_ratio: u64) -> Self {
+        let archive_packed = archive_packed_len(path);
+        Self {
+            written: 0,
+            max: max_bytes,
+            max_ratio,
+            archive_packed,
+        }
     }
 
-    /// Reject a member whose declared size cannot fit.
-    pub fn reserve(&self, declared: u64) -> Result<(), Error> {
+    /// Reject a member whose declared size cannot fit in the byte cap or the ratio cap.
+    ///
+    /// `member_packed` is that member's compressed size. `None` skips the
+    /// per-member ratio and still checks the archive-wide ratio.
+    pub fn reserve(&self, declared: u64, member_packed: Option<u64>) -> Result<(), Error> {
         if declared > self.max.saturating_sub(self.written) {
             return Err(Error::Usage(format!(
                 "refusing to extract {declared} bytes; {remaining} bytes remain of the {max} byte cap",
                 remaining = self.max.saturating_sub(self.written),
                 max = self.max
             )));
+        }
+        if self.max_ratio > 0 {
+            if let Some(packed) = member_packed {
+                let allowed = packed.saturating_mul(self.max_ratio);
+                if declared > allowed {
+                    return Err(ratio_error(declared, packed, self.max_ratio));
+                }
+            }
+            if let Some(packed) = self.archive_packed.filter(|n| *n > 0) {
+                let used = self.written.saturating_add(declared);
+                let allowed = packed.saturating_mul(self.max_ratio);
+                if used > allowed {
+                    return Err(ratio_error(used, packed, self.max_ratio));
+                }
+            }
         }
         Ok(())
     }
@@ -46,6 +75,122 @@ impl Budget {
         }
         self.written = next;
         Ok(())
+    }
+
+    /// Error for a reader that still has bytes after [`Self::room`] hit zero.
+    fn blocked(&self) -> Error {
+        if self.max_ratio > 0
+            && let Some(packed) = self.archive_packed.filter(|n| *n > 0)
+        {
+            let allowed = packed.saturating_mul(self.max_ratio);
+            if self.written >= allowed && self.written < self.max {
+                return ratio_error(self.written, packed, self.max_ratio);
+            }
+        }
+        Error::Usage(format!("refusing to extract more than {} bytes", self.max))
+    }
+
+    /// Uncompressed bytes still allowed by the tighter of the two caps.
+    fn room(&self) -> u64 {
+        let by_bytes = self.max.saturating_sub(self.written);
+        if self.max_ratio == 0 {
+            return by_bytes;
+        }
+        let Some(packed) = self.archive_packed.filter(|n| *n > 0) else {
+            return by_bytes;
+        };
+        let by_ratio = packed
+            .saturating_mul(self.max_ratio)
+            .saturating_sub(self.written);
+        by_bytes.min(by_ratio)
+    }
+}
+
+fn ratio_error(uncompressed: u64, packed: u64, max_ratio: u64) -> Error {
+    Error::Usage(format!(
+        "refusing {uncompressed} uncompressed bytes from {packed} packed bytes; ratio cap is {max_ratio}:1"
+    ))
+}
+
+fn archive_packed_len(path: &Path) -> Option<u64> {
+    if let Ok(Some(trailer)) = crate::sfx::locate(path) {
+        return Some(trailer.archive_len);
+    }
+    std::fs::metadata(path).ok().map(|meta| meta.len())
+}
+
+/// Copy `src` to `dst`, stopping when `budget` is exhausted and more bytes remain.
+pub fn copy_limited(
+    src: &mut dyn Read,
+    dst: &mut dyn Write,
+    budget: &mut Budget,
+    context: &str,
+) -> Result<u64, Error> {
+    let mut buf = vec![0u8; 256 * 1024];
+    let mut total = 0u64;
+    loop {
+        let room = budget.room();
+        if room == 0 {
+            let mut probe = [0u8; 1];
+            let extra = src
+                .read(&mut probe)
+                .map_err(|err| Error::io(context.to_string(), err))?;
+            if extra == 0 {
+                break;
+            }
+            return Err(budget.blocked());
+        }
+        let max = usize::try_from(room).unwrap_or(usize::MAX).min(buf.len());
+        let n = src
+            .read(&mut buf[..max])
+            .map_err(|err| Error::io(context.to_string(), err))?;
+        if n == 0 {
+            break;
+        }
+        dst.write_all(&buf[..n])
+            .map_err(|err| Error::io(context.to_string(), err))?;
+        let bytes = u64::try_from(n).map_err(|_| {
+            Error::Archive(format!("read size does not fit in u64 while {context}"))
+        })?;
+        budget.charge(bytes)?;
+        total = total.saturating_add(bytes);
+    }
+    Ok(total)
+}
+
+/// `Write` adapter that charges `budget` and stops at the cap.
+#[cfg(feature = "sevenz")]
+pub struct BudgetWriter<'a, W> {
+    /// Destination for accepted bytes.
+    pub inner: W,
+    /// Running extract cap.
+    pub budget: &'a mut Budget,
+}
+
+#[cfg(feature = "sevenz")]
+impl<W: Write> Write for BudgetWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let room = self.budget.room();
+        if room == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::QuotaExceeded,
+                self.budget.blocked().to_string(),
+            ));
+        }
+        let max = usize::try_from(room).unwrap_or(usize::MAX).min(buf.len());
+        let n = self.inner.write(&buf[..max])?;
+        let bytes = u64::try_from(n).unwrap_or(u64::MAX);
+        self.budget.charge(bytes).map_err(|err| {
+            std::io::Error::new(std::io::ErrorKind::QuotaExceeded, err.to_string())
+        })?;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
     }
 }
 
@@ -302,6 +447,21 @@ mod tests {
     use filetime::{FileTime, set_file_mtime};
 
     use super::*;
+
+    #[test]
+    fn ratio_cap_rejects_a_member_that_expands_too_far() {
+        let budget = Budget::for_archive(Path::new("missing-budget-archive"), 1_000_000, 10);
+        let err = budget.reserve(100, Some(5)).unwrap_err();
+        assert!(err.to_string().contains("ratio cap"), "{err}");
+        budget.reserve(50, Some(5)).unwrap();
+        budget.reserve(1_000, None).unwrap();
+    }
+
+    #[test]
+    fn zero_ratio_disables_the_check() {
+        let budget = Budget::for_archive(Path::new("missing-budget-archive"), 1_000, 0);
+        budget.reserve(500, Some(1)).unwrap();
+    }
 
     struct Remove(PathBuf);
 

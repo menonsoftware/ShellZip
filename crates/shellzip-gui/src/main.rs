@@ -4,9 +4,11 @@
 
 #![cfg_attr(all(not(test), target_os = "windows"), windows_subsystem = "windows")]
 
+mod about;
 mod add_dialog;
 mod app;
 mod chrome;
+mod credits;
 mod explorer;
 mod extract_dialog;
 mod icons;
