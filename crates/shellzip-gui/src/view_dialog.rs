@@ -14,6 +14,12 @@ use crate::theme;
 /// Preview stops after this many bytes.
 pub(crate) const PREVIEW_CAP: usize = 1024 * 1024;
 
+/// Inner width of the viewer. The text box stays this wide.
+const VIEW_WIDTH: f32 = 640.0;
+
+/// Height of the read-only text box.
+const VIEW_TEXT_HEIGHT: f32 = 360.0;
+
 /// Bytes the viewer can show.
 pub(crate) struct PreviewData {
     /// Leading bytes, never longer than the cap.
@@ -65,18 +71,22 @@ impl ViewDialog {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
+            .default_width(VIEW_WIDTH)
+            .min_width(VIEW_WIDTH)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.set_min_width(480.0);
+                ui.set_min_width(VIEW_WIDTH);
                 ui.set_min_height(220.0);
-                match &self.body {
+                match &mut self.body {
                     PreviewBody::Text(text) => {
-                        egui::ScrollArea::vertical()
-                            .id_salt("shellzip-view-text")
-                            .max_height(360.0)
-                            .show(ui, |ui| {
-                                ui.label(egui::RichText::new(text).monospace());
-                            });
+                        ui.add_sized(
+                            [ui.available_width(), VIEW_TEXT_HEIGHT],
+                            egui::TextEdit::multiline(text)
+                                .desired_width(f32::INFINITY)
+                                .font(egui::TextStyle::Monospace)
+                                .interactive(false)
+                                .id_salt("shellzip-view-text"),
+                        );
                     }
                     PreviewBody::Binary => {
                         ui.label(format!("Size: {}", chrome::format_grouped(self.size)));

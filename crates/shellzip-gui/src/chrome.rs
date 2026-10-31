@@ -2,14 +2,15 @@
 //!
 //! The commands are the ones ShellZip already performs. Compression is chosen
 //! in the add dialog. Extract options are chosen in the extract dialog. The
-//! toolbar is Open, Add, Extract To, Test, Delete, Info, and About.
+//! toolbar is Open, Add, Extract To, Test, Delete, Info, and About, painted
+//! with the brand glyphs in `assets/toolbar/`.
 
 use std::path::Path;
 
 use egui::{Align2, Color32, FontId, Rect, Sense, Vec2};
 
 use crate::explorer::{FolderTree, Jump, JumpTarget, TreeFocus, TreeRow};
-use crate::icons::{self, Icon};
+use crate::icons::{self, Icon, ToolIcon};
 use crate::shell_icons::{self, IconCache, IconKey};
 use crate::theme::{self, Preference};
 use shellzip_core::{SevenZMethod, ZipMethod};
@@ -65,6 +66,8 @@ pub enum MenuCommand {
     Theme(Preference),
     /// Open a path from the File menu recent list.
     OpenRecent(usize),
+    /// Forget remembered archives and destinations.
+    ClearHistory,
 }
 
 /// Toolbar buttons, in the same order as the reference layout.
@@ -136,6 +139,16 @@ pub fn menu_bar(
                 }
             }
             ui.separator();
+            ui.add_enabled_ui(!opened.is_empty(), |ui| {
+                if ui
+                    .button("Clear history")
+                    .on_hover_text("Forget recently opened archives and extract destinations")
+                    .clicked()
+                {
+                    command = Some(MenuCommand::ClearHistory);
+                }
+            });
+            ui.separator();
             if ui.button("Exit").clicked() {
                 command = Some(MenuCommand::Exit);
             }
@@ -191,7 +204,7 @@ pub fn menu_bar(
     command
 }
 
-/// Large icons with captions, using the Lucide set already shipped with the window.
+/// Large icons with captions, using the brand toolbar glyphs.
 ///
 /// `into_archive` changes the Add tip when a ZIP or 7z is open.
 pub fn toolbar(
@@ -203,7 +216,6 @@ pub fn toolbar(
     into_archive: bool,
 ) -> Option<ToolCommand> {
     let mut command = None;
-    let colors = theme::palette(ui.ctx());
     let add_tip = if into_archive {
         "Add files to this archive"
     } else {
@@ -213,28 +225,19 @@ pub fn toolbar(
         ui.spacing_mut().item_spacing.x = 2.0;
         if tool(
             ui,
-            Icon::FolderOpen,
-            colors.open,
+            ToolIcon::Open,
             "Open",
             "Open an archive",
             !operation && !locked,
         ) {
             command = Some(ToolCommand::Open);
         }
-        if tool(
-            ui,
-            Icon::Plus,
-            colors.add,
-            "Add",
-            add_tip,
-            !operation && !locked,
-        ) {
+        if tool(ui, ToolIcon::Add, "Add", add_tip, !operation && !locked) {
             command = Some(ToolCommand::Add);
         }
         if tool(
             ui,
-            Icon::FolderDown,
-            colors.extract,
+            ToolIcon::Extract,
             "Extract To",
             "Extract into a folder",
             !operation && !locked && archive_ready,
@@ -243,8 +246,7 @@ pub fn toolbar(
         }
         if tool(
             ui,
-            Icon::CircleCheck,
-            colors.test,
+            ToolIcon::Test,
             "Test",
             "Test the archive",
             !operation && !locked && archive_ready,
@@ -253,8 +255,7 @@ pub fn toolbar(
         }
         if tool(
             ui,
-            Icon::Trash,
-            colors.danger,
+            ToolIcon::Delete,
             "Delete",
             "Delete selected ZIP members",
             can_delete,
@@ -263,22 +264,14 @@ pub fn toolbar(
         }
         if tool(
             ui,
-            Icon::Info,
-            colors.open,
+            ToolIcon::Info,
             "Info",
             "Details of this folder or archive",
             !locked,
         ) {
             command = Some(ToolCommand::Info);
         }
-        if tool(
-            ui,
-            Icon::CircleHelp,
-            colors.ink,
-            "About",
-            "About ShellZip",
-            !locked,
-        ) {
+        if tool(ui, ToolIcon::About, "About", "About ShellZip", !locked) {
             command = Some(ToolCommand::About);
         }
     });
@@ -340,19 +333,9 @@ pub fn address_bar(
     let mut event = None;
     let bar = global_rect(ui);
     ui.horizontal(|ui| {
-        ui.add_enabled_ui(can_up, |ui| {
-            if icon_button(
-                ui,
-                Icon::ArrowUp,
-                theme::palette(ui.ctx()).ink,
-                "Up one level",
-                true,
-            )
-            .clicked()
-            {
-                event = Some(AddressEvent::Up);
-            }
-        });
+        if tool_icon_button(ui, ToolIcon::Up, "Up one level", can_up).clicked() {
+            event = Some(AddressEvent::Up);
+        }
         let spacing = ui.spacing().item_spacing.x;
         let reserved = WELL_SIZE * 2.0 + spacing * 2.0;
         let width = (ui.available_width() - reserved).max(48.0);
@@ -363,7 +346,7 @@ pub fn address_bar(
         if let Some(jump) = parent_menu(ui, tree, focus, cache, bar) {
             event = Some(jump);
         }
-        if well_button(ui, Icon::Refresh, "Refresh", can_refresh).clicked() {
+        if well_tool_button(ui, ToolIcon::Refresh, "Refresh", can_refresh).clicked() {
             event = Some(AddressEvent::Refresh);
         }
     });
@@ -509,15 +492,13 @@ pub fn confirm_delete(ctx: &egui::Context, names: &[String]) -> DeleteChoice {
             ui.add_space(8.0);
             ui.separator();
             ui.horizontal(|ui| {
-                if labeled_button(ui, Icon::Trash, theme::palette(ui.ctx()).danger, "Delete")
-                    .clicked()
-                {
-                    choice = DeleteChoice::Delete;
-                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if labeled_button(ui, Icon::X, theme::palette(ui.ctx()).ink, "Cancel").clicked()
-                    {
+                    let colors = theme::palette(ui.ctx());
+                    if labeled_button(ui, Icon::X, colors.ink, "Cancel").clicked() {
                         choice = DeleteChoice::Cancel;
+                    }
+                    if labeled_button(ui, Icon::Trash, colors.danger, "Delete").clicked() {
+                        choice = DeleteChoice::Delete;
                     }
                 });
             });
@@ -549,14 +530,7 @@ pub fn bar_frame(ctx: &egui::Context, x: i8, y: i8) -> egui::Frame {
         .inner_margin(egui::Margin::symmetric(x, y))
 }
 
-fn tool(
-    ui: &mut egui::Ui,
-    icon: Icon,
-    tint: Color32,
-    label: &str,
-    tip: &str,
-    enabled: bool,
-) -> bool {
+fn tool(ui: &mut egui::Ui, icon: ToolIcon, label: &str, tip: &str, enabled: bool) -> bool {
     let sense = if enabled {
         Sense::click()
     } else {
@@ -567,16 +541,11 @@ fn tool(
     if enabled && response.hovered() {
         ui.painter().rect_filled(rect, 3.0, colors.hover);
     }
-    let tint = if enabled {
-        tint
-    } else {
-        tint.gamma_multiply(0.35)
-    };
     let icon_rect = Rect::from_center_size(
         rect.center_top() + egui::vec2(0.0, 20.0),
         Vec2::splat(icons::SIZE_TOOL),
     );
-    icons::paint(ui, icon, tint, icon_rect);
+    icons::paint_tool(ui, icon, enabled, icon_rect);
     let text = if enabled { colors.ink } else { colors.muted };
     ui.painter().text(
         rect.center_bottom() + egui::vec2(0.0, -5.0),
@@ -644,6 +613,22 @@ pub(crate) fn icon_button(
     let color = if enabled { tint } else { colors.muted };
     let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(icons::SIZE_ROW));
     icons::paint(ui, icon, color, icon_rect);
+    response.on_hover_text(tip)
+}
+
+fn tool_icon_button(ui: &mut egui::Ui, icon: ToolIcon, tip: &str, enabled: bool) -> egui::Response {
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let colors = theme::palette(ui.ctx());
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), sense);
+    if enabled && response.hovered() {
+        ui.painter().rect_filled(rect, 2.0, colors.hover);
+    }
+    let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(icons::SIZE_ROW));
+    icons::paint_tool(ui, icon, enabled, icon_rect);
     response.on_hover_text(tip)
 }
 
@@ -828,6 +813,31 @@ pub(crate) fn well_button(
     let tint = if enabled { colors.ink } else { colors.muted };
     let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(14.0));
     icons::paint(ui, icon, tint, icon_rect);
+    response.on_hover_text(tip)
+}
+
+fn well_tool_button(ui: &mut egui::Ui, icon: ToolIcon, tip: &str, enabled: bool) -> egui::Response {
+    let colors = theme::palette(ui.ctx());
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(WELL_SIZE), sense);
+    let fill = if enabled && response.hovered() {
+        colors.hover
+    } else {
+        colors.field
+    };
+    ui.painter().rect_filled(rect, 2.0, fill);
+    ui.painter().rect_stroke(
+        rect,
+        2.0,
+        egui::Stroke::new(1.0_f32, colors.line),
+        egui::StrokeKind::Inside,
+    );
+    let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(14.0));
+    icons::paint_tool(ui, icon, enabled, icon_rect);
     response.on_hover_text(tip)
 }
 

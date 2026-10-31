@@ -14,6 +14,9 @@ use crate::icons::Icon;
 use crate::settings::{ReportFormat, ReportSettings, ReportSort};
 use crate::theme;
 
+/// Inner width of the generate-report window. The path field fills this row.
+const DIALOG_WIDTH: f32 = 560.0;
+
 /// One row in a report.
 #[derive(Clone)]
 pub(crate) struct ReportRow {
@@ -105,10 +108,11 @@ impl ReportDialog {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .min_width(520.0)
+            .default_width(DIALOG_WIDTH)
+            .min_width(DIALOG_WIDTH)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.set_min_width(520.0);
+                ui.set_min_width(DIALOG_WIDTH);
                 ui.label("Format");
                 ui.horizontal(|ui| {
                     ui.radio_value(&mut self.settings.format, ReportFormat::Html, "HTML");
@@ -129,8 +133,9 @@ impl ReportDialog {
                 ui.add_space(6.0);
                 ui.label("Report path");
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    let width = (ui.available_width() - 88.0).max(48.0);
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    let reserved = chrome::WELL_SIZE + ui.spacing().item_spacing.x;
+                    let width = (ui.available_width() - reserved).max(48.0);
                     chrome::path_field(
                         ui,
                         &mut self.path,
@@ -138,7 +143,7 @@ impl ReportDialog {
                         "Report file",
                         "shellzip-report-path",
                     );
-                    if ui.button("Browse").clicked()
+                    if chrome::well_button(ui, Icon::FolderSearch, "Browse", true).clicked()
                         && let Some(path) = browse_report(&self.path, self.settings.format)
                     {
                         self.path = path.display().to_string();
