@@ -11,7 +11,8 @@ use shellzip_core::{
     SevenZMethod, SevenZOpts, SfxPayload, UpdateMode, ZipMethod, creatable_formats,
 };
 
-use crate::chrome::PackSettings;
+use crate::chrome::{self, PackSettings};
+use crate::icons::Icon;
 use crate::theme;
 
 /// Which page of the add dialog is visible.
@@ -78,6 +79,19 @@ pub struct AddDialog {
     background: bool,
     help: bool,
     notice: Option<String>,
+    /// Open ZIP or 7z this dialog started on. Format, SFX, and the password
+    /// field stay locked while the name field still matches it.
+    bound: Option<BoundArchive>,
+}
+
+/// Archive the add dialog was opened against.
+struct BoundArchive {
+    /// Path text placed in the name field.
+    name: String,
+    /// Password that opened a 7z. Empty when that archive has none.
+    ///
+    /// Not shown in the dialog. A ZIP update does not use it.
+    secret: String,
 }
 
 impl AddDialog {
@@ -102,7 +116,35 @@ impl AddDialog {
             background: options.background,
             help: false,
             notice: None,
+            bound: None,
         }
+    }
+
+    /// Dialog that adds `inputs` to an existing ZIP or 7z at `archive`.
+    ///
+    /// Format, SFX, and the password field stay locked while the name field is
+    /// still that path. `secret` is the password that opened a 7z. It is not
+    /// shown, and it is attached to the request only while the name is unchanged.
+    pub fn prepare_into(
+        archive: &Path,
+        secret: Option<&str>,
+        inputs: Vec<PathBuf>,
+        options: &PackSettings,
+    ) -> Self {
+        let parent = archive
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let mut dialog = Self::prepare(parent, inputs, options);
+        dialog.name = archive.display().to_string();
+        adopt_extension(&mut dialog);
+        dialog.sfx = false;
+        dialog.password.clear();
+        dialog.bound = Some(BoundArchive {
+            name: dialog.name.clone(),
+            secret: secret.unwrap_or("").to_string(),
+        });
+        dialog
     }
 }
 
@@ -131,17 +173,20 @@ pub fn show(ctx: &egui::Context, dialog: &mut AddDialog) -> Option<AddAction> {
             ui.add_space(8.0);
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button("OK").clicked()
-                    && let Some(request) = dialog.request()
-                {
-                    action = Some(AddAction::Submit(request));
-                }
-                if ui.button("Cancel").clicked() {
-                    action = Some(AddAction::Close);
-                }
-                if ui.button("Help").clicked() {
-                    dialog.help = true;
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let colors = theme::palette(ui.ctx());
+                    if chrome::labeled_button(ui, Icon::CircleHelp, colors.open, "Help").clicked() {
+                        dialog.help = true;
+                    }
+                    if chrome::labeled_button(ui, Icon::X, colors.danger, "Cancel").clicked() {
+                        action = Some(AddAction::Close);
+                    }
+                    if chrome::labeled_button(ui, Icon::Check, colors.ok, "OK").clicked()
+                        && let Some(request) = dialog.request()
+                    {
+                        action = Some(AddAction::Submit(request));
+                    }
+                });
             });
         });
     help_window(ctx, dialog);
@@ -210,9 +255,15 @@ pub fn ask_overwrite(ctx: &egui::Context, name: &str, detail: &str) -> Option<As
                 if ui.button("Rename").clicked() {
                     reply = Some(AskReply::Rename);
                 }
-                if ui.button("Cancel").clicked() {
-                    reply = Some(AskReply::Cancel);
-                }
+            });
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if chrome::labeled_button(ui, Icon::X, theme::palette(ui.ctx()).ink, "Cancel")
+                        .clicked()
+                    {
+                        reply = Some(AskReply::Cancel);
+                    }
+                });
             });
         });
     if !open { Some(AskReply::Cancel) } else { reply }
@@ -249,6 +300,29 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut AddDialog) {
             .desired_width(f32::INFINITY)
             .id_salt("shellzip-archive-name"),
     );
+    if dialog.still_bound() {
+        let muted = theme::palette(ui.ctx()).muted;
+        ui.label(egui::RichText::new("Files are added to this archive.").color(muted));
+        if dialog.kind() == DialogFormat::Zip {
+            ui.label(
+                egui::RichText::new(
+                    "Existing members are kept as they are. New files are stored without a password.",
+                )
+                .color(muted),
+            );
+        } else if dialog
+            .bound
+            .as_ref()
+            .is_some_and(|bound| !bound.secret.is_empty())
+        {
+            ui.label(
+                egui::RichText::new(
+                    "This archive stays encrypted with the password that opened it.",
+                )
+                .color(muted),
+            );
+        }
+    }
     ui.add_space(8.0);
     ui.label("Update mode");
     update_combo(ui, dialog);
@@ -257,7 +331,9 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut AddDialog) {
         ui.vertical(|ui| {
             ui.set_min_width(240.0);
             ui.label("Archive format");
-            format_combo(ui, dialog);
+            ui.add_enabled_ui(!dialog.still_bound(), |ui| {
+                format_combo(ui, dialog);
+            });
         });
         ui.vertical(|ui| {
             ui.label("Compression method");
@@ -268,10 +344,12 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut AddDialog) {
     method_row(ui, dialog);
     sevenz_options(ui, dialog);
     ui.add_space(8.0);
-    let mut sfx = dialog.sfx;
-    if ui.checkbox(&mut sfx, "Create SFX archive").changed() {
-        dialog.set_sfx(sfx);
-    }
+    ui.add_enabled_ui(!dialog.still_bound(), |ui| {
+        let mut sfx = dialog.sfx;
+        if ui.checkbox(&mut sfx, "Create SFX archive").changed() {
+            dialog.set_sfx(sfx);
+        }
+    });
     ui.label(
         egui::RichText::new(
             "An SFX package is a ZIP or 7z archive wrapped in the ShellZip extractor. A password is requested when that package is opened.",
@@ -280,13 +358,13 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut AddDialog) {
     );
     ui.add_space(6.0);
     ui.label("Password");
-    let encrypted = dialog.stores_comment();
-    ui.add_enabled_ui(encrypted, |ui| {
+    let can_encrypt = dialog.stores_comment();
+    ui.add_enabled_ui(can_encrypt && !dialog.still_bound(), |ui| {
         ui.add(
             egui::TextEdit::singleline(&mut dialog.password)
                 .password(true)
                 .desired_width(f32::INFINITY)
-                .hint_text(if encrypted {
+                .hint_text(if can_encrypt {
                     "Leave empty for no encryption"
                 } else {
                     "ZIP and 7z archives only"
@@ -452,7 +530,7 @@ fn sevenz_options(ui: &mut egui::Ui, dialog: &mut AddDialog) {
 }
 
 /// Which creatable container the dialog is aimed at.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DialogFormat {
     Zip,
     SevenZ,
@@ -473,6 +551,31 @@ impl AddDialog {
 
     fn stores_comment(&self) -> bool {
         matches!(self.kind(), DialogFormat::Zip | DialogFormat::SevenZ)
+    }
+
+    /// The name field is still the archive this dialog was opened against.
+    fn still_bound(&self) -> bool {
+        self.bound
+            .as_ref()
+            .is_some_and(|bound| self.name.trim() == bound.name)
+    }
+
+    /// Password sent with the request.
+    ///
+    /// A bound 7z contributes the password that opened it, and only while the
+    /// name is unchanged. Every other case uses the password field.
+    fn effective_password(&self) -> String {
+        if self.still_bound() {
+            if self.kind() == DialogFormat::SevenZ {
+                return self
+                    .bound
+                    .as_ref()
+                    .map(|bound| bound.secret.clone())
+                    .unwrap_or_default();
+            }
+            return String::new();
+        }
+        self.password.clone()
     }
 
     fn set_sfx(&mut self, sfx: bool) {
@@ -515,15 +618,16 @@ impl AddDialog {
             self.notice = Some("A ZIP comment is limited to 65535 bytes.".to_string());
             return None;
         }
-        if !self.password.is_empty() && !self.stores_comment() {
+        let password = self.effective_password();
+        if !password.is_empty() && !self.stores_comment() {
             self.notice = Some("Passwords encrypt ZIP and 7z archives.".to_string());
             return None;
         }
-        if self.encrypt_headers && self.kind() == DialogFormat::SevenZ && self.password.is_empty() {
+        if self.encrypt_headers && self.kind() == DialogFormat::SevenZ && password.is_empty() {
             self.notice = Some("Encrypting file names needs a password.".to_string());
             return None;
         }
-        if self.password.as_bytes().contains(&0) {
+        if password.as_bytes().contains(&0) {
             self.notice = Some("The password cannot contain a NUL byte.".to_string());
             return None;
         }
@@ -533,18 +637,15 @@ impl AddDialog {
         } else {
             None
         };
+        let sfx = self.sfx && !self.still_bound();
         Some(AddRequest {
             dest,
             inputs: self.inputs.clone(),
             level: self.level,
             method: self.method,
-            update: if self.sfx {
-                UpdateMode::Add
-            } else {
-                self.update
-            },
-            sfx: self.sfx,
-            password: self.password.clone(),
+            update: if sfx { UpdateMode::Add } else { self.update },
+            sfx,
+            password,
             sevenz: SevenZOpts {
                 method: self.sevenz_method,
                 solid: self.solid,
@@ -717,7 +818,53 @@ fn mode_help(mode: UpdateMode) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::with_extension;
+    use std::path::{Path, PathBuf};
+
+    use shellzip_core::{SevenZMethod, ZipMethod};
+
+    use super::{AddDialog, DialogFormat, with_extension};
+    use crate::chrome::PackSettings;
+
+    fn pack() -> PackSettings {
+        PackSettings {
+            level: 3,
+            method: ZipMethod::Deflate,
+            sevenz_method: SevenZMethod::Lzma2,
+            solid: true,
+            background: false,
+        }
+    }
+
+    #[test]
+    fn prepare_into_keeps_the_archive_and_hides_its_password() {
+        let archive = Path::new("work/notes.7z");
+        let mut dialog = AddDialog::prepare_into(
+            archive,
+            Some("szip-fixture"),
+            vec![PathBuf::from("extra.txt")],
+            &pack(),
+        );
+        assert_eq!(dialog.name, archive.display().to_string());
+        assert_eq!(dialog.kind(), DialogFormat::SevenZ);
+        assert!(!dialog.sfx);
+        assert!(dialog.password.is_empty());
+        let request = dialog.request().expect("bound request");
+        assert_eq!(request.password, "szip-fixture");
+        assert!(!request.sfx);
+        assert_eq!(request.dest, PathBuf::from(archive.display().to_string()));
+
+        dialog.name = "work/other.zip".to_string();
+        let moved = dialog.request().expect("renamed request");
+        assert!(
+            moved.password.is_empty(),
+            "a new name must not keep the 7z password"
+        );
+        assert_eq!(moved.dest, PathBuf::from("work/other.zip"));
+
+        dialog.name = archive.display().to_string();
+        let restored = dialog.request().expect("restored request");
+        assert_eq!(restored.password, "szip-fixture");
+    }
 
     #[test]
     fn extension_change_keeps_the_directory_and_stem() {

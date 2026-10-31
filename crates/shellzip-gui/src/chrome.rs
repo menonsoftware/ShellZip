@@ -2,7 +2,9 @@
 //!
 //! The commands are the ones ShellZip already performs. Compression is chosen
 //! in the add dialog. Extract options are chosen in the extract dialog. The
-//! toolbar is Add, Extract To, Test, Delete, and Info.
+//! toolbar is Add, Extract To, Test, Delete, Info, and About.
+
+use std::path::Path;
 
 use egui::{Align2, Color32, FontId, Rect, Sense, Vec2};
 
@@ -11,6 +13,9 @@ use crate::icons::{self, Icon};
 use crate::shell_icons::{self, IconCache, IconKey};
 use crate::theme::{self, Preference};
 use shellzip_core::{SevenZMethod, ZipMethod};
+
+/// Height of the address field and the well buttons beside it.
+const WELL_SIZE: f32 = 26.0;
 
 /// Pack choices remembered for the add dialog, and extract choices from the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +37,7 @@ pub struct PackSettings {
 pub enum MenuCommand {
     /// Pick an archive, or open the selected one.
     Open,
-    /// Create an archive.
+    /// Create an archive, or add files to the open ZIP or 7z.
     Add,
     /// Close the window.
     Exit,
@@ -52,12 +57,14 @@ pub enum MenuCommand {
     Info,
     /// Light, dark, or follow the operating system.
     Theme(Preference),
+    /// Open a path from the File menu recent list.
+    OpenRecent(usize),
 }
 
 /// Toolbar buttons, in the same order as the reference layout.
 #[derive(Clone, Copy)]
 pub enum ToolCommand {
-    /// Create an archive.
+    /// Create an archive, or add files to the open ZIP or 7z.
     Add,
     /// Extract into a chosen folder.
     Extract,
@@ -67,6 +74,8 @@ pub enum ToolCommand {
     Delete,
     /// Show archive or selection details.
     Info,
+    /// Show the about window.
+    About,
 }
 
 /// Address bar result.
@@ -82,15 +91,41 @@ pub enum AddressEvent {
 }
 
 /// File, Commands, Options, and Help.
-pub fn menu_bar(ui: &mut egui::Ui, theme: Preference) -> Option<MenuCommand> {
+///
+/// `into_archive` is set when a ZIP or 7z is open, so Add names that archive.
+/// `opened` is recent archives, newest first.
+pub fn menu_bar(
+    ui: &mut egui::Ui,
+    theme: Preference,
+    into_archive: bool,
+    opened: &[String],
+) -> Option<MenuCommand> {
     let mut command = None;
+    let add_label = if into_archive {
+        "Add to this archive..."
+    } else {
+        "Add to archive..."
+    };
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
             if ui.button("Open...").clicked() {
                 command = Some(MenuCommand::Open);
             }
-            if ui.button("Add to archive...").clicked() {
+            if ui.button(add_label).clicked() {
                 command = Some(MenuCommand::Add);
+            }
+            if !opened.is_empty() {
+                ui.separator();
+                for (index, path) in opened.iter().enumerate() {
+                    let name = Path::new(path)
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| path.clone());
+                    if ui.button(name).on_hover_text(path).clicked() {
+                        command = Some(MenuCommand::OpenRecent(index));
+                    }
+                }
             }
             ui.separator();
             if ui.button("Exit").clicked() {
@@ -140,15 +175,23 @@ pub fn menu_bar(ui: &mut egui::Ui, theme: Preference) -> Option<MenuCommand> {
 }
 
 /// Large icons with captions, using the Lucide set already shipped with the window.
+///
+/// `into_archive` changes the Add tip when a ZIP or 7z is open.
 pub fn toolbar(
     ui: &mut egui::Ui,
     operation: bool,
     locked: bool,
     archive_ready: bool,
     can_delete: bool,
+    into_archive: bool,
 ) -> Option<ToolCommand> {
     let mut command = None;
     let colors = theme::palette(ui.ctx());
+    let add_tip = if into_archive {
+        "Add files to this archive"
+    } else {
+        "Create an archive"
+    };
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         if tool(
@@ -156,7 +199,7 @@ pub fn toolbar(
             Icon::Plus,
             colors.add,
             "Add",
-            "Create an archive",
+            add_tip,
             !operation && !locked,
         ) {
             command = Some(ToolCommand::Add);
@@ -200,6 +243,16 @@ pub fn toolbar(
             !locked,
         ) {
             command = Some(ToolCommand::Info);
+        }
+        if tool(
+            ui,
+            Icon::CircleHelp,
+            colors.ink,
+            "About",
+            "About ShellZip",
+            !locked,
+        ) {
+            command = Some(ToolCommand::About);
         }
     });
     command
@@ -273,10 +326,14 @@ pub fn address_bar(
                 event = Some(AddressEvent::Up);
             }
         });
-        let width = (ui.available_width() - 68.0).max(48.0);
-        let response = ui.add(
+        let spacing = ui.spacing().item_spacing.x;
+        let reserved = WELL_SIZE * 2.0 + spacing * 2.0;
+        let width = (ui.available_width() - reserved).max(48.0);
+        let response = ui.add_sized(
+            [width, WELL_SIZE],
             egui::TextEdit::singleline(text)
                 .desired_width(width)
+                .margin(egui::Margin::symmetric(6, 4))
                 .id_salt("shellzip-address"),
         );
         if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
@@ -426,12 +483,17 @@ pub fn confirm_delete(ctx: &egui::Context, pending: &mut Option<usize>) -> bool 
         .show(ctx, |ui| {
             ui.label(format!("Delete {count} selected members from this ZIP?"));
             ui.horizontal(|ui| {
-                if ui.button("Delete").clicked() {
+                if labeled_button(ui, Icon::Trash, theme::palette(ui.ctx()).danger, "Delete")
+                    .clicked()
+                {
                     confirmed = true;
                 }
-                if ui.button("Cancel").clicked() {
-                    dismiss = true;
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if labeled_button(ui, Icon::X, theme::palette(ui.ctx()).ink, "Cancel").clicked()
+                    {
+                        dismiss = true;
+                    }
+                });
             });
         });
     if confirmed || dismiss {
@@ -497,6 +559,14 @@ fn dismiss_button(ui: &mut egui::Ui) -> egui::Response {
     }
     icons::paint(ui, Icon::X, colors.danger, rect);
     response.on_hover_text("Dismiss")
+}
+
+/// Dialog footer button: a Lucide glyph and a label.
+pub fn labeled_button(ui: &mut egui::Ui, icon: Icon, tint: Color32, label: &str) -> egui::Response {
+    match icons::image(ui.ctx(), icon, tint, icons::SIZE_STATUS) {
+        Some(image) => ui.add(egui::Button::image_and_text(image, label)),
+        None => ui.button(label),
+    }
 }
 
 pub(crate) fn icon_button(
@@ -687,7 +757,7 @@ pub(crate) fn well_button(
     } else {
         Sense::hover()
     };
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(26.0), sense);
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(WELL_SIZE), sense);
     let fill = if enabled && response.hovered() {
         colors.hover
     } else {

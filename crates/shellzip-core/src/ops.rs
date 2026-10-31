@@ -22,7 +22,9 @@ use crate::progress::{ProgressReader, ProgressSink};
 
 /// Pack `inputs` into `dest`. The format comes from the extension.
 ///
-/// An existing ZIP keeps members this call does not replace, unless `opts.force` is set.
+/// An existing ZIP or 7z keeps members this call does not replace, unless `opts.force` is set.
+/// A password on that update is accepted for 7z, which recompresses the members it keeps.
+/// A ZIP update copies old members unchanged, so a password there is rejected unless `opts.force` replaces the archive.
 pub fn add(
     dest: &Path,
     inputs: &[PathBuf],
@@ -172,7 +174,11 @@ fn add_inner(
             "passwords encrypt ZIP and 7z archives; other formats are not encrypted".to_string(),
         ));
     }
-    if opts.password.is_some() && dest.is_file() && !opts.force {
+    // A 7z update recompresses kept members, so the password that opened the
+    // archive has to travel with the rewrite. A ZIP update copies old members
+    // unchanged, and a new password would leave them on the old key.
+    if opts.password.is_some() && dest.is_file() && !opts.force && !matches!(format, Format::SevenZ)
+    {
         return Err(Error::Usage(
             "pass -y to replace a ZIP when encrypting; an update would leave older members unchanged"
                 .to_string(),

@@ -2,7 +2,9 @@
 
 use egui_extras::{Column, TableBuilder};
 
+use crate::chrome;
 use crate::credits::{self, Credit};
+use crate::icons::Icon;
 use crate::theme;
 
 /// MIT License for the ShellZip source. Third-party components are listed separately.
@@ -81,11 +83,13 @@ pub fn show(ctx: &egui::Context, open: &mut bool) {
         ui.separator();
         let mut close = false;
         ui.horizontal(|ui| {
-            if ui.button("Close").clicked() {
-                close = true;
-            }
+            ui.hyperlink_to("Icons by Lucide (MIT)", "https://lucide.dev/icons/");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.hyperlink_to("Icons by Lucide (MIT)", "https://lucide.dev/icons/");
+                if chrome::labeled_button(ui, Icon::X, theme::palette(ui.ctx()).ink, "Close")
+                    .clicked()
+                {
+                    close = true;
+                }
             });
         });
         close
@@ -95,27 +99,21 @@ pub fn show(ctx: &egui::Context, open: &mut bool) {
     }
 }
 
-/// Scale the 16:9 banner so it stays inside the dialog and on a short screen.
-fn banner_size(ctx: &egui::Context) -> egui::Vec2 {
-    let aspect = 1280.0 / 720.0;
-    let max_height = (ctx.screen_rect().height() * 0.28).clamp(120.0, 200.0);
-    let height = (DIALOG_WIDTH / aspect).min(max_height);
-    egui::vec2(height * aspect, height)
+/// Scale the 16:9 banner to `width` so it fills the dialog horizontally.
+fn banner_size(width: f32) -> egui::Vec2 {
+    const ASPECT: f32 = 1280.0 / 720.0;
+    egui::vec2(width, width / ASPECT)
 }
 
 fn identity(ui: &mut egui::Ui) {
     let colors = theme::palette(ui.ctx());
-    let size = banner_size(ui.ctx());
-    let spare = (DIALOG_WIDTH - size.x).max(0.0);
-    ui.horizontal(|ui| {
-        ui.add_space(spare / 2.0);
-        ui.add(
-            egui::Image::from_bytes("bytes://shellzip/banner.png", BANNER)
-                .sense(egui::Sense::empty())
-                .show_loading_spinner(false)
-                .fit_to_exact_size(size),
-        );
-    });
+    let size = banner_size(ui.available_width());
+    ui.add(
+        egui::Image::from_bytes("bytes://shellzip/banner.png", BANNER)
+            .sense(egui::Sense::empty())
+            .show_loading_spinner(false)
+            .fit_to_exact_size(size),
+    );
     ui.add_space(8.0);
     ui.label(
         egui::RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).color(colors.muted),
@@ -200,7 +198,7 @@ fn package_table(ui: &mut egui::Ui, rows: &[Credit]) {
 
 #[cfg(test)]
 mod tests {
-    use super::BANNER;
+    use super::{BANNER, DIALOG_WIDTH, banner_size};
 
     #[test]
     fn about_banner_is_a_wide_png() {
@@ -210,5 +208,12 @@ mod tests {
         );
         let image = image::load_from_memory(BANNER).expect("banner png");
         assert!(image.width() > image.height());
+    }
+
+    #[test]
+    fn banner_fills_the_dialog_width() {
+        let size = banner_size(DIALOG_WIDTH);
+        assert_eq!(size.x, DIALOG_WIDTH);
+        assert!((size.y - DIALOG_WIDTH * 720.0 / 1280.0).abs() < 0.01);
     }
 }

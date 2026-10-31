@@ -6,7 +6,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use shellzip_core::{
     CompressOpts, ConflictChoice, Entry, Error, ExtractOpts, ListOpts, Password, UpdateMode, add,
-    add_prompted, add_sfx, delete, extract, format_bytes, format_crc, list_with, test,
+    add_prompted, add_sfx, delete, extract, format_crc, list_with, test,
 };
 
 use crate::about;
@@ -14,10 +14,11 @@ use crate::add_dialog::{self, AddAction, AddRequest, AskPrompt, AskReply};
 use crate::chrome::{self, AddressEvent, MenuCommand, PackSettings, ToolCommand};
 use crate::explorer::{
     ArchiveIndex, Explorer, FolderTree, JumpTarget, Row, RowKind, Target, TreeFocus,
-    archive_prefix, folder_parent, is_supported_archive, jumps, location_text, path_under,
-    read_directory, sort_rows, totals, totals_label,
+    archive_prefix, folder_parent, format_size, is_supported_archive, jumps, location_text,
+    path_under, read_directory, sort_rows, totals, totals_label,
 };
 use crate::extract_dialog::{self, ExtractAction, ExtractRequest};
+use crate::icons::Icon;
 use crate::progress_dialog::{self, ProgressCommand};
 use crate::settings::{self, DeleteArchive, ExtractSettings};
 use crate::shell_icons::IconCache;
@@ -105,6 +106,8 @@ pub struct ShellZipApp {
     saved: PackSettings,
     extract: ExtractSettings,
     recent: Vec<String>,
+    /// Recently opened archives, newest first.
+    opened: Vec<String>,
     /// Light, dark, or follow the operating system.
     theme: Preference,
     /// Archive folder to restore after a refresh reloads the same file.
@@ -170,6 +173,7 @@ impl ShellZipApp {
             saved: options,
             extract: stored.extract,
             recent: stored.recent,
+            opened: stored.opened,
             theme: stored.theme,
             restore_prefix: None,
             generation,
@@ -218,6 +222,7 @@ impl ShellZipApp {
         if self.shell_locked() {
             return;
         }
+        self.remember_opened(&path);
         let generation = self.next_generation();
         let id = self.alloc_id();
         let background = self.operation.as_ref().is_some_and(|op| !op.foreground);
@@ -438,6 +443,7 @@ impl ShellZipApp {
         if self.refuse_operation() {
             return;
         }
+        let target = self.updatable_archive();
         let mut files = self.selected_inputs();
         if files.is_empty() {
             let Some(picked) = rfd::FileDialog::new().pick_files() else {
@@ -445,18 +451,35 @@ impl ShellZipApp {
             };
             files = picked;
         }
-        self.open_add_dialog(files);
+        self.open_add_dialog(files, target);
     }
 
-    fn open_add_dialog(&mut self, files: Vec<PathBuf>) {
+    fn open_add_dialog(&mut self, files: Vec<PathBuf>, target: Option<PathBuf>) {
         if self.refuse_operation() || files.is_empty() || self.add_dialog.is_some() {
             return;
         }
-        self.add_dialog = Some(add_dialog::AddDialog::prepare(
-            &self.current_dir(),
-            files,
-            &self.options,
-        ));
+        let dialog = if let Some(archive) = target {
+            let secret = archive
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("7z"))
+                .then(|| self.saved_password(&archive))
+                .flatten()
+                .map(|password| password.expose().to_string());
+            add_dialog::AddDialog::prepare_into(&archive, secret.as_deref(), files, &self.options)
+        } else {
+            add_dialog::AddDialog::prepare(&self.current_dir(), files, &self.options)
+        };
+        self.add_dialog = Some(dialog);
+    }
+
+    /// Open ZIP or 7z the file pane is inside. Other formats stay create-new.
+    fn updatable_archive(&self) -> Option<PathBuf> {
+        match &self.place {
+            Place::Archive { format, path, .. } if format == "ZIP" || format == "7Z" => {
+                Some(path.clone())
+            }
+            _ => None,
+        }
     }
 
     fn current_dir(&self) -> PathBuf {
@@ -568,7 +591,7 @@ impl ShellZipApp {
                     summary: format!(
                         "created {} ({}); listing failed: {err}",
                         report.path.display(),
-                        format_bytes(report.packed_bytes)
+                        format_size(report.packed_bytes)
                     ),
                 }),
             }
@@ -681,10 +704,10 @@ impl ShellZipApp {
             lines.push(String::new());
             lines.push(row.name.clone());
             if let Some(size) = row.size {
-                lines.push(format!("Size: {}", format_bytes(size)));
+                lines.push(format!("Size: {}", format_size(size)));
             }
             if let Some(packed) = row.packed {
-                lines.push(format!("Packed: {}", format_bytes(packed)));
+                lines.push(format!("Packed: {}", format_size(packed)));
             }
             if row.crc32.is_some() {
                 lines.push(format!("CRC32: {}", format_crc(row.crc32)));
@@ -993,14 +1016,20 @@ impl ShellZipApp {
                         .id_salt("shellzip-open-password"),
                 );
                 field.request_focus();
-                if ui.button("OK").clicked()
-                    || ui.input(|input| input.key_pressed(egui::Key::Enter))
-                {
-                    submit = true;
-                }
-                if ui.button("Cancel").clicked() {
-                    cancel = true;
-                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let colors = theme::palette(ui.ctx());
+                        if chrome::labeled_button(ui, Icon::X, colors.ink, "Cancel").clicked() {
+                            cancel = true;
+                        }
+                        if chrome::labeled_button(ui, Icon::Check, colors.ok, "OK").clicked()
+                            || ui.input(|input| input.key_pressed(egui::Key::Enter))
+                        {
+                            submit = true;
+                        }
+                    });
+                });
             });
         if !open || cancel {
             self.password_ask = None;
@@ -1458,6 +1487,11 @@ impl ShellZipApp {
             MenuCommand::Delete => self.request_delete(),
             MenuCommand::Info => self.show_info(),
             MenuCommand::Exit => {}
+            MenuCommand::OpenRecent(index) => {
+                if let Some(path) = self.opened.get(index) {
+                    self.start_list(PathBuf::from(path.clone()));
+                }
+            }
             MenuCommand::Theme(choice) => {
                 self.theme = choice;
                 self.persist_settings();
@@ -1472,6 +1506,7 @@ impl ShellZipApp {
             ToolCommand::Test => self.test_archive(),
             ToolCommand::Delete => self.request_delete(),
             ToolCommand::Info => self.show_info(),
+            ToolCommand::About => self.about = true,
         }
     }
 
@@ -1533,7 +1568,8 @@ impl ShellZipApp {
                 return;
             }
         }
-        self.open_add_dialog(dropped);
+        let target = self.updatable_archive();
+        self.open_add_dialog(dropped, target);
     }
 
     fn poll_ask(&mut self) {
@@ -1568,9 +1604,22 @@ impl ShellZipApp {
         self.persist_settings();
     }
 
+    fn remember_opened(&mut self, path: &Path) {
+        let text = path.display().to_string();
+        self.opened.retain(|item| item != &text);
+        self.opened.insert(0, text);
+        self.opened.truncate(10);
+        self.persist_settings();
+    }
+
     fn persist_settings(&mut self) {
-        if let Err(err) = settings::save(&self.options, &self.extract, &self.recent, self.theme)
-            && self.error.is_none()
+        if let Err(err) = settings::save(
+            &self.options,
+            &self.extract,
+            &self.recent,
+            &self.opened,
+            self.theme,
+        ) && self.error.is_none()
         {
             self.error = Some(err);
         }
@@ -1651,11 +1700,12 @@ impl eframe::App for ShellZipApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.title()));
         self.take_drop(ctx);
 
+        let into_archive = self.updatable_archive().is_some();
         let mut menu_command = None;
         egui::TopBottomPanel::top("menu")
             .frame(chrome::bar_frame(ctx, 4, 0))
             .show(ctx, |ui| {
-                menu_command = chrome::menu_bar(ui, self.theme);
+                menu_command = chrome::menu_bar(ui, self.theme, into_archive, &self.opened);
             });
         if matches!(menu_command, Some(MenuCommand::Exit)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1671,7 +1721,14 @@ impl eframe::App for ShellZipApp {
         egui::TopBottomPanel::top("toolbar")
             .frame(chrome::bar_frame(ctx, 6, 2))
             .show(ctx, |ui| {
-                tool_command = chrome::toolbar(ui, operation, locked, archive_ready, can_delete);
+                tool_command = chrome::toolbar(
+                    ui,
+                    operation,
+                    locked,
+                    archive_ready,
+                    can_delete,
+                    into_archive,
+                );
             });
         if let Some(command) = tool_command {
             self.on_tool(command);

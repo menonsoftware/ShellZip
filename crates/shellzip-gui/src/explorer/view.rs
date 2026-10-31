@@ -250,11 +250,11 @@ pub fn show(
             });
             row.col(|ui| {
                 ui.add_space(6.0);
-                cell_text(ui, &size_text(item), text);
+                size_cell(ui, item, text);
             });
             row.col(|ui| {
                 ui.add_space(6.0);
-                cell_text(ui, &packed_text(item), text);
+                packed_cell(ui, item, text);
             });
             row.col(|ui| {
                 ui.add_space(6.0);
@@ -321,11 +321,35 @@ fn cell_text(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
     ui.add(egui::Label::new(egui::RichText::new(text).color(color)).sense(egui::Sense::empty()));
 }
 
+fn size_cell(ui: &mut egui::Ui, row: &Row, color: egui::Color32) {
+    let label = size_text(row);
+    let response = ui.add(
+        egui::Label::new(egui::RichText::new(&label).color(color)).sense(egui::Sense::hover()),
+    );
+    if !label.is_empty()
+        && let Some(bytes) = row.size
+    {
+        response.on_hover_text(format!("{bytes} bytes"));
+    }
+}
+
+fn packed_cell(ui: &mut egui::Ui, row: &Row, color: egui::Color32) {
+    let label = packed_text(row);
+    let response = ui.add(
+        egui::Label::new(egui::RichText::new(&label).color(color)).sense(egui::Sense::hover()),
+    );
+    if !label.is_empty()
+        && let Some(bytes) = row.packed
+    {
+        response.on_hover_text(format!("{bytes} bytes"));
+    }
+}
+
 fn size_text(row: &Row) -> String {
     if matches!(row.kind, RowKind::Directory | RowKind::Parent) {
         String::new()
     } else {
-        row.size.map(|size| size.to_string()).unwrap_or_default()
+        row.size.map(model::format_size).unwrap_or_default()
     }
 }
 
@@ -337,7 +361,7 @@ fn packed_text(row: &Row) -> String {
     if matches!(row.kind, RowKind::Directory | RowKind::Parent) {
         String::new()
     } else {
-        row.packed.map(|size| size.to_string()).unwrap_or_default()
+        row.packed.map(model::format_size).unwrap_or_default()
     }
 }
 
