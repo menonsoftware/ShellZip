@@ -1501,6 +1501,7 @@ impl ShellZipApp {
 
     fn on_tool(&mut self, command: ToolCommand) {
         match command {
+            ToolCommand::Open => self.open_archive(),
             ToolCommand::Add => self.create_archive(),
             ToolCommand::Extract => self.extract_archive(),
             ToolCommand::Test => self.test_archive(),
