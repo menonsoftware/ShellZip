@@ -12,10 +12,15 @@ mod credits;
 mod explorer;
 mod extract_dialog;
 mod icons;
+mod info_dialog;
 mod progress_dialog;
+mod rename_dialog;
+mod report_dialog;
 mod settings;
 mod shell_icons;
+mod test_dialog;
 mod theme;
+mod view_dialog;
 mod worker;
 
 fn main() {

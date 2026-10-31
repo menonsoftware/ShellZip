@@ -99,7 +99,8 @@ pub fn show(
     command
 }
 
-fn bar(ui: &mut egui::Ui, done: u64, total: u64) {
+/// Current or total progress. A zero total animates.
+pub(crate) fn bar(ui: &mut egui::Ui, done: u64, total: u64) {
     let (fraction, unknown) = fraction(done, total);
     ui.add(
         egui::ProgressBar::new(fraction)
@@ -150,7 +151,8 @@ fn format_speed(done: u64, elapsed: Duration) -> Option<String> {
     Some(format!("{}/s", format_size(per_sec)))
 }
 
-fn format_clock(elapsed: Duration) -> String {
+/// `HH:MM:SS` elapsed clock.
+pub(crate) fn format_clock(elapsed: Duration) -> String {
     let total = elapsed.as_secs();
     let hours = total / 3600;
     let minutes = (total % 3600) / 60;

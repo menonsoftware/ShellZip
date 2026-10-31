@@ -45,16 +45,22 @@ pub enum MenuCommand {
     Extract,
     /// Test the open or selected archive.
     Test,
+    /// Show one selected file in the window.
+    View,
     /// Select every file in the current folder.
     SelectAll,
     /// Clear the selection.
     SelectNone,
     /// Show the about window.
     About,
-    /// Delete selected members of the open ZIP.
+    /// Delete selected members of the open ZIP or 7z.
     Delete,
-    /// Show details for the open archive or the selection.
+    /// Rename one selected file or folder.
+    Rename,
+    /// Show archive header details.
     Info,
+    /// Write an HTML, Markdown, or text listing.
+    Report,
     /// Light, dark, or follow the operating system.
     Theme(Preference),
     /// Open a path from the File menu recent list.
@@ -138,14 +144,23 @@ pub fn menu_bar(
             if ui.button("Extract to...").clicked() {
                 command = Some(MenuCommand::Extract);
             }
-            if ui.button("Test").clicked() {
+            if ui.button("Test archived files").clicked() {
                 command = Some(MenuCommand::Test);
             }
-            if ui.button("Delete").clicked() {
+            if ui.button("View file").clicked() {
+                command = Some(MenuCommand::View);
+            }
+            if ui.button("Delete files").clicked() {
                 command = Some(MenuCommand::Delete);
             }
-            if ui.button("Info").clicked() {
+            if ui.button("Rename file").clicked() {
+                command = Some(MenuCommand::Rename);
+            }
+            if ui.button("Show information...").clicked() {
                 command = Some(MenuCommand::Info);
+            }
+            if ui.button("Generate report...").clicked() {
+                command = Some(MenuCommand::Report);
             }
             ui.separator();
             if ui.button("Select all").clicked() {
@@ -454,61 +469,77 @@ pub fn status_bar(
     }
 }
 
-/// Details window. `text` is already formatted for display.
-pub fn info_window(ctx: &egui::Context, text: &mut Option<String>) {
-    let mut open = text.is_some();
-    if let Some(body) = text.clone() {
-        egui::Window::new("Info")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_min_width(360.0);
-                ui.label(body);
-            });
-    }
-    if !open {
-        *text = None;
-    }
+/// How the delete confirmation ended.
+pub enum DeleteChoice {
+    /// Delete the listed names.
+    Delete,
+    /// Cancel or the window close button.
+    Cancel,
+    /// The window is still open.
+    Wait,
 }
 
-/// Confirm deletion of ZIP members. Returns true when the user confirms.
-pub fn confirm_delete(ctx: &egui::Context, pending: &mut Option<usize>) -> bool {
-    let Some(count) = *pending else {
-        return false;
-    };
+/// Confirm deletion of archive members. `names` are scrolled above the buttons.
+pub fn confirm_delete(ctx: &egui::Context, names: &[String]) -> DeleteChoice {
     let mut open = true;
-    let mut confirmed = false;
-    let mut dismiss = false;
+    let mut choice = DeleteChoice::Wait;
+    let count = names.len();
     egui::Window::new("Delete")
         .open(&mut open)
         .collapsible(false)
-        .resizable(false)
+        .resizable(true)
+        .min_width(440.0)
+        .min_height(320.0)
         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
         .show(ctx, |ui| {
-            ui.label(format!("Delete {count} selected members from this ZIP?"));
+            ui.set_min_width(440.0);
+            ui.set_min_height(320.0);
+            ui.label(format!(
+                "Delete {count} selected members from this archive?"
+            ));
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical()
+                .id_salt("shellzip-delete-names")
+                .max_height(180.0)
+                .show(ui, |ui| {
+                    for name in names {
+                        ui.label(name);
+                    }
+                });
+            ui.add_space(8.0);
+            ui.separator();
             ui.horizontal(|ui| {
                 if labeled_button(ui, Icon::Trash, theme::palette(ui.ctx()).danger, "Delete")
                     .clicked()
                 {
-                    confirmed = true;
+                    choice = DeleteChoice::Delete;
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if labeled_button(ui, Icon::X, theme::palette(ui.ctx()).ink, "Cancel").clicked()
                     {
-                        dismiss = true;
+                        choice = DeleteChoice::Cancel;
                     }
                 });
             });
         });
-    if confirmed || dismiss {
-        open = false;
+    if !open && matches!(choice, DeleteChoice::Wait) {
+        DeleteChoice::Cancel
+    } else {
+        choice
     }
-    if confirmed || !open {
-        *pending = None;
+}
+
+/// Integer with thousands separators, such as `9,655,595,819`.
+pub(crate) fn format_grouped(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
     }
-    confirmed
+    out.chars().rev().collect()
 }
 
 /// Chrome strip in the active palette.
@@ -802,7 +833,7 @@ pub(crate) fn well_button(
 
 #[cfg(test)]
 mod tests {
-    use super::dropdown_height;
+    use super::{dropdown_height, format_grouped};
 
     #[test]
     fn dropdown_keeps_the_sevenzip_height_until_the_window_runs_out() {
@@ -810,5 +841,13 @@ mod tests {
         assert_eq!(dropdown_height(620.0 + 32.0), 620.0);
         assert_eq!(dropdown_height(400.0), 368.0);
         assert_eq!(dropdown_height(40.0), 22.0);
+    }
+
+    #[test]
+    fn format_grouped_inserts_thousands_separators() {
+        assert_eq!(format_grouped(0), "0");
+        assert_eq!(format_grouped(999), "999");
+        assert_eq!(format_grouped(1000), "1,000");
+        assert_eq!(format_grouped(9_655_595_819), "9,655,595,819");
     }
 }

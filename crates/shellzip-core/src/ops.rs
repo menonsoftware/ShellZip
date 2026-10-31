@@ -18,7 +18,7 @@ use crate::options::{
     AddReport, CompressOpts, ConflictChoice, ConflictDecider, DeleteReport, ExtractOpts,
     ExtractReport, ListOpts, TestReport, UpdateMode, UpdatePrompt,
 };
-use crate::progress::{ProgressReader, ProgressSink};
+use crate::progress::{ProgressReader, ProgressSink, ensure_running};
 
 /// Pack `inputs` into `dest`. The format comes from the extension.
 ///
@@ -368,6 +368,177 @@ pub fn delete(
         kept,
         packed_bytes,
     })
+}
+
+/// Rename `from` to `to` inside a ZIP or 7z archive.
+///
+/// See [`crate::rename`] for the report fields and the name rules.
+///
+/// # Errors
+///
+/// [`Error::Usage`] when the container is not ZIP or 7z, or when `to` names a
+/// different member that is already stored. [`Error::UnsafePath`] for an empty
+/// name, a leading slash, a drive letter, `..`, or a control character.
+/// [`Error::NoFiles`] when `from` is not in the archive. [`Error::Interrupted`]
+/// when `progress` is cancelled; the original file is left in place.
+pub fn rename(
+    path: &Path,
+    from: &str,
+    to: &str,
+    password: Option<&crate::crypto::Password>,
+    progress: &dyn ProgressSink,
+) -> Result<DeleteReport, Error> {
+    let format = detect_file(path)?;
+    if !matches!(format, Format::Zip | Format::SevenZ) {
+        return Err(Error::Usage(
+            "rename only rewrites ZIP and 7z archives".to_string(),
+        ));
+    }
+    let from_key = checked_member_name(from)?;
+    let to_key = checked_member_name(to)?;
+    let (_opened, entries) = list_with(
+        path,
+        &ListOpts {
+            password: password.cloned(),
+            ..ListOpts::default()
+        },
+    )?;
+    let map = rename_map(&entries, &from_key, &to_key)?;
+    reject_collisions(&entries, &map)?;
+    let changed: HashMap<String, String> =
+        map.into_iter().filter(|(src, dest)| src != dest).collect();
+    let changed_count = changed.len();
+    progress.begin(&format!("rename {}", path.display()), 0);
+    ensure_running(progress)?;
+    let (kept, packed_bytes) = if changed.is_empty() {
+        let packed_bytes = std::fs::metadata(path)
+            .map_err(|err| Error::io(format!("stat {}", path.display()), err))?
+            .len();
+        (member_count(&entries)?, packed_bytes)
+    } else {
+        let encrypt_headers = password.is_some()
+            && matches!(format, Format::SevenZ)
+            && matches!(list(path), Err(Error::Encrypted(_)));
+        let opts = CompressOpts {
+            password: password.cloned(),
+            sevenz: crate::options::SevenZOpts {
+                encrypt_headers,
+                ..crate::options::SevenZOpts::default()
+            },
+            ..CompressOpts::default()
+        };
+        archiver::rewrite_renamed(path, &format, &opts, &changed, progress)?
+    };
+    progress.message(&format!("renamed {changed_count} in {}", path.display()));
+    Ok(DeleteReport {
+        path: path.to_path_buf(),
+        removed: 0,
+        kept,
+        packed_bytes,
+    })
+}
+
+fn checked_member_name(raw: &str) -> Result<String, Error> {
+    let rel = crate::fs::safe_path::safe_rel(raw)?;
+    let mut out = String::new();
+    for component in rel.components() {
+        let std::path::Component::Normal(part) = component else {
+            return Err(Error::UnsafePath(raw.to_string()));
+        };
+        let Some(text) = part.to_str() else {
+            return Err(Error::UnsafePath(raw.to_string()));
+        };
+        if text.is_empty() || text.contains('/') || text.contains('\\') {
+            return Err(Error::UnsafePath(raw.to_string()));
+        }
+        if !out.is_empty() {
+            out.push('/');
+        }
+        out.push_str(text);
+    }
+    if out.is_empty() {
+        return Err(Error::UnsafePath(raw.to_string()));
+    }
+    Ok(member_key(&out))
+}
+
+fn rename_map(
+    entries: &[crate::entry::Entry],
+    from_key: &str,
+    to_key: &str,
+) -> Result<HashMap<String, String>, Error> {
+    let prefix = format!("{from_key}/");
+    let mut matched = Vec::new();
+    for entry in entries {
+        let key = member_key(&entry.path);
+        if key.is_empty() {
+            continue;
+        }
+        if key == from_key || key.starts_with(&prefix) {
+            matched.push((key, entry.kind));
+        }
+    }
+    if matched.is_empty() {
+        return Err(Error::NoFiles);
+    }
+    let directory = matched.iter().any(|(key, kind)| {
+        key.starts_with(&prefix) || (*kind == EntryKind::Dir && key == from_key)
+    });
+    let mut map = HashMap::new();
+    for (key, _) in matched {
+        if !directory && key != from_key {
+            continue;
+        }
+        let dest = if key == from_key {
+            to_key.to_string()
+        } else if let Some(rest) = key.strip_prefix(&prefix).filter(|rest| !rest.is_empty()) {
+            format!("{to_key}/{rest}")
+        } else {
+            continue;
+        };
+        let dest = checked_member_name(&dest)?;
+        map.insert(key, dest);
+    }
+    if map.is_empty() {
+        return Err(Error::NoFiles);
+    }
+    Ok(map)
+}
+
+fn reject_collisions(
+    entries: &[crate::entry::Entry],
+    map: &HashMap<String, String>,
+) -> Result<(), Error> {
+    let existing: HashSet<String> = entries
+        .iter()
+        .map(|entry| member_key(&entry.path))
+        .filter(|key| !key.is_empty())
+        .collect();
+    let mut destinations = HashSet::new();
+    for (src, dest) in map {
+        if !destinations.insert(dest.clone()) {
+            return Err(Error::Usage(format!("destination `{dest}` already exists")));
+        }
+        if dest != src && existing.contains(dest) {
+            return Err(Error::Usage(format!("destination `{dest}` already exists")));
+        }
+    }
+    Ok(())
+}
+
+fn member_count(entries: &[crate::entry::Entry]) -> Result<u64, Error> {
+    let mut seen = HashSet::new();
+    let mut count = 0u64;
+    for entry in entries {
+        let key = member_key(&entry.path);
+        if key.is_empty() || !seen.insert(key) {
+            continue;
+        }
+        count = count
+            .checked_add(1)
+            .ok_or_else(|| Error::Archive("entry count overflow".to_string()))?;
+    }
+    Ok(count)
 }
 
 /// Pack one member read from `input`. `.gz` and `.zst` are streamed.

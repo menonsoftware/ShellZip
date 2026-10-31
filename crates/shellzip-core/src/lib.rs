@@ -26,6 +26,7 @@ mod ops;
 mod options;
 mod progress;
 mod sfx;
+mod summary;
 
 pub use crypto::Password;
 pub use detect::{
@@ -47,6 +48,7 @@ pub use progress::{NopProgress, ProgressSink};
 pub use sfx::{
     SfxDirection, SfxPayload, SfxTrailer, build, convert, locate, strip, stub_file_names,
 };
+pub use summary::ArchiveSummary;
 
 /// Library result.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -120,7 +122,7 @@ pub fn write_member(
     ops::write_member(path, name, sink, password)
 }
 
-/// Remove ZIP members that match `masks`.
+/// Remove ZIP or 7z members that match `masks`.
 pub fn delete(
     path: &std::path::Path,
     masks: &[String],
@@ -128,6 +130,51 @@ pub fn delete(
     progress: &dyn ProgressSink,
 ) -> Result<DeleteReport> {
     ops::delete(path, masks, password, progress)
+}
+
+/// Rename one ZIP or 7z member, or a directory prefix, inside `path`.
+///
+/// `from` and `to` are archive-relative names using `/`. They must not be
+/// empty, absolute, a drive path, `..`, or contain a control character.
+/// A directory renames that member and every member stored under it. A file
+/// renames only that member. The destination is rejected when another member
+/// already uses it.
+///
+/// ZIP copies compressed payloads with `ZipWriter::raw_copy_file_rename` and
+/// keeps the archive comment. 7z compresses kept members again. Any other
+/// container returns [`Error::Usage`].
+///
+/// On success, [`DeleteReport::removed`] is `0`, [`DeleteReport::kept`] is the
+/// number of members written, [`DeleteReport::packed_bytes`] is the archive's
+/// new length on disk, and [`DeleteReport::path`] is `path`. `Ok` means the
+/// rename finished; reload the listing. A name that already refers to the same
+/// member succeeds without rewriting the file.
+///
+/// # Errors
+///
+/// [`Error::Usage`] for a container other than ZIP or 7z, and when the
+/// destination names a different member. [`Error::UnsafePath`] for an empty
+/// name, a leading slash, a drive letter, `..`, or a control character.
+/// [`Error::NoFiles`] when `from` is not in the archive. [`Error::Interrupted`]
+/// when cancelled; the original archive stays in place.
+pub fn rename(
+    path: &std::path::Path,
+    from: &str,
+    to: &str,
+    password: Option<&Password>,
+    progress: &dyn ProgressSink,
+) -> Result<DeleteReport> {
+    ops::rename(path, from, to, password, progress)
+}
+
+/// Header summary for the Info dialog. Payloads are not decoded.
+///
+/// # Errors
+///
+/// Returns [`Error::Encrypted`] when names cannot be listed without a password,
+/// and the same open errors as [`list`].
+pub fn archive_summary(path: &std::path::Path) -> Result<ArchiveSummary> {
+    summary::archive_summary(path)
 }
 
 /// Pack a single member read from `input`.

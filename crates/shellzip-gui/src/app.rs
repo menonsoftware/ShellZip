@@ -6,12 +6,12 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use shellzip_core::{
     CompressOpts, ConflictChoice, Entry, Error, ExtractOpts, ListOpts, Password, UpdateMode, add,
-    add_prompted, add_sfx, delete, extract, format_crc, list_with, test,
+    add_prompted, add_sfx, delete, extract, list_with, test,
 };
 
 use crate::about;
 use crate::add_dialog::{self, AddAction, AddRequest, AskPrompt, AskReply};
-use crate::chrome::{self, AddressEvent, MenuCommand, PackSettings, ToolCommand};
+use crate::chrome::{self, AddressEvent, DeleteChoice, MenuCommand, PackSettings, ToolCommand};
 use crate::explorer::{
     ArchiveIndex, Explorer, FolderTree, JumpTarget, Row, RowKind, Target, TreeFocus,
     archive_prefix, folder_parent, format_size, is_supported_archive, jumps, location_text,
@@ -19,10 +19,15 @@ use crate::explorer::{
 };
 use crate::extract_dialog::{self, ExtractAction, ExtractRequest};
 use crate::icons::Icon;
+use crate::info_dialog::{self, InfoAction};
 use crate::progress_dialog::{self, ProgressCommand};
-use crate::settings::{self, DeleteArchive, ExtractSettings};
+use crate::rename_dialog::{self, RenameAction, RenameTarget};
+use crate::report_dialog::{self, ReportAction, ReportArchive, ReportRow};
+use crate::settings::{self, DeleteArchive, ExtractSettings, ReportSettings};
 use crate::shell_icons::IconCache;
+use crate::test_dialog::{self, TestCommand};
 use crate::theme::{self, Preference};
+use crate::view_dialog::{self, PreviewData};
 use crate::worker::ExtractJob;
 use crate::worker::{self, JobToken, Outcome, PasswordJob, PasswordRequest, SharedProgress};
 
@@ -50,6 +55,8 @@ enum OpKind {
     Test,
     /// Remove members.
     Delete,
+    /// Rename one member.
+    Rename,
 }
 
 struct Operation {
@@ -93,7 +100,14 @@ pub struct ShellZipApp {
     next_id: u64,
     loaded: bool,
     about: bool,
-    info: Option<String>,
+    info_dialog: Option<info_dialog::InfoDialog>,
+    info_job: Option<u64>,
+    view_dialog: Option<view_dialog::ViewDialog>,
+    view_job: Option<u64>,
+    rename_dialog: Option<rename_dialog::RenameDialog>,
+    test_dialog: Option<test_dialog::TestDialog>,
+    report_dialog: Option<report_dialog::ReportDialog>,
+    report_job: Option<u64>,
     pending_delete: Option<Vec<String>>,
     add_dialog: Option<add_dialog::AddDialog>,
     extract_dialog: Option<extract_dialog::ExtractDialog>,
@@ -110,6 +124,8 @@ pub struct ShellZipApp {
     opened: Vec<String>,
     /// Light, dark, or follow the operating system.
     theme: Preference,
+    /// Generate-report choices.
+    report: ReportSettings,
     /// Archive folder to restore after a refresh reloads the same file.
     restore_prefix: Option<(u64, String)>,
     generation: u64,
@@ -161,7 +177,14 @@ impl ShellZipApp {
             next_id: 0,
             loaded: false,
             about: false,
-            info: None,
+            info_dialog: None,
+            info_job: None,
+            view_dialog: None,
+            view_job: None,
+            rename_dialog: None,
+            test_dialog: None,
+            report_dialog: None,
+            report_job: None,
             pending_delete: None,
             add_dialog: None,
             extract_dialog: None,
@@ -175,6 +198,7 @@ impl ShellZipApp {
             recent: stored.recent,
             opened: stored.opened,
             theme: stored.theme,
+            report: stored.report,
             restore_prefix: None,
             generation,
             icons: IconCache::new(),
@@ -400,6 +424,9 @@ impl ShellZipApp {
         let again = password.is_some();
         let id = token.id;
         let generation = token.generation;
+        self.test_dialog = Some(test_dialog::TestDialog::running(
+            archive.display().to_string(),
+        ));
         worker::spawn(tx, token, move || {
             let report = match test(&archive, password.as_ref(), progress.as_ref()) {
                 Err(err) if needs_password(&err) => {
@@ -414,28 +441,17 @@ impl ShellZipApp {
                 }
                 other => other?,
             };
-            let code = report.exit_code();
-            if code == 0 {
-                Ok(Outcome::Finished {
-                    token,
-                    summary: format!("OK, {} entries", report.entries),
-                })
-            } else if !report.checksums.is_empty() {
-                Err(shellzip_core::Error::BadChecksum {
-                    entry: report.checksums.join(", "),
-                })
-            } else if !again && !report.encrypted.is_empty() {
-                Ok(Outcome::NeedPassword(PasswordRequest {
+            if report.checksums.is_empty() && !report.encrypted.is_empty() && !again {
+                return Ok(Outcome::NeedPassword(PasswordRequest {
                     id,
                     generation,
                     path: archive,
                     job: PasswordJob::Test,
                     again: false,
                     foreground: true,
-                }))
-            } else {
-                Err(Error::Encrypted(report.encrypted.join(", ")))
+                }));
             }
+            Ok(Outcome::Tested { token, report })
         });
     }
 
@@ -678,47 +694,357 @@ impl ShellZipApp {
     }
 
     fn show_info(&mut self) {
-        self.info = Some(self.info_text());
+        if self.refuse_operation() {
+            return;
+        }
+        let Some(path) = self.command_archive() else {
+            self.error = Some("Select an archive, or open one.".to_string());
+            return;
+        };
+        self.spawn_summary(path);
     }
 
-    fn info_text(&self) -> String {
-        let mut lines = Vec::new();
-        match &self.place {
-            Place::Folder { path, .. } => {
-                lines.push(format!("Folder: {}", path.display()));
-            }
-            Place::Archive {
+    fn spawn_summary(&mut self, path: PathBuf) {
+        let id = self.alloc_id();
+        let generation = self.generation;
+        let token = JobToken { id, generation };
+        self.info_job = Some(id);
+        self.info_dialog = None;
+        self.error = None;
+        self.status = format!("Reading {}", path.display());
+        let tx = self.tx.clone();
+        worker::spawn(tx, token, move || {
+            let summary = shellzip_core::archive_summary(&path)?;
+            Ok(Outcome::Summarized {
+                token,
                 path,
-                format,
-                members,
-                ..
-            } => {
-                lines.push(format!("{format}: {}", path.display()));
-                lines.push(format!("{} members", members.len()));
+                summary,
+            })
+        });
+    }
+
+    fn view_file(&mut self) {
+        if self.refuse_operation() {
+            return;
+        }
+        let selected = self.selected_rows();
+        let [row] = selected.as_slice() else {
+            self.error = Some("Select one file to view.".to_string());
+            return;
+        };
+        if matches!(row.kind, RowKind::Directory | RowKind::Parent) {
+            self.error = Some("Select a file, not a folder.".to_string());
+            return;
+        }
+        match &row.target {
+            Target::Path(path) => {
+                self.spawn_view_disk(path.clone(), row.name.clone(), row.size);
+            }
+            Target::ArchiveMember(member) => {
+                let Some(archive) = self.command_archive() else {
+                    self.error = Some("Open an archive to view this file.".to_string());
+                    return;
+                };
+                let password = self.saved_password(&archive);
+                self.spawn_view_member(
+                    archive,
+                    member.clone(),
+                    row.name.clone(),
+                    row.size,
+                    password,
+                );
+            }
+            Target::Parent | Target::ArchiveDir(_) => {
+                self.error = Some("Select a file, not a folder.".to_string());
             }
         }
-        for row in &self.view {
-            if row.kind == RowKind::Parent || !self.explorer.is_selected(&row.key) {
-                continue;
+    }
+
+    fn spawn_view_disk(&mut self, path: PathBuf, label: String, size: Option<u64>) {
+        let id = self.alloc_id();
+        let generation = self.generation;
+        let token = JobToken { id, generation };
+        self.view_job = Some(id);
+        self.view_dialog = None;
+        self.error = None;
+        self.status = format!("Reading {label}");
+        let tx = self.tx.clone();
+        worker::spawn(tx, token, move || {
+            let data = view_dialog::read_disk(&path, size)?;
+            Ok(preview_outcome(token, label, data))
+        });
+    }
+
+    fn spawn_view_member(
+        &mut self,
+        archive: PathBuf,
+        member: String,
+        label: String,
+        size: Option<u64>,
+        password: Option<Password>,
+    ) {
+        let id = self.alloc_id();
+        let generation = self.generation;
+        let token = JobToken { id, generation };
+        self.view_job = Some(id);
+        self.view_dialog = None;
+        self.error = None;
+        self.status = format!("Reading {label}");
+        let tx = self.tx.clone();
+        let again = password.is_some();
+        worker::spawn(tx, token, move || {
+            match view_dialog::read_member(&archive, &member, password.as_ref(), size) {
+                Ok(data) => Ok(preview_outcome(token, label, data)),
+                Err(err) if needs_password(&err) => Ok(Outcome::NeedPassword(PasswordRequest {
+                    id,
+                    generation,
+                    path: archive,
+                    job: PasswordJob::View {
+                        member,
+                        label,
+                        size,
+                    },
+                    again,
+                    foreground: false,
+                })),
+                Err(err) => Err(err),
             }
-            lines.push(String::new());
-            lines.push(row.name.clone());
-            if let Some(size) = row.size {
-                lines.push(format!("Size: {}", format_size(size)));
+        });
+    }
+
+    fn rename_selected(&mut self) {
+        if self.refuse_operation() {
+            return;
+        }
+        let selected = self.selected_rows();
+        let [row] = selected.as_slice() else {
+            self.error = Some("Select one file or folder to rename.".to_string());
+            return;
+        };
+        if matches!(row.kind, RowKind::Parent) {
+            self.error = Some("Select a file or folder to rename.".to_string());
+            return;
+        }
+        let target = match &row.target {
+            Target::Path(path) => RenameTarget::Disk(path.clone()),
+            Target::ArchiveMember(member) | Target::ArchiveDir(member) => {
+                if let Place::Archive { format, .. } = &self.place
+                    && format != "ZIP"
+                    && format != "7Z"
+                {
+                    self.error = Some("Rename only rewrites ZIP and 7z archives.".to_string());
+                    return;
+                }
+                RenameTarget::Member(member.trim_end_matches('/').to_string())
             }
-            if let Some(packed) = row.packed {
-                lines.push(format!("Packed: {}", format_size(packed)));
+            Target::Parent => {
+                self.error = Some("Select a file or folder to rename.".to_string());
+                return;
             }
-            if row.crc32.is_some() {
-                lines.push(format!("CRC32: {}", format_crc(row.crc32)));
+        };
+        self.rename_dialog = Some(rename_dialog::RenameDialog::new(row.name.clone(), target));
+    }
+
+    fn apply_rename(&mut self, target: RenameTarget, leaf: String) {
+        if let Some(message) = rename_dialog::reject_new_name(&leaf) {
+            self.error = Some(message.to_string());
+            return;
+        }
+        match target {
+            RenameTarget::Disk(path) => self.rename_on_disk(&path, &leaf),
+            RenameTarget::Member(from) => self.rename_in_archive(&from, &leaf),
+        }
+    }
+
+    fn rename_on_disk(&mut self, path: &Path, leaf: &str) {
+        if path.file_name().is_some_and(|name| name == leaf) {
+            return;
+        }
+        let Some(parent) = path.parent() else {
+            self.error = Some(format!("rename {}: the file has no folder", path.display()));
+            return;
+        };
+        let dest = parent.join(leaf);
+        if dest.exists() {
+            self.error = Some(format!("{leaf} already exists."));
+            return;
+        }
+        if let Err(err) = std::fs::rename(path, &dest) {
+            self.error = Some(format!("rename {}: {err}", path.display()));
+            return;
+        }
+        self.pending_select = Some(dest.display().to_string());
+        self.refresh();
+    }
+
+    fn rename_in_archive(&mut self, from: &str, leaf: &str) {
+        let (format, path) = match &self.place {
+            Place::Archive { format, path, .. } => (format.clone(), path.clone()),
+            Place::Folder { .. } => {
+                self.error = Some("Open a ZIP or 7z archive to rename members.".to_string());
+                return;
+            }
+        };
+        if format != "ZIP" && format != "7Z" {
+            self.error = Some("Rename only rewrites ZIP and 7z archives.".to_string());
+            return;
+        }
+        let from = from.trim_end_matches('/').to_string();
+        let to = rename_dialog::renamed_member(&from, leaf);
+        if to == from {
+            return;
+        }
+        let password = self.saved_password(&path);
+        self.spawn_rename(path, from, to, password);
+    }
+
+    fn spawn_rename(
+        &mut self,
+        archive: PathBuf,
+        from: String,
+        to: String,
+        password: Option<Password>,
+    ) {
+        if self.refuse_operation() {
+            return;
+        }
+        self.next_generation();
+        let progress = Arc::clone(&self.progress);
+        let token = self.begin_operation(OpKind::Rename, archive.clone(), true);
+        let tx = self.tx.clone();
+        let again = password.is_some();
+        let listed = password.clone();
+        let id = token.id;
+        let generation = token.generation;
+        worker::spawn(tx, token, move || {
+            let report = match shellzip_core::rename(
+                &archive,
+                &from,
+                &to,
+                password.as_ref(),
+                progress.as_ref(),
+            ) {
+                Err(err) if needs_password(&err) => {
+                    return Ok(Outcome::NeedPassword(PasswordRequest {
+                        id,
+                        generation,
+                        path: archive,
+                        job: PasswordJob::Rename { from, to },
+                        again,
+                        foreground: true,
+                    }));
+                }
+                other => other?,
+            };
+            match list_archive(&archive, listed.as_ref()) {
+                Ok((opened, entries)) => Ok(Outcome::Listed {
+                    token,
+                    path: archive,
+                    format: opened.detected().label(),
+                    entries,
+                }),
+                Err(err) => Ok(Outcome::Finished {
+                    token,
+                    summary: format!("renamed {} ({err})", report.kept),
+                }),
+            }
+        });
+    }
+
+    fn open_report(&mut self) {
+        if self.refuse_operation() || self.report_dialog.is_some() {
+            return;
+        }
+        match &self.place {
+            Place::Archive { path, .. } => {
+                let path = path.clone();
+                let dest = report_dialog::default_report_path(&path, self.report.format);
+                self.report_dialog = Some(report_dialog::ReportDialog::open(
+                    self.report,
+                    dest,
+                    Vec::new(),
+                    true,
+                ));
+                self.spawn_report_lists(vec![path]);
+            }
+            Place::Folder { path, .. } => {
+                let selected = self.selected_rows();
+                if selected.is_empty() {
+                    self.error = Some("Select files or archives, or open an archive.".to_string());
+                    return;
+                }
+                let mut loose = Vec::new();
+                let mut archives = Vec::new();
+                for row in &selected {
+                    match &row.target {
+                        Target::Path(file) if row.kind == RowKind::Archive => {
+                            archives.push(file.clone());
+                        }
+                        Target::Path(_) => loose.push(report_row(row)),
+                        Target::Parent | Target::ArchiveMember(_) | Target::ArchiveDir(_) => {}
+                    }
+                }
+                if loose.is_empty() && archives.is_empty() {
+                    self.error = Some("Select files or archives, or open an archive.".to_string());
+                    return;
+                }
+                let anchor = archives
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| path.join("report"));
+                let dest = report_dialog::default_report_path(&anchor, self.report.format);
+                let pending = !archives.is_empty();
+                self.report_dialog = Some(report_dialog::ReportDialog::open(
+                    self.report,
+                    dest,
+                    loose,
+                    pending,
+                ));
+                if pending {
+                    self.spawn_report_lists(archives);
+                }
             }
         }
-        lines.join("\n")
+    }
+
+    fn spawn_report_lists(&mut self, archives: Vec<PathBuf>) {
+        let id = self.alloc_id();
+        let generation = self.generation;
+        let token = JobToken { id, generation };
+        self.report_job = Some(id);
+        let secret = self.opened_secret.clone();
+        let tx = self.tx.clone();
+        worker::spawn(tx, token, move || {
+            let mut listed = Vec::new();
+            for path in archives {
+                let password = secret
+                    .as_ref()
+                    .filter(|(saved, _)| saved == &path)
+                    .map(|(_, password)| password);
+                let (_opened, entries) = list_archive(&path, password)?;
+                listed.push(ReportArchive {
+                    name: path.display().to_string(),
+                    rows: entries.into_iter().map(report_entry).collect(),
+                });
+            }
+            Ok(Outcome::ReportListed {
+                token,
+                archives: listed,
+            })
+        });
+    }
+
+    fn selected_rows(&self) -> Vec<Row> {
+        self.view
+            .iter()
+            .filter(|row| row.kind != RowKind::Parent && self.explorer.is_selected(&row.key))
+            .cloned()
+            .collect()
     }
 
     fn begin_operation(&mut self, kind: OpKind, path: PathBuf, foreground: bool) -> JobToken {
         let foreground = match kind {
-            OpKind::Test | OpKind::Delete => true,
+            OpKind::Test | OpKind::Delete | OpKind::Rename => true,
             OpKind::Extract | OpKind::Add => foreground,
         };
         let id = self.alloc_id();
@@ -807,7 +1133,7 @@ impl ShellZipApp {
         let title = match op.kind {
             OpKind::Extract => "Extracting",
             OpKind::Add => "Adding",
-            OpKind::Test | OpKind::Delete => return,
+            OpKind::Test | OpKind::Delete | OpKind::Rename => return,
         };
         let path = op.path.display().to_string();
         let snapshot = self.progress.snapshot();
@@ -854,8 +1180,12 @@ impl ShellZipApp {
                 } => self.finish_listed(token, path, format, entries),
                 Outcome::Finished { token, summary } => {
                     if self.operation.as_ref().is_some_and(|op| op.id == token.id) {
+                        let kind = self.operation.as_ref().map(|op| op.kind);
                         self.clear_operation();
                         self.ask = None;
+                        if matches!(kind, Some(OpKind::Test)) {
+                            self.test_dialog = None;
+                        }
                         self.status = summary;
                     } else if self.browse_job == Some(token.id) {
                         self.browse_job = None;
@@ -863,6 +1193,8 @@ impl ShellZipApp {
                         if token.generation == self.generation {
                             self.status = summary;
                         }
+                    } else {
+                        self.settle_side_status(token);
                     }
                 }
                 Outcome::Extracted {
@@ -899,11 +1231,69 @@ impl ShellZipApp {
                         }
                     }
                 }
-                Outcome::Failed { token, message } => {
+                Outcome::Tested { token, report } => {
                     if self.operation.as_ref().is_some_and(|op| op.id == token.id) {
                         self.clear_operation();
                         self.ask = None;
+                        self.status = test_dialog::summary_line(&report);
+                        if let Some(dialog) = &mut self.test_dialog {
+                            dialog.finish(&report);
+                        }
+                    }
+                }
+                Outcome::Previewed {
+                    token,
+                    name,
+                    body,
+                    truncated,
+                    size,
+                } => {
+                    if self.view_job == Some(token.id) {
+                        self.view_job = None;
+                        if token.generation == self.generation {
+                            self.status.clear();
+                            self.view_dialog = Some(view_dialog::ViewDialog::from_parts(
+                                name, body, truncated, size,
+                            ));
+                        }
+                    }
+                }
+                Outcome::Summarized {
+                    token,
+                    path,
+                    summary,
+                } => {
+                    if self.info_job == Some(token.id) {
+                        self.info_job = None;
+                        if token.generation == self.generation {
+                            self.status.clear();
+                            self.info_dialog = Some(info_dialog::InfoDialog::new(&path, summary));
+                        }
+                    }
+                }
+                Outcome::ReportListed { token, archives } => {
+                    if self.report_job == Some(token.id) {
+                        self.report_job = None;
+                        if let Some(dialog) = &mut self.report_dialog {
+                            if token.generation == self.generation {
+                                dialog.set_archives(archives);
+                            } else {
+                                dialog.fail(
+                                    "The folder changed before the report was ready.".to_string(),
+                                );
+                            }
+                        }
+                    }
+                }
+                Outcome::Failed { token, message } => {
+                    if self.operation.as_ref().is_some_and(|op| op.id == token.id) {
+                        let kind = self.operation.as_ref().map(|op| op.kind);
+                        self.clear_operation();
+                        self.ask = None;
                         self.status.clear();
+                        if matches!(kind, Some(OpKind::Test)) {
+                            self.test_dialog = None;
+                        }
                         self.error = Some(message);
                     } else if self.browse_job == Some(token.id) {
                         self.browse_job = None;
@@ -912,9 +1302,45 @@ impl ShellZipApp {
                             self.status.clear();
                             self.error = Some(message);
                         }
+                    } else if self.view_job == Some(token.id) {
+                        self.view_job = None;
+                        if token.generation == self.generation {
+                            self.status.clear();
+                            self.error = Some(message);
+                        }
+                    } else if self.info_job == Some(token.id) {
+                        self.info_job = None;
+                        if token.generation == self.generation {
+                            self.status.clear();
+                            self.error = Some(message);
+                        }
+                    } else if self.report_job == Some(token.id) {
+                        self.report_job = None;
+                        if token.generation == self.generation {
+                            if let Some(dialog) = &mut self.report_dialog {
+                                dialog.fail(message);
+                            } else {
+                                self.error = Some(message);
+                            }
+                        }
                     }
                 }
                 Outcome::NeedPassword(request) => self.finish_password(request),
+            }
+        }
+    }
+
+    fn settle_side_status(&mut self, token: JobToken) {
+        if self.view_job == Some(token.id) {
+            self.view_job = None;
+            if token.generation == self.generation {
+                self.status.clear();
+            }
+        }
+        if self.info_job == Some(token.id) {
+            self.info_job = None;
+            if token.generation == self.generation {
+                self.status.clear();
             }
         }
     }
@@ -959,6 +1385,7 @@ impl ShellZipApp {
             .as_ref()
             .is_some_and(|op| op.id == request.id);
         let matches_browse = self.browse_job == Some(request.id);
+        let matches_view = self.view_job == Some(request.id);
         if matches_operation && let Some(op) = &self.operation {
             request.foreground = op.foreground;
         }
@@ -969,12 +1396,19 @@ impl ShellZipApp {
             self.browse_job = None;
             self.listing = false;
         }
+        if matches_view {
+            self.view_job = None;
+            self.status.clear();
+        }
         self.ask = None;
         let show = match request.job {
-            PasswordJob::List => request.generation == self.generation,
-            PasswordJob::Extract(_) | PasswordJob::Test | PasswordJob::Delete { .. } => true,
+            PasswordJob::List | PasswordJob::View { .. } => request.generation == self.generation,
+            PasswordJob::Extract(_)
+            | PasswordJob::Test
+            | PasswordJob::Delete { .. }
+            | PasswordJob::Rename { .. } => true,
         };
-        if (matches_operation || matches_browse) && show {
+        if (matches_operation || matches_browse || matches_view) && show {
             self.password_ask = Some(PasswordAsk {
                 request,
                 text: String::new(),
@@ -1032,7 +1466,14 @@ impl ShellZipApp {
                 });
             });
         if !open || cancel {
-            self.password_ask = None;
+            let job = self.password_ask.take().map(|ask| ask.request.job);
+            if matches!(job, Some(PasswordJob::Test)) {
+                self.test_dialog = None;
+            }
+            if matches!(job, Some(PasswordJob::View { .. })) {
+                self.view_job = None;
+                self.status.clear();
+            }
             return;
         }
         if !submit {
@@ -1069,6 +1510,16 @@ impl ShellZipApp {
                 self.spawn_extract(request.path, job, Some(password), foreground);
             }
             PasswordJob::Delete { names } => self.spawn_delete(request.path, names, Some(password)),
+            PasswordJob::Rename { from, to } => {
+                self.spawn_rename(request.path, from, to, Some(password));
+            }
+            PasswordJob::View {
+                member,
+                label,
+                size,
+            } => {
+                self.spawn_view_member(request.path, member, label, size, Some(password));
+            }
         }
     }
 
@@ -1481,11 +1932,14 @@ impl ShellZipApp {
             MenuCommand::Add => self.create_archive(),
             MenuCommand::Extract => self.extract_archive(),
             MenuCommand::Test => self.test_archive(),
+            MenuCommand::View => self.view_file(),
             MenuCommand::SelectAll => self.explorer.select_all(&self.view),
             MenuCommand::SelectNone => self.explorer.clear_selection(),
             MenuCommand::About => self.about = true,
             MenuCommand::Delete => self.request_delete(),
+            MenuCommand::Rename => self.rename_selected(),
             MenuCommand::Info => self.show_info(),
+            MenuCommand::Report => self.open_report(),
             MenuCommand::Exit => {}
             MenuCommand::OpenRecent(index) => {
                 if let Some(path) = self.opened.get(index) {
@@ -1620,6 +2074,7 @@ impl ShellZipApp {
             &self.recent,
             &self.opened,
             self.theme,
+            &self.report,
         ) && self.error.is_none()
         {
             self.error = Some(err);
@@ -1659,6 +2114,39 @@ fn needs_password(err: &Error) -> bool {
     matches!(err, Error::Encrypted(_) | Error::BadPassword)
 }
 
+fn preview_outcome(token: JobToken, name: String, data: PreviewData) -> Outcome {
+    let truncated = data.truncated;
+    let size = data.size;
+    let body = view_dialog::classify(&data.bytes, truncated);
+    Outcome::Previewed {
+        token,
+        name,
+        body,
+        truncated,
+        size,
+    }
+}
+
+fn report_row(row: &Row) -> ReportRow {
+    ReportRow {
+        name: row.name.clone(),
+        size: row.size.unwrap_or(0),
+        packed: row.packed.unwrap_or(0),
+        modified: row.modified,
+        crc: row.crc32,
+    }
+}
+
+fn report_entry(entry: Entry) -> ReportRow {
+    ReportRow {
+        name: entry.path,
+        size: entry.size.unwrap_or(0),
+        packed: entry.packed_size.unwrap_or(0),
+        modified: entry.modified,
+        crc: entry.crc32,
+    }
+}
+
 fn list_archive(
     path: &Path,
     password: Option<&Password>,
@@ -1695,6 +2183,9 @@ impl eframe::App for ShellZipApp {
             || !self.loaded
             || self.tree.is_loading()
             || self.icons.is_pending()
+            || self.view_job.is_some()
+            || self.info_job.is_some()
+            || self.report_job.is_some()
         {
             ctx.request_repaint();
         }
@@ -1794,6 +2285,13 @@ impl eframe::App for ShellZipApp {
         if status_event.cancel {
             self.progress.request_cancel();
             self.status = "Cancelling...".to_string();
+            if self
+                .operation
+                .as_ref()
+                .is_some_and(|op| op.kind == OpKind::Test)
+            {
+                self.test_dialog = None;
+            }
             if self.ask.as_ref().is_some_and(|ask| ask.pending.is_some()) {
                 self.answer_ask(AskReply::Cancel);
             }
@@ -1823,7 +2321,77 @@ impl eframe::App for ShellZipApp {
             });
 
         about::show(ctx, &mut self.about);
-        chrome::info_window(ctx, &mut self.info);
+        if let Some(InfoAction::Close) = self
+            .info_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.show(ctx))
+        {
+            self.info_dialog = None;
+        }
+        let close_view = self
+            .view_dialog
+            .as_mut()
+            .is_some_and(|dialog| dialog.show(ctx));
+        if close_view {
+            self.view_dialog = None;
+        }
+        let rename_action = self
+            .rename_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.show(ctx));
+        match rename_action {
+            Some(RenameAction::Submit { target, leaf }) => {
+                self.rename_dialog = None;
+                self.apply_rename(target, leaf);
+            }
+            Some(RenameAction::Cancel) => self.rename_dialog = None,
+            None => {}
+        }
+        let test_snapshot = self
+            .operation
+            .as_ref()
+            .filter(|op| op.kind == OpKind::Test)
+            .map(|_| self.progress.snapshot());
+        let test_command = self
+            .test_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.show(ctx, test_snapshot.as_ref()));
+        match test_command {
+            Some(TestCommand::Cancel) => {
+                self.progress.request_cancel();
+                self.test_dialog = None;
+                self.status = "Cancelling...".to_string();
+                if self
+                    .password_ask
+                    .as_ref()
+                    .is_some_and(|ask| matches!(ask.request.job, PasswordJob::Test))
+                {
+                    self.password_ask = None;
+                }
+            }
+            Some(TestCommand::Close) => self.test_dialog = None,
+            None => {}
+        }
+        let report_action = self
+            .report_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.show(ctx));
+        match report_action {
+            Some(ReportAction::Save(settings)) => {
+                self.report = settings;
+                self.persist_settings();
+            }
+            Some(ReportAction::Wrote(path)) => {
+                self.status = format!("Wrote {}", path.display());
+                self.report_dialog = None;
+                self.report_job = None;
+            }
+            Some(ReportAction::Close) => {
+                self.report_dialog = None;
+                self.report_job = None;
+            }
+            None => {}
+        }
         self.show_progress(ctx);
         let extract_action = if let Some(dialog) = &mut self.extract_dialog {
             extract_dialog::show(ctx, dialog, &mut self.icons)
@@ -1877,11 +2445,14 @@ impl eframe::App for ShellZipApp {
         {
             self.answer_ask(reply);
         }
-        let mut delete_count = self.pending_delete.as_ref().map(Vec::len);
-        if chrome::confirm_delete(ctx, &mut delete_count) {
-            self.run_delete();
-        } else if delete_count.is_none() {
-            self.pending_delete = None;
+        let delete_choice = self
+            .pending_delete
+            .as_deref()
+            .map(|names| chrome::confirm_delete(ctx, names));
+        match delete_choice {
+            Some(DeleteChoice::Delete) => self.run_delete(),
+            Some(DeleteChoice::Cancel) => self.pending_delete = None,
+            Some(DeleteChoice::Wait) | None => {}
         }
         if self.options != self.saved {
             self.persist_settings();
@@ -1891,6 +2462,12 @@ impl eframe::App for ShellZipApp {
             && self.add_dialog.is_none()
             && self.extract_dialog.is_none()
             && self.ask.is_none()
+            && self.rename_dialog.is_none()
+            && self.view_dialog.is_none()
+            && self.info_dialog.is_none()
+            && self.test_dialog.is_none()
+            && self.report_dialog.is_none()
+            && self.pending_delete.is_none()
         {
             self.shortcuts(ctx);
         }
@@ -1987,7 +2564,7 @@ enum ListedEffect {
 
 fn listed_effect(kind: Option<OpKind>, listed_generation: u64, current: u64) -> ListedEffect {
     match kind {
-        Some(kind @ (OpKind::Add | OpKind::Delete)) => ListedEffect::Finish {
+        Some(kind @ (OpKind::Add | OpKind::Delete | OpKind::Rename)) => ListedEffect::Finish {
             kind,
             open: listed_generation == current,
         },

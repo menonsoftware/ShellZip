@@ -1,4 +1,4 @@
-//! Pack, extract, and theme choices stored in a TOML file.
+//! Pack, extract, report, and theme choices stored in a TOML file.
 //!
 //! The path comes from the `directories` config directory, not the registry.
 //! Destination paths are remembered after a successful extract. Save settings
@@ -19,6 +19,84 @@ pub enum PathMode {
     Full,
     /// Write every file into the destination, without folders.
     None,
+}
+
+/// Report file written by Generate report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReportFormat {
+    /// HTML table, UTF-8, no byte-order mark.
+    #[default]
+    Html,
+    /// Markdown table.
+    Markdown,
+    /// Aligned UTF-8 text.
+    Text,
+}
+
+/// Row order inside a generated report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReportSort {
+    /// Keep the order the listing returned.
+    #[default]
+    Original,
+    /// File or member name.
+    Name,
+    /// Uncompressed size.
+    Size,
+    /// Compressed size.
+    Packed,
+    /// Modification time.
+    Modified,
+    /// CRC32.
+    Crc,
+}
+
+/// Generate-report choices, except the output path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReportSettings {
+    /// HTML, Markdown, or text.
+    pub format: ReportFormat,
+    /// Copy the report onto the clipboard after it is written.
+    pub clipboard: bool,
+    /// Column used to order rows.
+    pub sort: ReportSort,
+    /// Sort inside each archive when more than one is included.
+    pub sort_archives_separately: bool,
+    /// Header block for each archive.
+    pub archives: bool,
+    /// Non-archive rows.
+    pub usual_files: bool,
+    /// Print the archive path above its rows.
+    pub archive_name: bool,
+    /// Column titles and a totals line.
+    pub headers: bool,
+    /// Uncompressed size column.
+    pub file_size: bool,
+    /// Compressed size column.
+    pub packed_size: bool,
+    /// Modification time column.
+    pub file_date: bool,
+    /// CRC32 column.
+    pub file_checksum: bool,
+}
+
+impl Default for ReportSettings {
+    fn default() -> Self {
+        Self {
+            format: ReportFormat::Html,
+            clipboard: false,
+            sort: ReportSort::Original,
+            sort_archives_separately: true,
+            archives: true,
+            usual_files: true,
+            archive_name: true,
+            headers: true,
+            file_size: true,
+            packed_size: true,
+            file_date: true,
+            file_checksum: false,
+        }
+    }
 }
 
 /// What to do with the archive after a clean extract of every member.
@@ -78,7 +156,7 @@ impl Default for ExtractSettings {
     }
 }
 
-/// Pack options, extract options, theme, recent destinations, and recent archives.
+/// Pack options, extract options, report options, theme, and recent paths.
 pub struct StoredSettings {
     /// Compression choices.
     pub pack: PackSettings,
@@ -90,6 +168,8 @@ pub struct StoredSettings {
     pub opened: Vec<String>,
     /// Light, dark, or follow the operating system.
     pub theme: Preference,
+    /// Generate-report choices.
+    pub report: ReportSettings,
 }
 
 /// Load the saved options, or the defaults when the file is missing.
@@ -103,13 +183,14 @@ pub fn load() -> StoredSettings {
     parse(&text).unwrap_or_else(defaults)
 }
 
-/// Write pack options, extract options, the theme, and recent paths.
+/// Write pack options, extract options, report options, the theme, and recent paths.
 pub fn save(
     pack: &PackSettings,
     extract: &ExtractSettings,
     recent: &[String],
     opened: &[String],
     theme: Preference,
+    report: &ReportSettings,
 ) -> Result<(), String> {
     let Some(path) = settings_path() else {
         return Ok(());
@@ -118,7 +199,7 @@ pub fn save(
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("create {}: {err}", parent.display()))?;
     }
-    let body = serialize(pack, extract, recent, opened, theme)?;
+    let body = serialize(pack, extract, recent, opened, theme, report)?;
     let tmp = path.with_extension("toml.tmp");
     std::fs::write(&tmp, body).map_err(|err| format!("write {}: {err}", tmp.display()))?;
     std::fs::rename(&tmp, &path).map_err(|err| format!("rename {}: {err}", path.display()))?;
@@ -138,6 +219,7 @@ fn defaults() -> StoredSettings {
         recent: Vec::new(),
         opened: Vec::new(),
         theme: Preference::System,
+        report: ReportSettings::default(),
     }
 }
 
@@ -152,6 +234,7 @@ fn serialize(
     recent: &[String],
     opened: &[String],
     theme: Preference,
+    report: &ReportSettings,
 ) -> Result<String, String> {
     let mut table = toml::Table::new();
     table.insert(
@@ -227,6 +310,54 @@ fn serialize(
     table.insert(
         "theme".to_string(),
         toml::Value::String(theme.as_str().to_string()),
+    );
+    table.insert(
+        "report_format".to_string(),
+        toml::Value::String(report_format_name(report.format).to_string()),
+    );
+    table.insert(
+        "report_clipboard".to_string(),
+        toml::Value::Boolean(report.clipboard),
+    );
+    table.insert(
+        "report_sort".to_string(),
+        toml::Value::String(report_sort_name(report.sort).to_string()),
+    );
+    table.insert(
+        "report_sort_archives".to_string(),
+        toml::Value::Boolean(report.sort_archives_separately),
+    );
+    table.insert(
+        "report_archives".to_string(),
+        toml::Value::Boolean(report.archives),
+    );
+    table.insert(
+        "report_usual_files".to_string(),
+        toml::Value::Boolean(report.usual_files),
+    );
+    table.insert(
+        "report_archive_name".to_string(),
+        toml::Value::Boolean(report.archive_name),
+    );
+    table.insert(
+        "report_headers".to_string(),
+        toml::Value::Boolean(report.headers),
+    );
+    table.insert(
+        "report_file_size".to_string(),
+        toml::Value::Boolean(report.file_size),
+    );
+    table.insert(
+        "report_packed_size".to_string(),
+        toml::Value::Boolean(report.packed_size),
+    );
+    table.insert(
+        "report_file_date".to_string(),
+        toml::Value::Boolean(report.file_date),
+    );
+    table.insert(
+        "report_file_checksum".to_string(),
+        toml::Value::Boolean(report.file_checksum),
     );
     toml::to_string(&table).map_err(|err| err.to_string())
 }
@@ -305,6 +436,31 @@ fn parse(text: &str) -> Option<StoredSettings> {
                 .collect()
         })
         .unwrap_or_default();
+    let report = ReportSettings {
+        format: match table.get("report_format").and_then(toml::Value::as_str) {
+            Some("markdown") => ReportFormat::Markdown,
+            Some("text") => ReportFormat::Text,
+            _ => ReportFormat::Html,
+        },
+        clipboard: bool_or("report_clipboard", false),
+        sort: match table.get("report_sort").and_then(toml::Value::as_str) {
+            Some("name") => ReportSort::Name,
+            Some("size") => ReportSort::Size,
+            Some("packed") => ReportSort::Packed,
+            Some("modified") => ReportSort::Modified,
+            Some("crc") => ReportSort::Crc,
+            _ => ReportSort::Original,
+        },
+        sort_archives_separately: bool_or("report_sort_archives", true),
+        archives: bool_or("report_archives", true),
+        usual_files: bool_or("report_usual_files", true),
+        archive_name: bool_or("report_archive_name", true),
+        headers: bool_or("report_headers", true),
+        file_size: bool_or("report_file_size", true),
+        packed_size: bool_or("report_packed_size", true),
+        file_date: bool_or("report_file_date", true),
+        file_checksum: bool_or("report_file_checksum", false),
+    };
     Some(StoredSettings {
         pack: PackSettings {
             level,
@@ -333,6 +489,7 @@ fn parse(text: &str) -> Option<StoredSettings> {
             .and_then(toml::Value::as_str)
             .map(Preference::from_token)
             .unwrap_or_default(),
+        report,
     })
 }
 
@@ -379,6 +536,25 @@ fn update_name(mode: ExtractUpdate) -> &'static str {
     }
 }
 
+fn report_format_name(format: ReportFormat) -> &'static str {
+    match format {
+        ReportFormat::Html => "html",
+        ReportFormat::Markdown => "markdown",
+        ReportFormat::Text => "text",
+    }
+}
+
+fn report_sort_name(sort: ReportSort) -> &'static str {
+    match sort {
+        ReportSort::Original => "original",
+        ReportSort::Name => "name",
+        ReportSort::Size => "size",
+        ReportSort::Packed => "packed",
+        ReportSort::Modified => "modified",
+        ReportSort::Crc => "crc",
+    }
+}
+
 fn delete_name(mode: DeleteArchive) -> &'static str {
     match mode {
         DeleteArchive::Never => "never",
@@ -415,14 +591,30 @@ mod tests {
         };
         let recent = vec![r"C:\work\out".to_string()];
         let opened = vec![r"C:\work\docs.zip".to_string()];
-        let parsed =
-            parse(&serialize(&pack, &extract, &recent, &opened, Preference::Dark).expect("toml"))
-                .expect("settings");
+        let report = ReportSettings {
+            format: ReportFormat::Text,
+            clipboard: true,
+            sort: ReportSort::Crc,
+            sort_archives_separately: false,
+            archives: false,
+            usual_files: true,
+            archive_name: false,
+            headers: false,
+            file_size: false,
+            packed_size: true,
+            file_date: false,
+            file_checksum: true,
+        };
+        let parsed = parse(
+            &serialize(&pack, &extract, &recent, &opened, Preference::Dark, &report).expect("toml"),
+        )
+        .expect("settings");
         assert_eq!(parsed.pack, pack);
         assert_eq!(parsed.extract, extract);
         assert_eq!(parsed.recent, recent);
         assert_eq!(parsed.opened, opened);
         assert_eq!(parsed.theme, Preference::Dark);
+        assert_eq!(parsed.report, report);
     }
 
     #[test]
@@ -451,5 +643,6 @@ flat = true
         assert!(!parsed.pack.background);
         assert!(!parsed.extract.background);
         assert_eq!(parsed.theme, Preference::System);
+        assert_eq!(parsed.report, ReportSettings::default());
     }
 }

@@ -6,7 +6,7 @@
 //! into the new file, then the new members are appended. `force` still replaces
 //! the archive.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::path::Path;
 
@@ -17,6 +17,7 @@ use super::{ArchiveWriter, commit_output, copy_in, prepare_output, prepare_temp}
 use crate::entry::{EntryMeta, dos_parts};
 use crate::error::Error;
 use crate::options::{CompressOpts, UpdateMode, ZipMethod};
+use crate::progress::{ProgressSink, ensure_running};
 
 pub struct ZipArchiver {
     inner: Option<ZipWriter<io::BufWriter<std::fs::File>>>,
@@ -266,6 +267,81 @@ impl ZipArchiver {
             .by_index(0)
             .map_err(|err| Error::Archive(format!("compressed piece: {err}")))?;
         self.writer()?.raw_copy_file(file).map_err(Error::from)
+    }
+}
+
+/// Copy every member of an existing ZIP into a replacement file.
+///
+/// `names` maps member keys to new archive names.
+/// Compressed bytes are copied with [`ZipWriter::raw_copy_file_rename`].
+/// The archive comment is kept when the caller did not set a new one.
+/// Returns members written and the length of the committed archive.
+pub(crate) fn rewrite_renamed(
+    path: &Path,
+    names: &HashMap<String, String>,
+    progress: &dyn ProgressSink,
+) -> Result<(u64, u64), Error> {
+    let mut archiver = ZipArchiver::create(path, &CompressOpts::default())?;
+    let Some(source) = archiver.source.take() else {
+        return Err(Error::Archive(
+            "refusing to rename a zip that is not an existing archive".to_string(),
+        ));
+    };
+    let kept = copy_renamed(&mut archiver, &source, names, progress)?;
+    ensure_running(progress)?;
+    let packed = Box::new(archiver).finish()?;
+    Ok((kept, packed))
+}
+
+fn copy_renamed(
+    archiver: &mut ZipArchiver,
+    source: &Path,
+    names: &HashMap<String, String>,
+    progress: &dyn ProgressSink,
+) -> Result<u64, Error> {
+    let file = std::fs::File::open(source)
+        .map_err(|err| Error::io(format!("open {}", source.display()), err))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|err| Error::Archive(format!("cannot rename `{}`: {err}", source.display())))?;
+    if archiver.opts.comment.is_none() {
+        let bytes = archive.comment();
+        if !bytes.is_empty() {
+            archiver.kept_comment = Some(bytes.to_vec());
+        }
+    }
+    let mut copied = HashSet::new();
+    let mut kept = 0u64;
+    for index in 0..archive.len() {
+        ensure_running(progress)?;
+        let entry = archive.by_index_raw(index)?;
+        let original = entry.name().to_string();
+        let key = crate::entry::member_key(&original);
+        let is_dir = entry.is_dir();
+        if key.is_empty() || !copied.insert(key.clone()) {
+            continue;
+        }
+        let new_name = zip_dest_name(&original, &key, is_dir, names);
+        archiver.writer()?.raw_copy_file_rename(entry, new_name)?;
+        kept = kept
+            .checked_add(1)
+            .ok_or_else(|| Error::Archive("entry count overflow".to_string()))?;
+    }
+    Ok(kept)
+}
+
+fn zip_dest_name(
+    original: &str,
+    key: &str,
+    is_dir: bool,
+    names: &HashMap<String, String>,
+) -> String {
+    let Some(mapped) = names.get(key) else {
+        return original.to_string();
+    };
+    if is_dir && !mapped.ends_with('/') {
+        format!("{mapped}/")
+    } else {
+        mapped.clone()
     }
 }
 
