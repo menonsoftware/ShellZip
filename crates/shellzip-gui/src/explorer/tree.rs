@@ -156,6 +156,9 @@ pub struct FolderTree {
     loader_dead: bool,
     load_error: Option<String>,
     loader_reported: bool,
+    /// Last place `reveal` expanded. A repeat does not reopen a closed folder.
+    revealed: Option<TreeFocus>,
+    revealed_len: usize,
     tx: Sender<Job>,
     rx: Receiver<Msg>,
 }
@@ -191,6 +194,8 @@ impl FolderTree {
             loader_dead: dead,
             load_error: failure,
             loader_reported: false,
+            revealed: None,
+            revealed_len: 0,
             tx,
             rx,
         }
@@ -238,13 +243,20 @@ impl FolderTree {
         !self.pending.is_empty() || !self.volumes_ready
     }
 
-    /// Expand every ancestor of the current place.
+    /// Expand the folder path to the current place, including that folder.
+    ///
+    /// Opening the same place again leaves a folder the user closed. A longer
+    /// path, once volumes are known, is expanded.
     pub fn reveal(&mut self, focus: &TreeFocus) {
         let spine = spine(self.namespace, &self.places, focus, &self.volumes);
-        if spine.len() > 1 {
-            for id in &spine[..spine.len() - 1] {
-                self.expanded.insert(id.clone());
-            }
+        let same = self.revealed.as_ref() == Some(focus);
+        if same && spine.len() <= self.revealed_len {
+            return;
+        }
+        self.revealed = Some(focus.clone());
+        self.revealed_len = spine.len();
+        for id in spine {
+            self.expanded.insert(id);
         }
     }
 
@@ -904,6 +916,61 @@ fn cmp_name(left: &Path, right: &Path) -> std::cmp::Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reveal_opens_the_path_and_leaves_a_closed_folder_closed() {
+        let (directory, label, namespace, places) = if cfg!(windows) {
+            let directory = PathBuf::from(r"C:\Users\Administrator\Desktop");
+            (
+                directory.clone(),
+                "Desktop",
+                Namespace::Windows,
+                Places {
+                    desktop: Some(directory),
+                    home: Some(PathBuf::from(r"C:\Users\Administrator")),
+                },
+            )
+        } else {
+            let home = PathBuf::from("/home/user");
+            let directory = home.join("src");
+            (
+                directory,
+                "src",
+                Namespace::Unix,
+                Places {
+                    desktop: None,
+                    home: Some(home),
+                },
+            )
+        };
+        let (tx, _requests) = mpsc::channel();
+        let (result_tx, rx) = mpsc::channel();
+        let mut tree =
+            FolderTree::with_channels(namespace, places, tx, rx, Some(LOADER_FAILED.to_string()));
+        let root = drive_root(&directory).expect("directory has a root");
+        result_tx
+            .send(Msg::Volumes(vec![Volume {
+                label: "disk".to_string(),
+                path: root,
+            }]))
+            .expect("volume message");
+        tree.poll();
+        let focus = TreeFocus::folder(&directory);
+        tree.reveal(&focus);
+        let rows = tree.rows(&focus);
+        let current = rows.iter().find(|row| row.current).expect("current folder");
+        assert_eq!(current.label, label);
+        assert!(current.expanded, "the current folder should be open");
+        assert!(
+            rows.iter().any(|row| row.depth == 0 && row.expanded),
+            "the path from the root should be open"
+        );
+        tree.toggle(&current.id);
+        tree.reveal(&focus);
+        let rows = tree.rows(&focus);
+        let current = rows.iter().find(|row| row.current).expect("current folder");
+        assert!(!current.expanded, "closing a folder should stick");
+    }
 
     #[test]
     fn prefix_label_keeps_the_full_prefix_when_the_segment_is_blank() {

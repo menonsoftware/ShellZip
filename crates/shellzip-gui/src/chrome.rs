@@ -474,7 +474,7 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, tip: &str) -> egui::Response {
 /// on the address bar above the file list.
 ///
 /// `bar` is the address row in global coordinates. The menu hangs under that
-/// row, uses its full width, and is at least as tall as the ShellZip window.
+/// row, uses its full width, and shrinks to the expanded folder list.
 fn parent_menu(
     ui: &mut egui::Ui,
     tree: &mut FolderTree,
@@ -486,7 +486,7 @@ fn parent_menu(
     if response.clicked() {
         tree.reveal(focus);
     }
-    let window_height = ui.ctx().screen_rect().height();
+    let room = (ui.ctx().screen_rect().bottom() - bar.bottom()).max(120.0);
     let mut event = None;
     egui::Popup::menu(&response)
         .anchor(bar)
@@ -498,13 +498,13 @@ fn parent_menu(
             let inset = ui.spacing().menu_margin.sum().x + ui.visuals().window_stroke.width * 2.0;
             ui.set_min_width((bar.width() - inset).max(48.0));
             ui.spacing_mut().item_spacing.y = 0.0;
+            tree.reveal(focus);
             if let Some(message) = tree.loader_error() {
                 ui.label(egui::RichText::new(message).color(DANGER));
             }
             egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .min_scrolled_height(window_height)
-                .max_height(window_height)
+                .auto_shrink([false, true])
+                .max_height(room)
                 .show(ui, |ui| {
                     for row in tree.rows(focus) {
                         if let Some(target) = tree_row(ui, tree, cache, &row) {
