@@ -26,9 +26,15 @@ else
 COPY_RELEASE_SFX = mkdir -p target/release && cp -f target/minisize/shellzip-sfx target/release/shellzip-sfx
 endif
 
+ifeq ($(OS),Windows_NT)
+OPEN_RELEASE = powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path 'target/release' | Out-Null; explorer 'target/release'"
+else
+OPEN_RELEASE = mkdir -p target/release && (xdg-open target/release 2>/dev/null || open target/release)
+endif
+
 .PHONY: all build release build-cli build-gui build-core \
 	release-cli release-gui release-sfx \
-	run run-release gui gui-release \
+	run run-release gui gui-release explore \
 	test test-cli test-core test-sfx build-sfx \
 	check clippy lint fmt fmt-check doc \
 	clean ci install install-gui bench help
@@ -75,6 +81,10 @@ gui:
 
 gui-release:
 	$(CARGO) run --release --bin $(BIN_GUI) -- $(ARGS)
+
+# Open target/release in the file manager (creates the folder if missing).
+explore:
+	$(OPEN_RELEASE)
 
 test:
 	$(CARGO) test --workspace $(CARGO_FLAGS)
@@ -137,6 +147,7 @@ help:
 	@echo   make run              Run szip --help
 	@echo   make run ARGS="..."   Run szip with arguments
 	@echo   make gui              Open the ShellZip window
+	@echo   make explore          Open target/release in the file manager
 	@echo   make test             cargo test --workspace
 	@echo   make check            Type-check all targets
 	@echo   make clippy           Clippy with -D warnings
