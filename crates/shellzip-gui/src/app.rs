@@ -1946,6 +1946,7 @@ impl ShellZipApp {
                     self.start_list(PathBuf::from(path.clone()));
                 }
             }
+            MenuCommand::ClearHistory => self.clear_history(),
             MenuCommand::Theme(choice) => {
                 self.theme = choice;
                 self.persist_settings();
@@ -2067,6 +2068,11 @@ impl ShellZipApp {
         self.persist_settings();
     }
 
+    fn clear_history(&mut self) {
+        forget_history(&mut self.opened, &mut self.recent);
+        self.persist_settings();
+    }
+
     fn persist_settings(&mut self) {
         if let Err(err) = settings::save(
             &self.options,
@@ -2164,6 +2170,11 @@ fn is_sfx_name(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("sfx"))
+}
+
+fn forget_history(opened: &mut Vec<String>, recent: &mut Vec<String>) {
+    opened.clear();
+    recent.clear();
 }
 
 impl eframe::App for ShellZipApp {
@@ -2629,5 +2640,14 @@ mod tests {
                 open: true
             }
         ));
+    }
+
+    #[test]
+    fn clear_history_forgets_opened_archives_and_destinations() {
+        let mut opened = vec!["docs.zip".to_string()];
+        let mut recent = vec![r"C:\work\out".to_string()];
+        forget_history(&mut opened, &mut recent);
+        assert!(opened.is_empty());
+        assert!(recent.is_empty());
     }
 }

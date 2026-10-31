@@ -10,6 +10,12 @@ use crate::chrome;
 use crate::icons::Icon;
 use crate::theme;
 
+/// Inner width of the info window. Every tab uses this so the frame does not jump.
+const DIALOG_WIDTH: f32 = 560.0;
+
+/// Shared tab body height. Comment and SFX keep the same box as Info.
+const TAB_BODY_HEIGHT: f32 = 260.0;
+
 /// Which page is visible.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -51,20 +57,28 @@ impl InfoDialog {
         egui::Window::new(title)
             .open(&mut open)
             .collapsible(false)
-            .resizable(true)
-            .min_width(560.0)
-            .min_height(420.0)
+            .resizable(false)
+            .default_width(DIALOG_WIDTH)
+            .min_width(DIALOG_WIDTH)
+            .max_width(DIALOG_WIDTH)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.set_min_width(560.0);
-                ui.set_min_height(380.0);
+                ui.set_width(DIALOG_WIDTH);
                 tabs(ui, self);
                 ui.separator();
-                match self.tab {
-                    Tab::Info => info_tab(ui, &self.summary),
-                    Tab::Comment => comment_tab(ui, &self.summary),
-                    Tab::Sfx => sfx_tab(ui, &self.summary),
-                }
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), TAB_BODY_HEIGHT),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_min_height(TAB_BODY_HEIGHT);
+                        ui.set_width(ui.available_width());
+                        match self.tab {
+                            Tab::Info => info_tab(ui, &self.summary),
+                            Tab::Comment => comment_tab(ui, &self.summary),
+                            Tab::Sfx => sfx_tab(ui, &self.summary),
+                        }
+                    },
+                );
                 ui.add_space(8.0);
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -177,8 +191,10 @@ fn comment_tab(ui: &mut egui::Ui, summary: &ArchiveSummary) {
         Some(text) => {
             egui::ScrollArea::vertical()
                 .id_salt("shellzip-archive-comment")
-                .max_height(240.0)
+                .auto_shrink([false, false])
+                .max_height(TAB_BODY_HEIGHT)
                 .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
                     ui.label(text);
                 });
         }

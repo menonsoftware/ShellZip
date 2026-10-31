@@ -1,5 +1,8 @@
-//! Lucide icons. egui tints by multiplying, so every glyph is white and picks up
-//! the color passed to [`paint`].
+//! Lucide icons and the pre-colored toolbar glyphs.
+//!
+//! Lucide strokes are white so [`paint`] can tint them. Toolbar art from
+//! `assets/toolbar/` already has brand colors; [`paint_tool`] draws it as-is
+//! and only recolors dark-theme strokes so the marks stay visible.
 //!
 //! Source: <https://lucide.dev/icons/>. The SVG files and their ISC license
 //! live in `assets/lucide/`.
@@ -8,7 +11,12 @@
 //! sizing pass otherwise asks for a new SVG size every frame and the loader
 //! draws its failure mark above the file list.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+
 use egui::{Color32, Rect, Sense, Vec2};
+
+type DarkSvgCache = Mutex<HashMap<&'static str, Arc<[u8]>>>;
 
 /// File-list row glyph.
 pub const SIZE_ROW: f32 = 16.0;
@@ -80,6 +88,29 @@ pub enum Caret {
     Down,
 }
 
+/// Pre-colored toolbar and address-bar glyphs from `assets/toolbar/`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ToolIcon {
+    /// Open an archive.
+    Open,
+    /// Create an archive, or add files to one.
+    Add,
+    /// Extract into a folder.
+    Extract,
+    /// Test archive integrity.
+    Test,
+    /// Delete selected members.
+    Delete,
+    /// Archive or selection details.
+    Info,
+    /// About ShellZip.
+    About,
+    /// Leave the current folder.
+    Up,
+    /// Reload the current folder or archive.
+    Refresh,
+}
+
 impl Icon {
     fn uri(self) -> &'static str {
         match self {
@@ -136,6 +167,43 @@ impl Icon {
     }
 }
 
+impl ToolIcon {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Add => "add",
+            Self::Extract => "extract",
+            Self::Test => "test",
+            Self::Delete => "delete",
+            Self::Info => "info",
+            Self::About => "about",
+            Self::Up => "up",
+            Self::Refresh => "refresh",
+        }
+    }
+
+    fn has_disabled_art(self) -> bool {
+        matches!(self, Self::Extract | Self::Test | Self::Delete)
+    }
+
+    fn bytes(self, enabled: bool) -> &'static [u8] {
+        match (self, enabled) {
+            (Self::Extract, false) => include_bytes!("../assets/toolbar/extract_disabled.svg"),
+            (Self::Test, false) => include_bytes!("../assets/toolbar/test_disabled.svg"),
+            (Self::Delete, false) => include_bytes!("../assets/toolbar/delete_disabled.svg"),
+            (Self::Open, _) => include_bytes!("../assets/toolbar/open.svg"),
+            (Self::Add, _) => include_bytes!("../assets/toolbar/add.svg"),
+            (Self::Extract, true) => include_bytes!("../assets/toolbar/extract.svg"),
+            (Self::Test, true) => include_bytes!("../assets/toolbar/test.svg"),
+            (Self::Delete, true) => include_bytes!("../assets/toolbar/delete.svg"),
+            (Self::Info, _) => include_bytes!("../assets/toolbar/info.svg"),
+            (Self::About, _) => include_bytes!("../assets/toolbar/about.svg"),
+            (Self::Up, _) => include_bytes!("../assets/toolbar/up.svg"),
+            (Self::Refresh, _) => include_bytes!("../assets/toolbar/refresh.svg"),
+        }
+    }
+}
+
 /// Every icon, so the SVG textures can be created before the file table asks for them.
 pub const ALL: [Icon; 22] = [
     Icon::FolderOpen,
@@ -162,6 +230,19 @@ pub const ALL: [Icon; 22] = [
     Icon::ChevronDown,
 ];
 
+/// Every toolbar glyph, so [`warm`] can rasterize them with the Lucide set.
+pub const TOOL_ALL: [ToolIcon; 9] = [
+    ToolIcon::Open,
+    ToolIcon::Add,
+    ToolIcon::Extract,
+    ToolIcon::Test,
+    ToolIcon::Delete,
+    ToolIcon::Info,
+    ToolIcon::About,
+    ToolIcon::Up,
+    ToolIcon::Refresh,
+];
+
 /// Rasterize the icons once, at the master pixel size.
 ///
 /// Returns immediately when a texture is still loading; the next frame paints
@@ -170,6 +251,11 @@ pub fn warm(ctx: &egui::Context) {
     let mut pending = false;
     for icon in ALL {
         pending |= sized_texture(ctx, icon).is_none();
+    }
+    let dark = matches!(ctx.theme(), egui::Theme::Dark);
+    for icon in TOOL_ALL {
+        pending |= tool_texture(ctx, icon, true, dark).is_none();
+        pending |= tool_texture(ctx, icon, false, dark).is_none();
     }
     if pending {
         ctx.request_repaint();
@@ -195,6 +281,16 @@ pub fn show(ui: &mut egui::Ui, icon: Icon, tint: Color32, size: f32) {
 /// Draw `icon` inside `rect`. Skips the frame when the texture is not ready.
 pub fn paint(ui: &mut egui::Ui, icon: Icon, tint: Color32, rect: Rect) {
     let Some(image) = tinted(ui.ctx(), icon, tint, rect.size()) else {
+        return;
+    };
+    image.paint_at(ui, rect);
+}
+
+/// Draw a pre-colored toolbar glyph. Disabled extract, test, and delete use
+/// their own art; the others fade.
+pub fn paint_tool(ui: &mut egui::Ui, icon: ToolIcon, enabled: bool, rect: Rect) {
+    let dark = matches!(ui.ctx().theme(), egui::Theme::Dark);
+    let Some(image) = tool_image(ui.ctx(), icon, enabled, dark, rect.size()) else {
         return;
     };
     image.paint_at(ui, rect);
@@ -275,8 +371,105 @@ fn tinted(
 }
 
 fn sized_texture(ctx: &egui::Context, icon: Icon) -> Option<egui::load::SizedTexture> {
+    load_bytes(ctx, icon.uri(), icon.bytes())
+}
+
+fn tool_image(
+    ctx: &egui::Context,
+    icon: ToolIcon,
+    enabled: bool,
+    dark: bool,
+    size: Vec2,
+) -> Option<egui::Image<'static>> {
+    let texture = tool_texture(ctx, icon, enabled, dark)?;
+    let tint = if enabled || icon.has_disabled_art() {
+        Color32::WHITE
+    } else {
+        Color32::from_white_alpha(97)
+    };
+    Some(
+        egui::Image::from_texture(texture)
+            .tint(tint)
+            .fit_to_exact_size(size)
+            .sense(Sense::empty())
+            .show_loading_spinner(false),
+    )
+}
+
+fn tool_texture(
+    ctx: &egui::Context,
+    icon: ToolIcon,
+    enabled: bool,
+    dark: bool,
+) -> Option<egui::load::SizedTexture> {
+    let uri = format!(
+        "bytes://toolbar/{}/{}/{}.svg",
+        icon.key(),
+        if enabled { "on" } else { "off" },
+        if dark { "dark" } else { "light" },
+    );
+    load_bytes(ctx, uri, tool_bytes(icon, enabled, dark))
+}
+
+fn tool_bytes(icon: ToolIcon, enabled: bool, dark: bool) -> egui::load::Bytes {
+    let raw = icon.bytes(enabled);
+    if !dark {
+        return egui::load::Bytes::Static(raw);
+    }
+    static CACHE: OnceLock<DarkSvgCache> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let key = tool_cache_key(icon, enabled);
+    if let Some(bytes) = map.get(key) {
+        return egui::load::Bytes::Shared(Arc::clone(bytes));
+    }
+    let bytes = Arc::<[u8]>::from(recolor_dark(raw));
+    map.insert(key, Arc::clone(&bytes));
+    egui::load::Bytes::Shared(bytes)
+}
+
+fn tool_cache_key(icon: ToolIcon, enabled: bool) -> &'static str {
+    match (icon, enabled) {
+        (ToolIcon::Open, true) => "open-on",
+        (ToolIcon::Open, false) => "open-off",
+        (ToolIcon::Add, true) => "add-on",
+        (ToolIcon::Add, false) => "add-off",
+        (ToolIcon::Extract, true) => "extract-on",
+        (ToolIcon::Extract, false) => "extract-off",
+        (ToolIcon::Test, true) => "test-on",
+        (ToolIcon::Test, false) => "test-off",
+        (ToolIcon::Delete, true) => "delete-on",
+        (ToolIcon::Delete, false) => "delete-off",
+        (ToolIcon::Info, true) => "info-on",
+        (ToolIcon::Info, false) => "info-off",
+        (ToolIcon::About, true) => "about-on",
+        (ToolIcon::About, false) => "about-off",
+        (ToolIcon::Up, true) => "up-on",
+        (ToolIcon::Up, false) => "up-off",
+        (ToolIcon::Refresh, true) => "refresh-on",
+        (ToolIcon::Refresh, false) => "refresh-off",
+    }
+}
+
+/// Lighten the dark ink so the marks read on a dark toolbar.
+fn recolor_dark(svg: &[u8]) -> Vec<u8> {
+    let Ok(text) = std::str::from_utf8(svg) else {
+        return svg.to_vec();
+    };
+    text.replace("#2B2F36", "#E8ECF0")
+        .replace("#8A8F98", "#B4B8C0")
+        .into_bytes()
+}
+
+fn load_bytes(
+    ctx: &egui::Context,
+    uri: impl Into<std::borrow::Cow<'static, str>>,
+    bytes: impl Into<egui::load::Bytes>,
+) -> Option<egui::load::SizedTexture> {
     let pixels = (ctx.pixels_per_point() * MASTER_POINTS).round().max(1.0) as u32;
-    match egui::Image::from_bytes(icon.uri(), icon.bytes())
+    match egui::Image::from_bytes(uri, bytes)
         .sense(Sense::empty())
         .show_loading_spinner(false)
         .source(ctx)
@@ -296,7 +489,7 @@ fn sized_texture(ctx: &egui::Context, icon: Icon) -> Option<egui::load::SizedTex
 
 #[cfg(test)]
 mod tests {
-    use super::ALL;
+    use super::{ALL, TOOL_ALL, recolor_dark};
 
     #[test]
     fn lucide_strokes_are_white_so_tints_show() {
@@ -313,5 +506,34 @@ mod tests {
                 icon.uri()
             );
         }
+    }
+
+    #[test]
+    fn toolbar_svgs_carry_the_brand_colors() {
+        for icon in TOOL_ALL {
+            let svg = std::str::from_utf8(icon.bytes(true)).expect("svg is utf-8");
+            assert!(
+                svg.contains("#2B2F36") || svg.contains("#C8642A"),
+                "{} is missing the toolbar palette",
+                icon.key()
+            );
+            if icon.has_disabled_art() {
+                let off = std::str::from_utf8(icon.bytes(false)).expect("svg is utf-8");
+                assert!(
+                    off.contains("#8A8F98"),
+                    "{} disabled art is not the gray variant",
+                    icon.key()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dark_toolbar_strokes_are_light() {
+        let out = String::from_utf8(recolor_dark(b"stroke=\"#2B2F36\" #8A8F98")).expect("utf-8");
+        assert!(out.contains("#E8ECF0"));
+        assert!(out.contains("#B4B8C0"));
+        assert!(!out.contains("#2B2F36"));
+        assert!(!out.contains("#8A8F98"));
     }
 }
