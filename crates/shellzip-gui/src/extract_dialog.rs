@@ -8,11 +8,9 @@ use std::path::{Path, PathBuf};
 
 use shellzip_core::{ExtractUpdate, Overwrite};
 
-use egui::{Rect, Sense, Vec2};
-
 use crate::chrome;
 use crate::explorer::{FolderTree, JumpTarget, TreeFocus};
-use crate::icons::{self, Caret, Icon};
+use crate::icons::Icon;
 use crate::settings::{DeleteArchive, ExtractSettings, PathMode};
 use crate::shell_icons::IconCache;
 use crate::theme;
@@ -59,6 +57,8 @@ pub struct ExtractRequest {
     pub delete: DeleteArchive,
     /// Move a deleted archive to the recycle bin.
     pub recycle: bool,
+    /// Hide the progress window and leave the file list usable.
+    pub background: bool,
     /// Member names, or every member when `None`.
     pub names: Option<Vec<String>>,
 }
@@ -77,7 +77,6 @@ pub enum ExtractAction {
 pub struct ExtractDialog {
     tab: Tab,
     path: String,
-    recent: Vec<String>,
     settings: ExtractSettings,
     saved: ExtractSettings,
     archive: PathBuf,
@@ -109,7 +108,6 @@ impl ExtractDialog {
         names: Option<Vec<String>>,
         prefix: &str,
         settings: ExtractSettings,
-        recent: &[String],
     ) -> Self {
         let dest = suggested_destination(archive);
         let focus = TreeFocus::folder(&nearest_existing(&dest));
@@ -118,7 +116,6 @@ impl ExtractDialog {
         Self {
             tab: Tab::General,
             path: dest.display().to_string(),
-            recent: recent.to_vec(),
             settings,
             saved: settings,
             archive: archive.to_path_buf(),
@@ -163,6 +160,7 @@ impl ExtractDialog {
             show_in_explorer: self.settings.show_in_explorer,
             delete: self.settings.delete,
             recycle: self.settings.recycle,
+            background: self.settings.background,
             names: self.names.clone(),
         })
     }
@@ -282,35 +280,26 @@ fn tabs(ui: &mut egui::Ui, dialog: &mut ExtractDialog) {
 fn general_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCache) {
     ui.label("Destination path (will be created if does not exist)");
     ui.horizontal(|ui| {
+        const GAP: f32 = 2.0;
+        let buttons = 28.0 + GAP + 28.0 + GAP + 26.0;
         let response = ui.add(
             egui::TextEdit::singleline(&mut dialog.path)
-                .desired_width(ui.available_width() - 120.0)
+                .desired_width((ui.available_width() - buttons).max(48.0))
                 .hint_text("Folder"),
         );
         if response.changed() {
             dialog.tree_touched = false;
         }
-        let recent = dialog.recent.clone();
-        let history = history_button(ui);
-        egui::Popup::menu(&history)
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .show(|ui| {
-                if recent.is_empty() {
-                    ui.label(egui::RichText::new("No recent folders").color(colors(ui).muted));
-                }
-                for path in recent {
-                    if ui.button(&path).clicked() {
-                        dialog.path = path;
-                        dialog.tree_touched = false;
-                        ui.close();
-                    }
-                }
-            });
+        ui.spacing_mut().item_spacing.x = GAP;
         if chrome::icon_button(ui, Icon::FolderSearch, colors(ui).open, "Display", true).clicked() {
             display_path(dialog);
         }
         if chrome::icon_button(ui, Icon::FolderPlus, colors(ui).ink, "New folder", true).clicked() {
             begin_new_folder(dialog);
+        }
+        let busy = dialog.tree.is_loading();
+        if chrome::well_button(ui, Icon::Refresh, "Refresh folders", !busy).clicked() {
+            dialog.tree.refresh();
         }
     });
     ui.add_space(4.0);
@@ -425,6 +414,16 @@ fn options_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog) {
             .small(),
         );
     });
+    ui.add_space(8.0);
+    option_group(ui, "Background", |ui| {
+        ui.checkbox(&mut dialog.settings.background, "Start in background");
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("The file list stays usable. Progress stays on the status bar.")
+                .color(colors(ui).muted)
+                .small(),
+        );
+    });
 }
 
 fn option_group(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
@@ -434,16 +433,6 @@ fn option_group(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)
         ui.label(egui::RichText::new(title).strong());
         body(ui);
     });
-}
-
-fn history_button(ui: &mut egui::Ui) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
-    if response.hovered() {
-        ui.painter().rect_filled(rect, 2.0, colors(ui).hover);
-    }
-    let caret = Rect::from_center_size(rect.center(), Vec2::new(9.0, 6.0));
-    icons::paint_caret(ui, Caret::Down, colors(ui).ink, caret);
-    response.on_hover_text("Recent folders")
 }
 
 fn folder_tree(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCache) {
@@ -714,6 +703,7 @@ fn help_window(ctx: &egui::Context, dialog: &mut ExtractDialog) {
             ui.label(egui::RichText::new("Options").strong());
             ui.label("Delete archive runs only after every member extracts with no warnings. Move to Recycle Bin sends it there instead of removing it permanently.");
             ui.label("Save settings remembers these choices, except the destination path, for the next time.");
+            ui.label("Start in background leaves the file list usable and keeps progress on the status bar.");
         });
     dialog.help = open;
 }
