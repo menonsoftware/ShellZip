@@ -15,7 +15,9 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use self::entry::{entry_from, methods_by_name};
-use super::policy::{Budget, Destination, destination, mark_extracted, symlink_destination};
+use super::policy::{
+    Budget, Destination, destination, mark_extracted, restore_entry_time, symlink_destination,
+};
 use crate::crypto::Password;
 use crate::entry::Entry;
 use crate::error::{Error, map_zesven};
@@ -181,8 +183,10 @@ pub fn extract_sevenz(
                         .warnings
                         .push(format!("skipped encrypted entry `{}`", file.name));
                 } else if file.is_directory && !opts.flat {
-                    destination(&file.name, opts, false, true, decide)?;
-                    report.extracted += 1;
+                    match destination(&file.name, opts, false, true, None, decide)? {
+                        Destination::Skip => report.skipped += 1,
+                        Destination::Write(_) => report.extracted += 1,
+                    }
                 }
             }
             return Ok(report);
@@ -297,9 +301,20 @@ fn write_member<R: std::io::Read + std::io::Seek + Send>(
     ctx.progress.begin_entry(&member.name, member.size);
     if member.is_directory {
         if !ctx.opts.flat {
-            destination(&member.name, ctx.opts, false, true, ctx.decide)?;
+            match destination(
+                &member.name,
+                ctx.opts,
+                false,
+                true,
+                member.modified,
+                ctx.decide,
+            )? {
+                Destination::Skip => ctx.report.skipped += 1,
+                Destination::Write(_) => ctx.report.extracted += 1,
+            }
+        } else {
+            ctx.report.extracted += 1;
         }
-        ctx.report.extracted += 1;
         ctx.progress.end_entry();
         return Ok(());
     }
@@ -321,12 +336,19 @@ fn write_member<R: std::io::Read + std::io::Seek + Send>(
         ctx.progress.end_entry();
         return Ok(());
     }
-    match destination(&member.name, ctx.opts, ctx.opts.flat, false, ctx.decide)? {
+    let modified = member.modified;
+    match destination(
+        &member.name,
+        ctx.opts,
+        ctx.opts.flat,
+        false,
+        modified,
+        ctx.decide,
+    )? {
         Destination::Skip => {
             ctx.report.skipped += 1;
         }
         Destination::Write(dest) => {
-            let modified = member.modified;
             let had_password = ctx.had_password;
             let progress = ctx.progress;
             super::policy::write_atomic(&dest, ctx.opts.keep_broken, |out| {
@@ -341,9 +363,7 @@ fn write_member<R: std::io::Read + std::io::Seek + Send>(
                 ctx.budget.charge(written)?;
                 Ok(())
             })?;
-            if let Some(modified) = modified
-                && let Err(err) = crate::fs::metadata::restore_mtime(&dest, modified)
-            {
+            if let Err(err) = restore_entry_time(&dest, modified, ctx.opts) {
                 ctx.report.warnings.push(err.to_string());
             }
             if let Err(err) = mark_extracted(ctx.archive, &dest, ctx.opts) {

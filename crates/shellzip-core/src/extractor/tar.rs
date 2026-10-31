@@ -9,7 +9,8 @@ use flate2::read::GzDecoder;
 use tar::{Archive, EntryType};
 
 use super::policy::{
-    Budget, Destination, destination, mark_extracted, symlink_destination, write_atomic,
+    Budget, Destination, destination, mark_extracted, restore_entry_time, symlink_destination,
+    write_atomic,
 };
 use crate::detect::{Compression, prefix_is_tar};
 use crate::entry::{Entry, EntryKind};
@@ -138,17 +139,21 @@ pub fn extract_tar(
         match kind {
             EntryType::Directory => {
                 if !opts.flat {
-                    destination(&name, opts, false, true, decide)?;
-                    if let Ok(mtime) = entry.header().mtime()
-                        && let Some(path) = dir_path(&name, opts)
-                    {
-                        let _ = crate::fs::metadata::restore_mtime(
-                            &path,
-                            UNIX_EPOCH + std::time::Duration::from_secs(mtime),
-                        );
+                    let modified = entry
+                        .header()
+                        .mtime()
+                        .ok()
+                        .map(|secs| UNIX_EPOCH + std::time::Duration::from_secs(secs));
+                    match destination(&name, opts, false, true, modified, decide)? {
+                        Destination::Skip => report.skipped += 1,
+                        Destination::Write(path) => {
+                            let _ = restore_entry_time(&path, modified, opts);
+                            report.extracted += 1;
+                        }
                     }
+                } else {
+                    report.extracted += 1;
                 }
-                report.extracted += 1;
             }
             EntryType::Symlink => {
                 let target = entry
@@ -281,7 +286,7 @@ pub fn extract_single(
     let mut report = ExtractReport::default();
     let mut budget = Budget::new(opts.max_bytes);
     let mut input = open_input(path, compression)?;
-    match destination(&name, opts, opts.flat, false, decide)? {
+    match destination(&name, opts, opts.flat, false, None, decide)? {
         Destination::Skip => report.skipped += 1,
         Destination::Write(dest) => {
             write_atomic(&dest, opts.keep_broken, |out| {
@@ -312,7 +317,12 @@ fn extract_regular(
     progress: &dyn ProgressSink,
 ) -> Result<Option<std::path::PathBuf>, Error> {
     let declared = entry.size();
-    match destination(name, opts, opts.flat, false, decide)? {
+    let modified = entry
+        .header()
+        .mtime()
+        .ok()
+        .map(|secs| UNIX_EPOCH + std::time::Duration::from_secs(secs));
+    match destination(name, opts, opts.flat, false, modified, decide)? {
         Destination::Skip => {
             std::io::copy(entry, &mut std::io::sink())
                 .map_err(|err| Error::io(name.to_string(), err))?;
@@ -320,11 +330,6 @@ fn extract_regular(
             Ok(None)
         }
         Destination::Write(dest) => {
-            let modified = entry
-                .header()
-                .mtime()
-                .ok()
-                .map(|secs| UNIX_EPOCH + std::time::Duration::from_secs(secs));
             let mode = entry.header().mode().ok();
             write_atomic(&dest, opts.keep_broken, |out| {
                 let mut reader = ProgressReader::new(entry, progress);
@@ -339,9 +344,7 @@ fn extract_regular(
                 budget.charge(copied)?;
                 Ok(())
             })?;
-            if let Some(modified) = modified
-                && let Err(err) = crate::fs::metadata::restore_mtime(&dest, modified)
-            {
+            if let Err(err) = restore_entry_time(&dest, modified, opts) {
                 report.warnings.push(err.to_string());
             }
             if let Some(mode) = mode
@@ -397,11 +400,6 @@ fn entry_name(entry: &tar::Entry<'_, Input>) -> Result<String, Error> {
         text = rest.to_string();
     }
     Ok(text.trim_end_matches('/').to_string())
-}
-
-fn dir_path(name: &str, opts: &ExtractOpts) -> Option<std::path::PathBuf> {
-    let rel = crate::fs::safe_path::safe_rel(name).ok()?;
-    crate::fs::safe_path::safe_join(&opts.output, &rel).ok()
 }
 
 fn open_input(path: &Path, compression: Compression) -> Result<Input, Error> {

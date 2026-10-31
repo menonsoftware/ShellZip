@@ -9,7 +9,8 @@ use chrono::TimeZone;
 use zip::ZipArchive;
 
 use super::policy::{
-    Budget, Destination, destination, mark_extracted, symlink_destination, write_atomic,
+    Budget, Destination, destination, mark_extracted, restore_entry_time, symlink_destination,
+    write_atomic,
 };
 use crate::entry::{Entry, EntryKind};
 use crate::error::Error;
@@ -184,9 +185,13 @@ pub fn extract_zip(
         budget.reserve(file.size())?;
         if file.is_dir() {
             if !opts.flat {
-                destination(&name, opts, false, true, decide)?;
+                match destination(&name, opts, false, true, None, decide)? {
+                    Destination::Skip => report.skipped += 1,
+                    Destination::Write(_) => report.extracted += 1,
+                }
+            } else {
+                report.extracted += 1;
             }
-            report.extracted += 1;
             progress.end_entry();
             continue;
         }
@@ -205,10 +210,10 @@ pub fn extract_zip(
             progress.end_entry();
             continue;
         }
-        match destination(&name, opts, opts.flat, false, decide)? {
+        let modified = zip_time(file.last_modified());
+        match destination(&name, opts, opts.flat, false, modified, decide)? {
             Destination::Skip => report.skipped += 1,
             Destination::Write(dest) => {
-                let modified = zip_time(file.last_modified());
                 let mode = file.unix_mode();
                 write_atomic(&dest, opts.keep_broken, |out| {
                     let mut reader = ProgressReader::new(&mut file, progress);
@@ -218,9 +223,7 @@ pub fn extract_zip(
                     budget.charge(copied)?;
                     Ok(())
                 })?;
-                if let Some(modified) = modified
-                    && let Err(err) = crate::fs::metadata::restore_mtime(&dest, modified)
-                {
+                if let Err(err) = restore_entry_time(&dest, modified, opts) {
                     report.warnings.push(err.to_string());
                 }
                 if let Some(mode) = mode

@@ -8,6 +8,7 @@ mod add_dialog;
 mod app;
 mod chrome;
 mod explorer;
+mod extract_dialog;
 mod icons;
 mod settings;
 mod shell_icons;
