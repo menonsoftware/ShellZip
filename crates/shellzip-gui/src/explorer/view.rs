@@ -8,6 +8,7 @@ use shellzip_core::format_crc;
 use super::appearance;
 use super::model::{self, Row, RowKind, SortColumn, SortOrder};
 use crate::icons::{self, Caret};
+use crate::shell_icons::{self, IconCache};
 use crate::theme::{INK, SELECT_TEXT};
 
 /// Selection and sort for the file pane.
@@ -126,12 +127,14 @@ impl Explorer {
 /// Paint `rows` and return the index that was double-clicked.
 ///
 /// A header click reorders `rows` before the body is built, so the new order
-/// is visible on the same frame. `scroll_to` is consumed once.
+/// is visible on the same frame. `scroll_to` is consumed once. Each name cell
+/// uses a shell icon from `cache`, or a Lucide glyph until that icon arrives.
 pub fn show(
     ui: &mut egui::Ui,
     explorer: &mut Explorer,
     rows: &mut [Row],
     scroll_to: &mut Option<usize>,
+    cache: &mut IconCache,
 ) -> Option<usize> {
     // Cells share edges, so the selection fill is one bar instead of a strip behind each label.
     ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
@@ -226,12 +229,15 @@ pub fn show(
             let selected = explorer.selected.contains(&item.key);
             row.set_selected(selected);
             let text = if selected { SELECT_TEXT } else { INK };
-            let (icon, tint) = appearance::row_glyph(item.kind, selected);
+            let key = shell_icons::row_icon_key(item);
             // The icon lives in its own unclipped cell. Clipping the name text
             // was also clipping the SVG down to an empty square.
             row.col(|ui| {
                 ui.add_space(8.0);
-                icons::show(ui, icon, tint, icons::SIZE_ROW);
+                if !shell_icons::paint(ui, cache, &key, icons::SIZE_ROW) {
+                    let (icon, tint) = appearance::row_glyph(item.kind, selected);
+                    icons::show(ui, icon, tint, icons::SIZE_ROW);
+                }
             });
             row.col(|ui| {
                 ui.add_space(4.0);

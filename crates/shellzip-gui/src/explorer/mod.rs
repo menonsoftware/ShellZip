@@ -8,6 +8,7 @@
 mod appearance;
 mod listing;
 mod model;
+mod tree;
 mod view;
 
 pub use listing::read_directory;
@@ -15,4 +16,5 @@ pub use model::{
     ArchiveIndex, Jump, JumpTarget, Row, RowKind, Target, archive_prefix, folder_parent,
     is_supported_archive, jumps, location_text, path_under, sort_rows, totals, totals_label,
 };
+pub use tree::{FolderTree, TreeFocus, TreeRow};
 pub use view::{Explorer, show};

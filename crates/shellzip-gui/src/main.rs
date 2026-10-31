@@ -10,6 +10,7 @@ mod chrome;
 mod explorer;
 mod icons;
 mod settings;
+mod shell_icons;
 mod theme;
 mod worker;
 

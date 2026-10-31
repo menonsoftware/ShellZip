@@ -2,7 +2,6 @@
   "6": "stream.rs",
   "10": "archiver/zip.rs",
   "14": "round_trip.rs",
-  "18": "Error",
   "19": "extract.rs",
   "22": "src/cli.rs",
   "24": "Command",

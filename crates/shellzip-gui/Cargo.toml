@@ -15,9 +15,24 @@ directories = "6.0.0"
 eframe = "0.32"
 egui = "0.32"
 egui_extras = { version = "0.32", features = ["all_loaders"] }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 rfd = "0.15"
 shellzip-core = { path = "../shellzip-core", features = ["rar", "sevenz-codecs", "sevenz-parallel"] }
+sysinfo = { version = "0.40.1", default-features = false, features = ["disk"] }
 toml = "1.1.8"
 
 [lints]
 workspace = true
+
+[target."cfg(windows)".dependencies]
+file_icon_provider = "1.0.2"
+systemicons = "0.9.13"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+file_icon_provider = "1.0.2"
+systemicons = "0.9.13"
+
+[target.'cfg(target_os="linux")'.dependencies]
+freedesktop-icons = "0.4.0"
+resvg = "0.49.0"
+xdg-mime = "0.4.0"
