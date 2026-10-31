@@ -71,6 +71,8 @@ pub struct Palette {
     pub hover: Color32,
     /// Pressed widget fill.
     pub active: Color32,
+    /// Text fields and small chrome buttons. Lighter than the bar in dark mode.
+    pub field: Color32,
     /// Filled directory icon. A gold outline reads as brown at 16 px.
     pub folder: Color32,
     /// Add toolbar glyph.
@@ -96,6 +98,7 @@ pub const LIGHT: Palette = Palette {
     select_text: Color32::WHITE,
     hover: Color32::from_rgb(229, 241, 251),
     active: Color32::from_rgb(204, 228, 247),
+    field: Color32::from_rgb(255, 255, 255),
     folder: Color32::from_rgb(255, 196, 24),
     add: Color32::from_rgb(0, 112, 204),
     extract: Color32::from_rgb(194, 105, 10),
@@ -103,19 +106,20 @@ pub const LIGHT: Palette = Palette {
     open: Color32::from_rgb(37, 99, 235),
 };
 
-/// Dark file manager. Selection blue and folder gold stay; glyphs are brighter.
+/// Dark file manager. The list is the well; fields and headers sit above it.
 pub const DARK: Palette = Palette {
-    canvas: Color32::from_rgb(0x1F, 0x1F, 0x1F),
-    panel: Color32::from_rgb(0x2B, 0x2B, 0x2B),
-    line: Color32::from_rgb(0x3F, 0x3F, 0x3F),
-    muted: Color32::from_rgb(0xB4, 0xB4, 0xB4),
+    canvas: Color32::from_rgb(0x16, 0x16, 0x16),
+    panel: Color32::from_rgb(0x2A, 0x2A, 0x2A),
+    line: Color32::from_rgb(0x6A, 0x6A, 0x6A),
+    muted: Color32::from_rgb(0xC4, 0xC4, 0xC4),
     ink: Color32::from_rgb(0xF3, 0xF3, 0xF3),
     danger: Color32::from_rgb(0xF2, 0x5C, 0x5C),
     ok: Color32::from_rgb(0x4A, 0xDE, 0x80),
     select: Color32::from_rgb(0, 120, 215),
     select_text: Color32::WHITE,
-    hover: Color32::from_rgb(0x33, 0x33, 0x33),
-    active: Color32::from_rgb(0x3A, 0x3A, 0x3A),
+    hover: Color32::from_rgb(0x45, 0x45, 0x45),
+    active: Color32::from_rgb(0x4E, 0x4E, 0x4E),
+    field: Color32::from_rgb(0x3A, 0x3A, 0x3A),
     folder: Color32::from_rgb(0xFF, 0xC4, 0x18),
     add: Color32::from_rgb(0x4D, 0xA3, 0xFF),
     extract: Color32::from_rgb(0xF0, 0xA0, 0x4B),
@@ -147,20 +151,26 @@ fn visuals(palette: &Palette, mut visuals: egui::Visuals) -> egui::Visuals {
     visuals.window_fill = palette.canvas;
     visuals.panel_fill = palette.panel;
     visuals.faint_bg_color = palette.panel;
-    visuals.extreme_bg_color = palette.canvas;
+    visuals.extreme_bg_color = palette.field;
     visuals.code_bg_color = palette.canvas;
+    let border = Stroke::new(1.0_f32, palette.line);
     visuals.widgets.noninteractive.bg_fill = palette.panel;
+    visuals.widgets.noninteractive.bg_stroke = border;
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, palette.ink);
-    visuals.widgets.inactive.bg_fill = palette.canvas;
+    visuals.widgets.inactive.bg_fill = palette.field;
     visuals.widgets.inactive.weak_bg_fill = palette.canvas;
+    visuals.widgets.inactive.bg_stroke = border;
     visuals.widgets.inactive.fg_stroke.color = palette.ink;
     visuals.widgets.hovered.bg_fill = palette.hover;
     visuals.widgets.hovered.weak_bg_fill = palette.hover;
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, palette.ink);
     visuals.widgets.hovered.fg_stroke.color = palette.ink;
     visuals.widgets.active.bg_fill = palette.active;
     visuals.widgets.active.weak_bg_fill = palette.hover;
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, palette.open);
     visuals.widgets.active.fg_stroke.color = palette.ink;
-    visuals.widgets.open.bg_fill = palette.canvas;
+    visuals.widgets.open.bg_fill = palette.field;
+    visuals.widgets.open.bg_stroke = border;
     visuals.widgets.open.fg_stroke.color = palette.ink;
     visuals.selection.bg_fill = palette.select;
     visuals.selection.stroke = Stroke::new(1.0_f32, palette.select_text);
@@ -188,7 +198,9 @@ mod tests {
 
         ctx.set_theme(egui::Theme::Dark);
         assert_eq!(ctx.style().visuals.panel_fill, DARK.panel);
+        assert_eq!(ctx.style().visuals.extreme_bg_color, DARK.field);
         assert_eq!(ctx.style().visuals.selection.bg_fill, DARK.select);
+        assert_ne!(DARK.field, DARK.panel);
         assert_eq!(palette(&ctx).add, DARK.add);
     }
 

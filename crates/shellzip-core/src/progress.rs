@@ -16,6 +16,12 @@ pub trait ProgressSink: Send + Sync {
     fn is_cancelled(&self) -> bool {
         false
     }
+    /// Block this worker while the job is paused.
+    ///
+    /// Called from the archive thread only. The default returns at once.
+    /// A paused RAR entry still finishes its current staged copy, then waits
+    /// on the next [`ensure_running`] check.
+    fn wait_if_paused(&self) {}
 }
 
 /// Stop when the sink has been cancelled.
@@ -24,6 +30,7 @@ pub trait ProgressSink: Send + Sync {
 ///
 /// Returns [`crate::Error::Interrupted`] after a cancel request.
 pub fn ensure_running(progress: &dyn ProgressSink) -> Result<(), crate::Error> {
+    progress.wait_if_paused();
     if progress.is_cancelled() {
         Err(crate::Error::Interrupted)
     } else {
@@ -58,6 +65,7 @@ impl<'a, R> ProgressReader<'a, R> {
 
 impl<R: std::io::Read> std::io::Read for ProgressReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.progress.wait_if_paused();
         if self.progress.is_cancelled() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Interrupted,
@@ -69,5 +77,40 @@ impl<R: std::io::Read> std::io::Read for ProgressReader<'_, R> {
             self.progress.advance(n as u64);
         }
         Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Cursor, Read};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    struct CountWait {
+        waits: AtomicUsize,
+    }
+
+    impl ProgressSink for CountWait {
+        fn begin(&self, _label: &str, _total_bytes: u64) {}
+        fn begin_entry(&self, _name: &str, _bytes: u64) {}
+        fn advance(&self, _bytes: u64) {}
+        fn end_entry(&self) {}
+        fn message(&self, _text: &str) {}
+        fn wait_if_paused(&self) {
+            self.waits.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn reader_and_ensure_running_honor_pause() {
+        let sink = CountWait {
+            waits: AtomicUsize::new(0),
+        };
+        ensure_running(&sink).unwrap();
+        let mut reader = ProgressReader::new(Cursor::new(b"ab"), &sink);
+        let mut buf = [0; 8];
+        assert_eq!(reader.read(&mut buf).unwrap(), 2);
+        assert!(sink.waits.load(Ordering::Relaxed) >= 2);
     }
 }

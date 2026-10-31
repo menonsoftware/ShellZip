@@ -10,6 +10,7 @@ mod chrome;
 mod explorer;
 mod extract_dialog;
 mod icons;
+mod progress_dialog;
 mod settings;
 mod shell_icons;
 mod theme;

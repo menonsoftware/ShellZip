@@ -7,7 +7,7 @@
 use egui::{Align2, Color32, FontId, Rect, Sense, Vec2};
 
 use crate::explorer::{FolderTree, Jump, JumpTarget, TreeFocus, TreeRow};
-use crate::icons::{self, Caret, Icon};
+use crate::icons::{self, Icon};
 use crate::shell_icons::{self, IconCache, IconKey};
 use crate::theme::{self, Preference};
 use shellzip_core::{SevenZMethod, ZipMethod};
@@ -23,6 +23,8 @@ pub struct PackSettings {
     pub sevenz_method: SevenZMethod,
     /// Solid 7z blocks. Default is on.
     pub solid: bool,
+    /// Start an add with the progress window hidden.
+    pub background: bool,
 }
 
 /// Menu entries that run a command.
@@ -73,6 +75,8 @@ pub enum AddressEvent {
     Up,
     /// Enter in the path field.
     Submit,
+    /// Reload the folder or archive that is open.
+    Refresh,
     /// A parent chosen from the dropdown.
     Jump(JumpTarget),
 }
@@ -138,7 +142,8 @@ pub fn menu_bar(ui: &mut egui::Ui, theme: Preference) -> Option<MenuCommand> {
 /// Large icons with captions, using the Lucide set already shipped with the window.
 pub fn toolbar(
     ui: &mut egui::Ui,
-    busy: bool,
+    operation: bool,
+    locked: bool,
     archive_ready: bool,
     can_delete: bool,
 ) -> Option<ToolCommand> {
@@ -152,7 +157,7 @@ pub fn toolbar(
             colors.add,
             "Add",
             "Create an archive",
-            !busy,
+            !operation && !locked,
         ) {
             command = Some(ToolCommand::Add);
         }
@@ -162,7 +167,7 @@ pub fn toolbar(
             colors.extract,
             "Extract To",
             "Extract into a folder",
-            !busy && archive_ready,
+            !operation && !locked && archive_ready,
         ) {
             command = Some(ToolCommand::Extract);
         }
@@ -172,7 +177,7 @@ pub fn toolbar(
             colors.test,
             "Test",
             "Test the archive",
-            !busy && archive_ready,
+            !operation && !locked && archive_ready,
         ) {
             command = Some(ToolCommand::Test);
         }
@@ -192,7 +197,7 @@ pub fn toolbar(
             colors.open,
             "Info",
             "Details of this folder or archive",
-            !busy,
+            !locked,
         ) {
             command = Some(ToolCommand::Info);
         }
@@ -242,11 +247,12 @@ fn crumb_label(jump: &Jump) -> String {
     }
 }
 
-/// Up button, editable path, and a folder-tree dropdown.
+/// Up button, path field, folder-tree dropdown, and refresh.
 pub fn address_bar(
     ui: &mut egui::Ui,
     text: &mut String,
     can_up: bool,
+    can_refresh: bool,
     tree: &mut FolderTree,
     focus: &TreeFocus,
     cache: &mut IconCache,
@@ -267,7 +273,7 @@ pub fn address_bar(
                 event = Some(AddressEvent::Up);
             }
         });
-        let width = (ui.available_width() - 28.0).max(48.0);
+        let width = (ui.available_width() - 68.0).max(48.0);
         let response = ui.add(
             egui::TextEdit::singleline(text)
                 .desired_width(width)
@@ -279,6 +285,9 @@ pub fn address_bar(
         if let Some(jump) = parent_menu(ui, tree, focus, cache, bar) {
             event = Some(jump);
         }
+        if well_button(ui, Icon::Refresh, "Refresh", can_refresh).clicked() {
+            event = Some(AddressEvent::Refresh);
+        }
     });
     event
 }
@@ -289,32 +298,59 @@ pub struct StatusEvent {
     pub dismiss_error: bool,
     /// The cancel button was pressed.
     pub cancel: bool,
+    /// Pause or continue the running extract or add.
+    pub toggle_pause: bool,
+    /// Show the progress window again.
+    pub details: bool,
+}
+
+/// Compact progress drawn while a job runs, including one sent to the background.
+pub struct RunningStatus {
+    /// Current file or operation label.
+    pub text: String,
+    /// Total-bar fraction, `0.0` when the total is unknown.
+    pub fraction: f32,
+    /// Animate the bar because the total size is unknown.
+    pub indeterminate: bool,
+    /// The worker is paused.
+    pub paused: bool,
+    /// Show Pause or Continue. Extract and add only.
+    pub pause: bool,
+    /// Show Details. A background extract or add only.
+    pub details: bool,
 }
 
 /// Totals on the right. Progress, errors, and job notes stay on the left.
 pub fn status_bar(
     ui: &mut egui::Ui,
     summary: &str,
-    busy: bool,
-    progress: (String, String, u64, u64),
+    running: Option<&RunningStatus>,
     error: Option<&str>,
     note: &str,
 ) -> StatusEvent {
     let mut dismiss = false;
     let mut cancel = false;
+    let mut toggle_pause = false;
+    let mut details = false;
     let colors = theme::palette(ui.ctx());
     ui.horizontal(|ui| {
-        if busy {
+        if let Some(job) = running {
             icons::show_spinning(ui, colors.ink, icons::SIZE_STATUS);
-            let (label, entry, done, total) = progress;
-            let fraction = if total == 0 {
-                0.0
-            } else {
-                (done as f32 / total as f32).clamp(0.0, 1.0)
-            };
-            ui.add(egui::ProgressBar::new(fraction).desired_width(160.0));
-            let text = if entry.is_empty() { label } else { entry };
-            ui.label(egui::RichText::new(text).color(colors.muted));
+            ui.add(
+                egui::ProgressBar::new(job.fraction)
+                    .animate(job.indeterminate)
+                    .desired_width(160.0),
+            );
+            ui.label(egui::RichText::new(&job.text).color(colors.muted));
+            if job.pause {
+                let label = if job.paused { "Continue" } else { "Pause" };
+                if ui.button(label).clicked() {
+                    toggle_pause = true;
+                }
+            }
+            if job.details && ui.button("Details").clicked() {
+                details = true;
+            }
             if ui.button("Cancel").clicked() {
                 cancel = true;
             }
@@ -336,9 +372,22 @@ pub fn status_bar(
             ui.label(summary);
         });
     });
+    if running.is_some()
+        && let Some(message) = error
+    {
+        ui.horizontal(|ui| {
+            icons::show(ui, Icon::TriangleAlert, colors.danger, icons::SIZE_STATUS);
+            ui.colored_label(colors.danger, message);
+            if dismiss_button(ui).clicked() {
+                dismiss = true;
+            }
+        });
+    }
     StatusEvent {
         dismiss_error: dismiss,
         cancel,
+        toggle_pause,
+        details,
     }
 }
 
@@ -581,24 +630,14 @@ pub(crate) fn tree_row(
             }
             ui.add_space(4.0 + f32::from(row.depth) * 14.0);
             if row.expandable {
-                let (caret_rect, caret_response) =
-                    ui.allocate_exact_size(egui::vec2(14.0, 18.0), Sense::click());
-                let mark = egui::Rect::from_center_size(caret_rect.center(), egui::vec2(8.0, 6.0));
-                icons::paint_caret(
-                    ui,
-                    if row.expanded {
-                        Caret::Down
-                    } else {
-                        Caret::Right
-                    },
-                    text,
-                    mark,
-                );
-                if caret_response.clicked() {
+                let (mark_rect, mark_response) =
+                    ui.allocate_exact_size(egui::vec2(16.0, 18.0), Sense::click());
+                icons::paint_expander(ui, row.expanded, text, mark_rect);
+                if mark_response.clicked() {
                     toggle = true;
                 }
             } else {
-                ui.add_space(14.0);
+                ui.add_space(16.0);
             }
             // Shell pictures keep their own colors on the selection bar.
             // A miss falls back to the yellow folder, or the file glyph for an extension.
@@ -648,13 +687,38 @@ fn dropdown_height(space_below: f32) -> f32 {
 }
 
 fn caret_button(ui: &mut egui::Ui, tip: &str) -> egui::Response {
+    well_button(ui, Icon::ChevronDown, tip, true)
+}
+
+/// Bordered chrome button. The address field, refresh, and tree drop-down share it.
+pub(crate) fn well_button(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    tip: &str,
+    enabled: bool,
+) -> egui::Response {
     let colors = theme::palette(ui.ctx());
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(22.0, 22.0), Sense::click());
-    if response.hovered() {
-        ui.painter().rect_filled(rect, 2.0, colors.hover);
-    }
-    let caret = Rect::from_center_size(rect.center(), Vec2::new(9.0, 6.0));
-    icons::paint_caret(ui, Caret::Down, colors.ink, caret);
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(26.0), sense);
+    let fill = if enabled && response.hovered() {
+        colors.hover
+    } else {
+        colors.field
+    };
+    ui.painter().rect_filled(rect, 2.0, fill);
+    ui.painter().rect_stroke(
+        rect,
+        2.0,
+        egui::Stroke::new(1.0_f32, colors.line),
+        egui::StrokeKind::Inside,
+    );
+    let tint = if enabled { colors.ink } else { colors.muted };
+    let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(14.0));
+    icons::paint(ui, icon, tint, icon_rect);
     response.on_hover_text(tip)
 }
 

@@ -162,7 +162,7 @@ pub fn show(
 
     let mut resorted = false;
     let table = builder.header(24.0, |mut header| {
-        header.col(|_| {});
+        header.col(paint_header_cell);
         if header_clicked(
             &mut header,
             "Name",
@@ -289,6 +289,7 @@ fn header_clicked(
     order: SortOrder,
 ) -> bool {
     let (_, response) = header.col(|ui| {
+        paint_header_cell(ui);
         ui.add_space(6.0);
         ui.strong(label);
         if active {
@@ -304,6 +305,16 @@ fn header_clicked(
         }
     });
     response.clicked()
+}
+
+fn paint_header_cell(ui: &mut egui::Ui) {
+    let colors = theme::palette(ui.ctx());
+    let rect = ui.max_rect();
+    ui.painter().rect_filled(rect, 0.0, colors.panel);
+    ui.painter().line_segment(
+        [rect.left_bottom(), rect.right_bottom()],
+        egui::Stroke::new(1.0_f32, colors.line),
+    );
 }
 
 fn cell_text(ui: &mut egui::Ui, text: &str, color: egui::Color32) {

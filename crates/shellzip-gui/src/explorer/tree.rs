@@ -248,8 +248,9 @@ impl FolderTree {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 Msg::Dirs { path, dirs } => {
-                    self.pending.remove(&path);
-                    self.children.insert(path, dirs);
+                    if self.pending.remove(&path) {
+                        self.children.insert(path, dirs);
+                    }
                 }
                 Msg::Volumes(volumes) => {
                     self.volumes = volumes;
@@ -299,6 +300,18 @@ impl FolderTree {
         self.revealed_len = spine.len();
         for id in spine {
             self.expanded.insert(id);
+        }
+    }
+
+    /// Drop cached folders and drives so the next paint reads them again.
+    ///
+    /// A listing that was already in flight is ignored. Expanded folders stay open.
+    pub fn refresh(&mut self) {
+        self.children.clear();
+        self.pending.clear();
+        if !self.loader_dead {
+            self.volumes_started = false;
+            self.volumes_ready = false;
         }
     }
 
@@ -1346,6 +1359,49 @@ mod tests {
             matches!(request_rx.try_recv(), Err(mpsc::TryRecvError::Empty)),
             "a failed loader must not send directory or volume jobs"
         );
+    }
+
+    #[test]
+    fn refresh_drops_a_cached_folder_and_asks_for_it_again() {
+        let (tx, request_rx) = mpsc::channel();
+        let (result_tx, rx) = mpsc::channel();
+        let home = PathBuf::from("/home/user");
+        let mut tree = FolderTree::with_channels(
+            Namespace::Unix,
+            Places {
+                desktop: None,
+                home: Some(home.clone()),
+                known: Vec::new(),
+            },
+            tx,
+            rx,
+            None,
+        );
+        tree.volumes_started = true;
+        tree.volumes_ready = true;
+        tree.children.insert(home.clone(), vec![home.join("old")]);
+        tree.expanded.insert(NodeId::Home);
+        result_tx
+            .send(Msg::Dirs {
+                path: home.clone(),
+                dirs: vec![home.join("stale")],
+            })
+            .expect("test channel");
+        tree.refresh();
+        tree.poll();
+        assert!(
+            tree.children.is_empty(),
+            "a listing already in flight is ignored"
+        );
+        assert!(tree.is_loading());
+        let _rows = tree.rows(&TreeFocus::folder(&home));
+        let mut saw_home = false;
+        while let Ok(job) = request_rx.try_recv() {
+            if matches!(job, Job::Dirs(path) if path == home) {
+                saw_home = true;
+            }
+        }
+        assert!(saw_home, "the expanded home folder is read again");
     }
 
     #[test]

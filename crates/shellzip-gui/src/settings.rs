@@ -56,6 +56,8 @@ pub struct ExtractSettings {
     pub delete: DeleteArchive,
     /// Send a deleted archive to the recycle bin.
     pub recycle: bool,
+    /// Start with the progress window hidden so the file list stays usable.
+    pub background: bool,
 }
 
 impl Default for ExtractSettings {
@@ -71,6 +73,7 @@ impl Default for ExtractSettings {
             restore_accessed: false,
             delete: DeleteArchive::Never,
             recycle: false,
+            background: false,
         }
     }
 }
@@ -126,6 +129,7 @@ fn defaults() -> StoredSettings {
             method: ZipMethod::Deflate,
             sevenz_method: SevenZMethod::Lzma2,
             solid: true,
+            background: false,
         },
         extract: ExtractSettings::default(),
         recent: Vec::new(),
@@ -158,6 +162,10 @@ fn serialize(
         toml::Value::String(sevenz_name(pack.sevenz_method).to_string()),
     );
     table.insert("solid".to_string(), toml::Value::Boolean(pack.solid));
+    table.insert(
+        "add_background".to_string(),
+        toml::Value::Boolean(pack.background),
+    );
     table.insert(
         "overwrite".to_string(),
         toml::Value::String(overwrite_name(extract.overwrite).to_string()),
@@ -199,6 +207,10 @@ fn serialize(
         toml::Value::String(delete_name(extract.delete).to_string()),
     );
     table.insert("recycle".to_string(), toml::Value::Boolean(extract.recycle));
+    table.insert(
+        "extract_background".to_string(),
+        toml::Value::Boolean(extract.background),
+    );
     table.insert(
         "recent".to_string(),
         toml::Value::Array(recent.iter().cloned().map(toml::Value::String).collect()),
@@ -280,6 +292,7 @@ fn parse(text: &str) -> Option<StoredSettings> {
             method,
             sevenz_method,
             solid,
+            background: bool_or("add_background", false),
         },
         extract: ExtractSettings {
             update,
@@ -292,6 +305,7 @@ fn parse(text: &str) -> Option<StoredSettings> {
             restore_accessed: bool_or("restore_accessed", false),
             delete,
             recycle: bool_or("recycle", false),
+            background: bool_or("extract_background", false),
         },
         recent,
         theme: table
@@ -364,6 +378,7 @@ mod tests {
             method: ZipMethod::Zstd,
             sevenz_method: SevenZMethod::Ppmd,
             solid: false,
+            background: true,
         };
         let extract = ExtractSettings {
             update: ExtractUpdate::Freshen,
@@ -376,6 +391,7 @@ mod tests {
             restore_accessed: true,
             delete: DeleteArchive::Ask,
             recycle: true,
+            background: true,
         };
         let recent = vec![r"C:\work\out".to_string()];
         let parsed = parse(&serialize(&pack, &extract, &recent, Preference::Dark).expect("toml"))
@@ -398,6 +414,8 @@ flat = true
         assert_eq!(parsed.extract.paths, PathMode::None);
         assert_eq!(parsed.extract.overwrite, Overwrite::Never);
         assert_eq!(parsed.pack.level, 3);
+        assert!(!parsed.pack.background);
+        assert!(!parsed.extract.background);
         assert_eq!(parsed.theme, Preference::System);
     }
 }

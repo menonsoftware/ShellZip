@@ -45,6 +45,8 @@ pub struct AddRequest {
     pub sfx_payload: SfxPayload,
     /// `None` leaves an existing ZIP comment unchanged.
     pub comment: Option<String>,
+    /// Hide the progress window and leave the file list usable.
+    pub background: bool,
 }
 
 /// What the user did with the dialog this frame.
@@ -73,6 +75,7 @@ pub struct AddDialog {
     /// Set when the user edits the comment, so an empty box can clear one.
     comment_touched: bool,
     inputs: Vec<PathBuf>,
+    background: bool,
     help: bool,
     notice: Option<String>,
 }
@@ -96,6 +99,7 @@ impl AddDialog {
             comment: String::new(),
             comment_touched: false,
             inputs,
+            background: options.background,
             help: false,
             notice: None,
         }
@@ -290,6 +294,8 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut AddDialog) {
                 .id_salt("shellzip-archive-password"),
         );
     });
+    ui.add_space(6.0);
+    ui.checkbox(&mut dialog.background, "Start in background");
 }
 
 fn comment_tab(ui: &mut egui::Ui, dialog: &mut AddDialog) {
@@ -550,6 +556,7 @@ impl AddDialog {
                 SfxPayload::Zip
             },
             comment,
+            background: self.background,
         })
     }
 }

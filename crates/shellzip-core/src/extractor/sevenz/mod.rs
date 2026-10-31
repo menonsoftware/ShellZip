@@ -385,6 +385,7 @@ struct ProgressWrite<'a, W> {
 
 impl<W: Write> Write for ProgressWrite<'_, W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.progress.wait_if_paused();
         if self.progress.is_cancelled() {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "interrupted"));
         }

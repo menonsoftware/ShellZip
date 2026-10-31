@@ -65,6 +65,10 @@ pub enum Icon {
     FolderSearch,
     /// Explain the dialog.
     CircleHelp,
+    /// Reload the current folder or archive.
+    Refresh,
+    /// Open a drop-down list.
+    ChevronDown,
 }
 
 /// Up or down triangle, painted so we do not depend on font glyphs.
@@ -72,10 +76,8 @@ pub enum Icon {
 pub enum Caret {
     /// Sort ascending, or the address-bar parent list.
     Up,
-    /// Sort descending, or an expanded tree node.
+    /// Sort descending.
     Down,
-    /// A collapsed tree node.
-    Right,
 }
 
 impl Icon {
@@ -101,6 +103,8 @@ impl Icon {
             Self::FolderPlus => "bytes://lucide/folder-plus.svg",
             Self::FolderSearch => "bytes://lucide/folder-search.svg",
             Self::CircleHelp => "bytes://lucide/circle-help.svg",
+            Self::Refresh => "bytes://lucide/refresh-cw.svg",
+            Self::ChevronDown => "bytes://lucide/chevron-down.svg",
         }
     }
 
@@ -126,12 +130,14 @@ impl Icon {
             Self::FolderPlus => include_bytes!("../assets/lucide/folder-plus.svg"),
             Self::FolderSearch => include_bytes!("../assets/lucide/folder-search.svg"),
             Self::CircleHelp => include_bytes!("../assets/lucide/circle-help.svg"),
+            Self::Refresh => include_bytes!("../assets/lucide/refresh-cw.svg"),
+            Self::ChevronDown => include_bytes!("../assets/lucide/chevron-down.svg"),
         }
     }
 }
 
 /// Every icon, so the SVG textures can be created before the file table asks for them.
-pub const ALL: [Icon; 20] = [
+pub const ALL: [Icon; 22] = [
     Icon::FolderOpen,
     Icon::FolderDown,
     Icon::CircleCheck,
@@ -152,6 +158,8 @@ pub const ALL: [Icon; 20] = [
     Icon::FolderPlus,
     Icon::FolderSearch,
     Icon::CircleHelp,
+    Icon::Refresh,
+    Icon::ChevronDown,
 ];
 
 /// Rasterize the icons once, at the master pixel size.
@@ -199,6 +207,26 @@ pub fn caret(ui: &mut egui::Ui, caret: Caret, color: Color32) {
     paint_caret(ui, caret, color, rect);
 }
 
+/// Classic tree box: a square with `+` when collapsed and `-` when open.
+pub fn paint_expander(ui: &mut egui::Ui, expanded: bool, color: Color32, rect: Rect) {
+    let box_rect = Rect::from_center_size(rect.center(), Vec2::splat(11.0));
+    let stroke = egui::Stroke::new(1.0_f32, color);
+    ui.painter()
+        .rect_stroke(box_rect, 1.0, stroke, egui::StrokeKind::Inside);
+    let mid = box_rect.center();
+    let arm = 3.0;
+    ui.painter().line_segment(
+        [mid - egui::vec2(arm, 0.0), mid + egui::vec2(arm, 0.0)],
+        stroke,
+    );
+    if !expanded {
+        ui.painter().line_segment(
+            [mid - egui::vec2(0.0, arm), mid + egui::vec2(0.0, arm)],
+            stroke,
+        );
+    }
+}
+
 /// Draw a filled triangle in `rect`.
 pub fn paint_caret(ui: &mut egui::Ui, caret: Caret, color: Color32, rect: Rect) {
     let points = match caret {
@@ -211,11 +239,6 @@ pub fn paint_caret(ui: &mut egui::Ui, caret: Caret, color: Color32, rect: Rect) 
             rect.left_top(),
             rect.right_top(),
             egui::pos2(rect.center().x, rect.bottom()),
-        ],
-        Caret::Right => vec![
-            rect.left_top(),
-            rect.left_bottom(),
-            egui::pos2(rect.right(), rect.center().y),
         ],
     };
     ui.painter().add(egui::Shape::convex_polygon(
