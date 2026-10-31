@@ -234,7 +234,7 @@ pub fn address_bar(
     let bar = global_rect(ui);
     ui.horizontal(|ui| {
         ui.add_enabled_ui(can_up, |ui| {
-            if icon_button(ui, Icon::ArrowUp, "Up one level").clicked() {
+            if icon_button(ui, Icon::ArrowUp, INK, "Up one level", true).clicked() {
                 event = Some(AddressEvent::Up);
             }
         });
@@ -434,13 +434,25 @@ fn dismiss_button(ui: &mut egui::Ui) -> egui::Response {
     response.on_hover_text("Dismiss")
 }
 
-fn icon_button(ui: &mut egui::Ui, icon: Icon, tip: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(28.0, 24.0), Sense::click());
-    if response.hovered() {
+pub(crate) fn icon_button(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    tint: Color32,
+    tip: &str,
+    enabled: bool,
+) -> egui::Response {
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), sense);
+    if enabled && response.hovered() {
         ui.painter().rect_filled(rect, 2.0, HOVER);
     }
+    let color = if enabled { tint } else { MUTED };
     let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(icons::SIZE_ROW));
-    icons::paint(ui, icon, INK, icon_rect);
+    icons::paint(ui, icon, color, icon_rect);
     response.on_hover_text(tip)
 }
 
