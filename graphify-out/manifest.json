@@ -642,9 +642,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/extract_dialog.rs": {
-    "mtime": 1793462300.4241881,
-    "seen": 1793462433.2983038,
-    "ast_hash": "b1e786bd43e0b2eaa6cde498c6573ddd",
+    "mtime": 1793463925.5729702,
+    "seen": 1793463944.2775354,
+    "ast_hash": "d5442c57c75bd1e72c8a2a2b808dfda5",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/assets/lucide/check.svg": {

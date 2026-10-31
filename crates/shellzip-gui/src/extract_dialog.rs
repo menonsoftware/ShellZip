@@ -22,6 +22,9 @@ fn colors(ui: &egui::Ui) -> theme::Palette {
 /// Every option group uses this inner width, on every page.
 const GROUP_INNER: f32 = 320.0;
 
+/// Inner width of the extract dialog. The path field and folder tree stay inside it.
+const DIALOG_WIDTH: f32 = 760.0;
+
 /// Which page of the extract dialog is visible.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -182,10 +185,13 @@ pub fn show(
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
-        .default_width(760.0)
+        .default_width(DIALOG_WIDTH)
+        .min_width(DIALOG_WIDTH)
+        .max_width(DIALOG_WIDTH)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
-            ui.set_min_size(egui::vec2(720.0, 440.0));
+            ui.set_width(DIALOG_WIDTH);
+            ui.set_min_height(440.0);
             tabs(ui, dialog);
             ui.separator();
             match dialog.tab {
@@ -282,9 +288,10 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCa
     ui.horizontal(|ui| {
         const GAP: f32 = 2.0;
         let buttons = 28.0 + GAP + 28.0 + GAP + 26.0;
+        let field = (DIALOG_WIDTH - buttons - 16.0).max(48.0);
         let response = ui.add(
             egui::TextEdit::singleline(&mut dialog.path)
-                .desired_width((ui.available_width() - buttons).max(48.0))
+                .desired_width(field)
                 .hint_text("Folder"),
         );
         if response.changed() {
@@ -439,11 +446,14 @@ fn folder_tree(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCa
     if let Some(message) = dialog.tree.loader_error() {
         ui.colored_label(colors(ui).danger, message);
     }
+    let tree_width = DIALOG_WIDTH - GROUP_INNER - 24.0;
+    ui.set_width(tree_width);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .max_height(320.0)
         .show(ui, |ui| {
-            ui.set_min_width(240.0);
+            let row_width = ui.available_width().clamp(240.0, tree_width);
+            ui.set_min_width(row_width);
             ui.set_min_height(280.0);
             let rows = dialog.tree.rows(&dialog.focus);
             for row in rows {
