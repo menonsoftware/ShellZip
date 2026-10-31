@@ -281,6 +281,7 @@ mod win {
 
     use shellzip_core::{Error, ExtractOpts, Overwrite, Password, ProgressSink, extract, list};
     use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
+    use windows_sys::Win32::UI::Controls::SetWindowTheme;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         EndDialog, GWLP_USERDATA, GetDlgItem, GetParent, GetWindowLongPtrW, GetWindowTextLengthW,
         GetWindowTextW, PostMessageW, SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowTextW,
@@ -292,6 +293,9 @@ mod win {
     const WM_EXTRACT_DONE: u32 = 0x8000 + 1;
     const PBM_SETPOS: u32 = 0x0402;
     const PBM_SETRANGE32: u32 = 0x0406;
+    const PBM_SETBARCOLOR: u32 = 0x0409;
+    /// Logo copper `#BE6133` as a `COLORREF` (`0x00BBGGRR`).
+    const RUST_BAR: usize = 0x0033_61BE;
     const CB_ADDSTRING: u32 = 0x0143;
     const WM_SETICON: u32 = 0x0080;
     const TIMER_PROGRESS: usize = 1;
@@ -548,6 +552,18 @@ mod win {
         set_window_text(combo, state.hint.as_os_str());
         let bar = GetDlgItem(hwnd, ID_PROGRESS);
         SendMessageW(bar, PBM_SETRANGE32, 0, 100);
+        style_progress(bar);
+    }
+
+    /// Classic-theme the bar so `PBM_SETBARCOLOR` is honored, then paint it rust.
+    #[allow(unsafe_code)]
+    unsafe fn style_progress(bar: HWND) {
+        if bar.is_null() {
+            return;
+        }
+        let empty = [0u16];
+        let _ = SetWindowTheme(bar, empty.as_ptr(), empty.as_ptr());
+        SendMessageW(bar, PBM_SETBARCOLOR, 0, RUST_BAR as isize);
     }
 
     #[allow(unsafe_code)]

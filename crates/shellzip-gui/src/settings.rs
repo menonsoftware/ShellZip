@@ -9,6 +9,58 @@ use shellzip_core::{ExtractUpdate, Overwrite, SevenZMethod, ZipMethod};
 use crate::chrome::PackSettings;
 use crate::theme::Preference;
 
+/// Toolbar glyph size. Large is 32 px; Extra large is 48 px.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToolbarSize {
+    /// 32 px glyphs. The default.
+    #[default]
+    Large,
+    /// 48 px glyphs.
+    ExtraLarge,
+}
+
+impl ToolbarSize {
+    /// Token stored in `settings.toml`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Large => "large",
+            Self::ExtraLarge => "extra_large",
+        }
+    }
+
+    /// Parse a settings token. Anything unrecognized is [`Self::Large`].
+    pub fn from_token(token: &str) -> Self {
+        match token {
+            "extra_large" => Self::ExtraLarge,
+            _ => Self::Large,
+        }
+    }
+
+    /// Painted glyph size in points.
+    pub fn icon_points(self) -> f32 {
+        match self {
+            Self::Large => 32.0,
+            Self::ExtraLarge => 48.0,
+        }
+    }
+
+    /// Clickable toolbar cell. Tight to the glyph so the strip stays compact.
+    pub fn button_size(self) -> egui::Vec2 {
+        match self {
+            Self::Large => egui::vec2(64.0, 52.0),
+            Self::ExtraLarge => egui::vec2(76.0, 68.0),
+        }
+    }
+
+    /// Caption under the glyph.
+    pub fn label_size(self) -> f32 {
+        match self {
+            Self::Large => 11.0,
+            Self::ExtraLarge => 12.0,
+        }
+    }
+}
+
 /// How archive paths are written into the destination.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PathMode {
@@ -168,6 +220,8 @@ pub struct StoredSettings {
     pub opened: Vec<String>,
     /// Light, dark, or follow the operating system.
     pub theme: Preference,
+    /// Large or extra-large toolbar glyphs.
+    pub toolbar: ToolbarSize,
     /// Generate-report choices.
     pub report: ReportSettings,
 }
@@ -190,6 +244,7 @@ pub fn save(
     recent: &[String],
     opened: &[String],
     theme: Preference,
+    toolbar: ToolbarSize,
     report: &ReportSettings,
 ) -> Result<(), String> {
     let Some(path) = settings_path() else {
@@ -199,7 +254,7 @@ pub fn save(
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("create {}: {err}", parent.display()))?;
     }
-    let body = serialize(pack, extract, recent, opened, theme, report)?;
+    let body = serialize(pack, extract, recent, opened, theme, toolbar, report)?;
     let tmp = path.with_extension("toml.tmp");
     std::fs::write(&tmp, body).map_err(|err| format!("write {}: {err}", tmp.display()))?;
     std::fs::rename(&tmp, &path).map_err(|err| format!("rename {}: {err}", path.display()))?;
@@ -219,6 +274,7 @@ fn defaults() -> StoredSettings {
         recent: Vec::new(),
         opened: Vec::new(),
         theme: Preference::System,
+        toolbar: ToolbarSize::Large,
         report: ReportSettings::default(),
     }
 }
@@ -234,6 +290,7 @@ fn serialize(
     recent: &[String],
     opened: &[String],
     theme: Preference,
+    toolbar: ToolbarSize,
     report: &ReportSettings,
 ) -> Result<String, String> {
     let mut table = toml::Table::new();
@@ -310,6 +367,10 @@ fn serialize(
     table.insert(
         "theme".to_string(),
         toml::Value::String(theme.as_str().to_string()),
+    );
+    table.insert(
+        "toolbar".to_string(),
+        toml::Value::String(toolbar.as_str().to_string()),
     );
     table.insert(
         "report_format".to_string(),
@@ -489,6 +550,11 @@ fn parse(text: &str) -> Option<StoredSettings> {
             .and_then(toml::Value::as_str)
             .map(Preference::from_token)
             .unwrap_or_default(),
+        toolbar: table
+            .get("toolbar")
+            .and_then(toml::Value::as_str)
+            .map(ToolbarSize::from_token)
+            .unwrap_or_default(),
         report,
     })
 }
@@ -606,7 +672,16 @@ mod tests {
             file_checksum: true,
         };
         let parsed = parse(
-            &serialize(&pack, &extract, &recent, &opened, Preference::Dark, &report).expect("toml"),
+            &serialize(
+                &pack,
+                &extract,
+                &recent,
+                &opened,
+                Preference::Dark,
+                ToolbarSize::ExtraLarge,
+                &report,
+            )
+            .expect("toml"),
         )
         .expect("settings");
         assert_eq!(parsed.pack, pack);
@@ -614,7 +689,26 @@ mod tests {
         assert_eq!(parsed.recent, recent);
         assert_eq!(parsed.opened, opened);
         assert_eq!(parsed.theme, Preference::Dark);
+        assert_eq!(parsed.toolbar, ToolbarSize::ExtraLarge);
         assert_eq!(parsed.report, report);
+    }
+
+    #[test]
+    fn toolbar_size_tokens_round_trip() {
+        assert_eq!(ToolbarSize::from_token("large"), ToolbarSize::Large);
+        assert_eq!(
+            ToolbarSize::from_token("extra_large"),
+            ToolbarSize::ExtraLarge
+        );
+        assert_eq!(ToolbarSize::from_token("nope"), ToolbarSize::Large);
+        assert_eq!(ToolbarSize::Large.as_str(), "large");
+        assert_eq!(ToolbarSize::Large.icon_points(), 32.0);
+        assert_eq!(ToolbarSize::ExtraLarge.icon_points(), 48.0);
+        assert_eq!(ToolbarSize::Large.button_size(), egui::vec2(64.0, 52.0));
+        assert_eq!(
+            ToolbarSize::ExtraLarge.button_size(),
+            egui::vec2(76.0, 68.0)
+        );
     }
 
     #[test]

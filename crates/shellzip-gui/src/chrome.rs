@@ -2,8 +2,7 @@
 //!
 //! The commands are the ones ShellZip already performs. Compression is chosen
 //! in the add dialog. Extract options are chosen in the extract dialog. The
-//! toolbar is Open, Add, Extract To, Test, Delete, Info, and About, painted
-//! with the brand glyphs in `assets/toolbar/`.
+//! toolbar is Open, Add, Extract To, Test, Delete, SFX, Info, and About.
 
 use std::path::Path;
 
@@ -11,6 +10,7 @@ use egui::{Align2, Color32, FontId, Rect, Sense, Vec2};
 
 use crate::explorer::{FolderTree, Jump, JumpTarget, TreeFocus, TreeRow};
 use crate::icons::{self, Icon, ToolIcon};
+use crate::settings::ToolbarSize;
 use crate::shell_icons::{self, IconCache, IconKey};
 use crate::theme::{self, Preference};
 use shellzip_core::{SevenZMethod, ZipMethod};
@@ -68,6 +68,10 @@ pub enum MenuCommand {
     OpenRecent(usize),
     /// Forget remembered archives and destinations.
     ClearHistory,
+    /// Toggle every row except `..`.
+    InvertSelection,
+    /// Large (32) or extra-large (48) toolbar glyphs.
+    ToolbarSize(ToolbarSize),
 }
 
 /// Toolbar buttons, in the same order as the reference layout.
@@ -87,6 +91,26 @@ pub enum ToolCommand {
     Info,
     /// Show the about window.
     About,
+    /// Wrap the open ZIP or 7z as a self-extractor.
+    Sfx,
+    /// Show one selected file.
+    View,
+}
+
+/// Which toolbar buttons are live this frame.
+pub struct ToolbarState {
+    /// An extract, add, test, or other job is running.
+    pub operation: bool,
+    /// The file list is locked by a foreground job or listing.
+    pub locked: bool,
+    /// An archive is open, or a supported archive is selected.
+    pub archive_ready: bool,
+    /// Selected ZIP members can be deleted.
+    pub can_delete: bool,
+    /// Exactly one file is selected for viewing.
+    pub can_view: bool,
+    /// The file pane is inside a ZIP or 7z.
+    pub into_archive: bool,
 }
 
 /// Address bar result.
@@ -108,6 +132,7 @@ pub enum AddressEvent {
 pub fn menu_bar(
     ui: &mut egui::Ui,
     theme: Preference,
+    toolbar: ToolbarSize,
     into_archive: bool,
     opened: &[String],
 ) -> Option<MenuCommand> {
@@ -182,6 +207,9 @@ pub fn menu_bar(
             if ui.button("Select none").clicked() {
                 command = Some(MenuCommand::SelectNone);
             }
+            if ui.button("Invert selection").clicked() {
+                command = Some(MenuCommand::InvertSelection);
+            }
         });
         ui.menu_button("Options", |ui| {
             for (choice, label) in [
@@ -194,6 +222,17 @@ pub fn menu_bar(
                     command = Some(MenuCommand::Theme(choice));
                 }
             }
+            ui.separator();
+            ui.menu_button("Toolbar icons", |ui| {
+                for (choice, label) in [
+                    (ToolbarSize::Large, "Large"),
+                    (ToolbarSize::ExtraLarge, "Extra large"),
+                ] {
+                    if ui.selectable_label(toolbar == choice, label).clicked() {
+                        command = Some(MenuCommand::ToolbarSize(choice));
+                    }
+                }
+            });
         });
         ui.menu_button("Help", |ui| {
             if ui.button("About ShellZip").clicked() {
@@ -207,32 +246,20 @@ pub fn menu_bar(
 /// Large icons with captions, using the brand toolbar glyphs.
 ///
 /// `into_archive` changes the Add tip when a ZIP or 7z is open.
-pub fn toolbar(
-    ui: &mut egui::Ui,
-    operation: bool,
-    locked: bool,
-    archive_ready: bool,
-    can_delete: bool,
-    into_archive: bool,
-) -> Option<ToolCommand> {
+pub fn toolbar(ui: &mut egui::Ui, state: &ToolbarState, size: ToolbarSize) -> Option<ToolCommand> {
     let mut command = None;
-    let add_tip = if into_archive {
+    let add_tip = if state.into_archive {
         "Add files to this archive"
     } else {
         "Create an archive"
     };
+    let idle = !state.operation && !state.locked;
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        if tool(
-            ui,
-            ToolIcon::Open,
-            "Open",
-            "Open an archive",
-            !operation && !locked,
-        ) {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        if tool(ui, ToolIcon::Open, "Open", "Open an archive", idle, size) {
             command = Some(ToolCommand::Open);
         }
-        if tool(ui, ToolIcon::Add, "Add", add_tip, !operation && !locked) {
+        if tool(ui, ToolIcon::Add, "Add", add_tip, idle, size) {
             command = Some(ToolCommand::Add);
         }
         if tool(
@@ -240,7 +267,8 @@ pub fn toolbar(
             ToolIcon::Extract,
             "Extract To",
             "Extract into a folder",
-            !operation && !locked && archive_ready,
+            idle && state.archive_ready,
+            size,
         ) {
             command = Some(ToolCommand::Extract);
         }
@@ -249,29 +277,59 @@ pub fn toolbar(
             ToolIcon::Test,
             "Test",
             "Test the archive",
-            !operation && !locked && archive_ready,
+            idle && state.archive_ready,
+            size,
         ) {
             command = Some(ToolCommand::Test);
+        }
+        if tool(
+            ui,
+            ToolIcon::View,
+            "View",
+            "View the selected file",
+            state.can_view,
+            size,
+        ) {
+            command = Some(ToolCommand::View);
         }
         if tool(
             ui,
             ToolIcon::Delete,
             "Delete",
             "Delete selected ZIP members",
-            can_delete,
+            state.can_delete,
+            size,
         ) {
             command = Some(ToolCommand::Delete);
+        }
+        if tool(
+            ui,
+            ToolIcon::Sfx,
+            "SFX",
+            "Create a self-extracting archive",
+            idle && state.into_archive,
+            size,
+        ) {
+            command = Some(ToolCommand::Sfx);
         }
         if tool(
             ui,
             ToolIcon::Info,
             "Info",
             "Details of this folder or archive",
-            !locked,
+            !state.locked,
+            size,
         ) {
             command = Some(ToolCommand::Info);
         }
-        if tool(ui, ToolIcon::About, "About", "About ShellZip", !locked) {
+        if tool(
+            ui,
+            ToolIcon::About,
+            "About",
+            "About ShellZip",
+            !state.locked,
+            size,
+        ) {
             command = Some(ToolCommand::About);
         }
     });
@@ -399,6 +457,7 @@ pub fn status_bar(
             icons::show_spinning(ui, colors.ink, icons::SIZE_STATUS);
             ui.add(
                 egui::ProgressBar::new(job.fraction)
+                    .fill(theme::RUST)
                     .animate(job.indeterminate)
                     .desired_width(160.0),
             );
@@ -530,28 +589,36 @@ pub fn bar_frame(ctx: &egui::Context, x: i8, y: i8) -> egui::Frame {
         .inner_margin(egui::Margin::symmetric(x, y))
 }
 
-fn tool(ui: &mut egui::Ui, icon: ToolIcon, label: &str, tip: &str, enabled: bool) -> bool {
+fn tool(
+    ui: &mut egui::Ui,
+    icon: ToolIcon,
+    label: &str,
+    tip: &str,
+    enabled: bool,
+    size: ToolbarSize,
+) -> bool {
     let sense = if enabled {
         Sense::click()
     } else {
         Sense::hover()
     };
     let colors = theme::palette(ui.ctx());
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(74.0, 58.0), sense);
+    let (rect, response) = ui.allocate_exact_size(size.button_size(), sense);
     if enabled && response.hovered() {
         ui.painter().rect_filled(rect, 3.0, colors.hover);
     }
+    let glyph = size.icon_points();
     let icon_rect = Rect::from_center_size(
-        rect.center_top() + egui::vec2(0.0, 20.0),
-        Vec2::splat(icons::SIZE_TOOL),
+        rect.center_top() + egui::vec2(0.0, 4.0 + glyph * 0.5),
+        Vec2::splat(glyph),
     );
     icons::paint_tool(ui, icon, enabled, icon_rect);
     let text = if enabled { colors.ink } else { colors.muted };
     ui.painter().text(
-        rect.center_bottom() + egui::vec2(0.0, -5.0),
+        rect.center_bottom() + egui::vec2(0.0, -3.0),
         Align2::CENTER_BOTTOM,
         label,
-        FontId::proportional(11.0),
+        FontId::proportional(size.label_size()),
         text,
     );
     enabled && response.on_hover_text(tip).clicked()

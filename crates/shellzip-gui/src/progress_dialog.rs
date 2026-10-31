@@ -104,6 +104,7 @@ pub(crate) fn bar(ui: &mut egui::Ui, done: u64, total: u64) {
     let (fraction, unknown) = fraction(done, total);
     ui.add(
         egui::ProgressBar::new(fraction)
+            .fill(theme::RUST)
             .animate(unknown)
             .desired_width(ui.available_width()),
     );

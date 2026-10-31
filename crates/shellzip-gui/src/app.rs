@@ -5,13 +5,15 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use shellzip_core::{
-    CompressOpts, ConflictChoice, Entry, Error, ExtractOpts, ListOpts, Password, UpdateMode, add,
-    add_prompted, add_sfx, delete, extract, list_with, test,
+    CompressOpts, ConflictChoice, Entry, Error, ExtractOpts, ListOpts, Password, SfxDirection,
+    UpdateMode, add, add_prompted, add_sfx, convert, delete, extract, list_with, test,
 };
 
 use crate::about;
 use crate::add_dialog::{self, AddAction, AddRequest, AskPrompt, AskReply};
-use crate::chrome::{self, AddressEvent, DeleteChoice, MenuCommand, PackSettings, ToolCommand};
+use crate::chrome::{
+    self, AddressEvent, DeleteChoice, MenuCommand, PackSettings, ToolCommand, ToolbarState,
+};
 use crate::explorer::{
     ArchiveIndex, Explorer, FolderTree, JumpTarget, Row, RowKind, Target, TreeFocus,
     archive_prefix, folder_parent, format_size, is_supported_archive, jumps, location_text,
@@ -23,7 +25,7 @@ use crate::info_dialog::{self, InfoAction};
 use crate::progress_dialog::{self, ProgressCommand};
 use crate::rename_dialog::{self, RenameAction, RenameTarget};
 use crate::report_dialog::{self, ReportAction, ReportArchive, ReportRow};
-use crate::settings::{self, DeleteArchive, ExtractSettings, ReportSettings};
+use crate::settings::{self, DeleteArchive, ExtractSettings, ReportSettings, ToolbarSize};
 use crate::shell_icons::IconCache;
 use crate::test_dialog::{self, TestCommand};
 use crate::theme::{self, Preference};
@@ -57,6 +59,8 @@ enum OpKind {
     Delete,
     /// Rename one member.
     Rename,
+    /// Wrap a ZIP or 7z as a self-extractor.
+    Sfx,
 }
 
 struct Operation {
@@ -124,6 +128,8 @@ pub struct ShellZipApp {
     opened: Vec<String>,
     /// Light, dark, or follow the operating system.
     theme: Preference,
+    /// Large or extra-large toolbar glyphs.
+    toolbar: ToolbarSize,
     /// Generate-report choices.
     report: ReportSettings,
     /// Archive folder to restore after a refresh reloads the same file.
@@ -198,6 +204,7 @@ impl ShellZipApp {
             recent: stored.recent,
             opened: stored.opened,
             theme: stored.theme,
+            toolbar: stored.toolbar,
             report: stored.report,
             restore_prefix: None,
             generation,
@@ -486,6 +493,44 @@ impl ShellZipApp {
             add_dialog::AddDialog::prepare(&self.current_dir(), files, &self.options)
         };
         self.add_dialog = Some(dialog);
+    }
+
+    fn create_sfx(&mut self) {
+        if self.refuse_operation() {
+            return;
+        }
+        let Some(source) = self.updatable_archive() else {
+            self.error = Some("Open a ZIP or 7z archive to create a self-extractor.".to_string());
+            return;
+        };
+        let stub = match find_stub() {
+            Ok(path) => path,
+            Err(message) => {
+                self.error = Some(message);
+                return;
+            }
+        };
+        let suggested = suggested_sfx_path(&source);
+        let mut picker = rfd::FileDialog::new().set_title("Save self-extractor");
+        if let Some(parent) = suggested.parent().filter(|parent| parent.is_dir()) {
+            picker = picker.set_directory(parent);
+        }
+        if let Some(name) = suggested.file_name().and_then(|name| name.to_str()) {
+            picker = picker.set_file_name(name);
+        }
+        let Some(dest) = picker.save_file() else {
+            return;
+        };
+        let token = self.begin_operation(OpKind::Sfx, dest.clone(), true);
+        let tx = self.tx.clone();
+        worker::spawn(tx, token, move || {
+            let direction = convert(&source, &dest, Some(&stub))?;
+            let summary = match direction {
+                SfxDirection::Wrapped => format!("created {}", dest.display()),
+                SfxDirection::Stripped => format!("wrote {}", dest.display()),
+            };
+            Ok(Outcome::Finished { token, summary })
+        });
     }
 
     /// Open ZIP or 7z the file pane is inside. Other formats stay create-new.
@@ -1044,7 +1089,7 @@ impl ShellZipApp {
 
     fn begin_operation(&mut self, kind: OpKind, path: PathBuf, foreground: bool) -> JobToken {
         let foreground = match kind {
-            OpKind::Test | OpKind::Delete | OpKind::Rename => true,
+            OpKind::Test | OpKind::Delete | OpKind::Rename | OpKind::Sfx => true,
             OpKind::Extract | OpKind::Add => foreground,
         };
         let id = self.alloc_id();
@@ -1133,7 +1178,7 @@ impl ShellZipApp {
         let title = match op.kind {
             OpKind::Extract => "Extracting",
             OpKind::Add => "Adding",
-            OpKind::Test | OpKind::Delete | OpKind::Rename => return,
+            OpKind::Test | OpKind::Delete | OpKind::Rename | OpKind::Sfx => return,
         };
         let path = op.path.display().to_string();
         let snapshot = self.progress.snapshot();
@@ -1777,6 +1822,26 @@ impl ShellZipApp {
         }
     }
 
+    fn can_view(&self) -> bool {
+        if self.shell_locked() || self.operation.is_some() {
+            return false;
+        }
+        let mut found = None;
+        for row in &self.view {
+            if row.kind == RowKind::Parent || !self.explorer.is_selected(&row.key) {
+                continue;
+            }
+            if found.is_some() {
+                return false;
+            }
+            found = Some(row);
+        }
+        found.is_some_and(|row| {
+            !matches!(row.kind, RowKind::Directory)
+                && !matches!(row.target, Target::Parent | Target::ArchiveDir(_))
+        })
+    }
+
     fn can_delete(&self) -> bool {
         if self.shell_locked() || self.operation.is_some() {
             return false;
@@ -1935,6 +2000,7 @@ impl ShellZipApp {
             MenuCommand::View => self.view_file(),
             MenuCommand::SelectAll => self.explorer.select_all(&self.view),
             MenuCommand::SelectNone => self.explorer.clear_selection(),
+            MenuCommand::InvertSelection => self.explorer.invert_selection(&self.view),
             MenuCommand::About => self.about = true,
             MenuCommand::Delete => self.request_delete(),
             MenuCommand::Rename => self.rename_selected(),
@@ -1951,6 +2017,10 @@ impl ShellZipApp {
                 self.theme = choice;
                 self.persist_settings();
             }
+            MenuCommand::ToolbarSize(size) => {
+                self.toolbar = size;
+                self.persist_settings();
+            }
         }
     }
 
@@ -1963,6 +2033,8 @@ impl ShellZipApp {
             ToolCommand::Delete => self.request_delete(),
             ToolCommand::Info => self.show_info(),
             ToolCommand::About => self.about = true,
+            ToolCommand::Sfx => self.create_sfx(),
+            ToolCommand::View => self.view_file(),
         }
     }
 
@@ -2080,6 +2152,7 @@ impl ShellZipApp {
             &self.recent,
             &self.opened,
             self.theme,
+            self.toolbar,
             &self.report,
         ) && self.error.is_none()
         {
@@ -2172,6 +2245,22 @@ fn is_sfx_name(path: &Path) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("sfx"))
 }
 
+fn suggested_sfx_path(source: &Path) -> PathBuf {
+    let parent = source.parent().unwrap_or_else(|| Path::new("."));
+    let stem = source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("archive");
+    let ext = if cfg!(windows) { "exe" } else { "sfx" };
+    let dest = parent.join(format!("{stem}.{ext}"));
+    if dest == source {
+        parent.join(format!("{stem}-sfx.{ext}"))
+    } else {
+        dest
+    }
+}
+
 fn forget_history(opened: &mut Vec<String>, recent: &mut Vec<String>) {
     opened.clear();
     recent.clear();
@@ -2208,7 +2297,8 @@ impl eframe::App for ShellZipApp {
         egui::TopBottomPanel::top("menu")
             .frame(chrome::bar_frame(ctx, 4, 0))
             .show(ctx, |ui| {
-                menu_command = chrome::menu_bar(ui, self.theme, into_archive, &self.opened);
+                menu_command =
+                    chrome::menu_bar(ui, self.theme, self.toolbar, into_archive, &self.opened);
             });
         if matches!(menu_command, Some(MenuCommand::Exit)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -2216,22 +2306,19 @@ impl eframe::App for ShellZipApp {
             self.on_menu(command);
         }
 
-        let archive_ready = self.archive_ready();
-        let can_delete = self.can_delete();
-        let operation = self.operation.is_some();
-        let locked = self.shell_locked();
+        let tool_state = ToolbarState {
+            operation: self.operation.is_some(),
+            locked: self.shell_locked(),
+            archive_ready: self.archive_ready(),
+            can_delete: self.can_delete(),
+            can_view: self.can_view(),
+            into_archive,
+        };
         let mut tool_command = None;
         egui::TopBottomPanel::top("toolbar")
-            .frame(chrome::bar_frame(ctx, 6, 2))
+            .frame(chrome::bar_frame(ctx, 4, 1))
             .show(ctx, |ui| {
-                tool_command = chrome::toolbar(
-                    ui,
-                    operation,
-                    locked,
-                    archive_ready,
-                    can_delete,
-                    into_archive,
-                );
+                tool_command = chrome::toolbar(ui, &tool_state, self.toolbar);
             });
         if let Some(command) = tool_command {
             self.on_tool(command);
@@ -2575,10 +2662,12 @@ enum ListedEffect {
 
 fn listed_effect(kind: Option<OpKind>, listed_generation: u64, current: u64) -> ListedEffect {
     match kind {
-        Some(kind @ (OpKind::Add | OpKind::Delete | OpKind::Rename)) => ListedEffect::Finish {
-            kind,
-            open: listed_generation == current,
-        },
+        Some(kind @ (OpKind::Add | OpKind::Delete | OpKind::Rename | OpKind::Sfx)) => {
+            ListedEffect::Finish {
+                kind,
+                open: listed_generation == current,
+            }
+        }
         Some(OpKind::Extract | OpKind::Test) | None => ListedEffect::Browse {
             open: listed_generation == current,
         },
@@ -2640,6 +2729,20 @@ mod tests {
                 open: true
             }
         ));
+    }
+
+    #[test]
+    fn sfx_suggestion_uses_exe_on_windows_and_avoids_the_source_path() {
+        let source = PathBuf::from(if cfg!(windows) {
+            r"C:\work\docs.exe"
+        } else {
+            "/work/docs.sfx"
+        });
+        let dest = suggested_sfx_path(&source);
+        assert_ne!(dest, source);
+        let name = dest.file_name().and_then(|name| name.to_str()).unwrap();
+        assert!(name.contains("docs"));
+        assert!(name.ends_with(if cfg!(windows) { ".exe" } else { ".sfx" }));
     }
 
     #[test]

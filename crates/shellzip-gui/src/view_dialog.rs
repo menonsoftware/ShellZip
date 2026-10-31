@@ -70,23 +70,30 @@ impl ViewDialog {
         egui::Window::new(title)
             .open(&mut open)
             .collapsible(false)
-            .resizable(true)
+            .resizable(false)
             .default_width(VIEW_WIDTH)
             .min_width(VIEW_WIDTH)
+            .max_width(VIEW_WIDTH)
+            .constrain(true)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.set_min_width(VIEW_WIDTH);
-                ui.set_min_height(220.0);
-                match &mut self.body {
+                ui.set_width(VIEW_WIDTH);
+                ui.set_max_width(VIEW_WIDTH);
+                match &self.body {
                     PreviewBody::Text(text) => {
-                        ui.add_sized(
-                            [ui.available_width(), VIEW_TEXT_HEIGHT],
-                            egui::TextEdit::multiline(text)
-                                .desired_width(f32::INFINITY)
-                                .font(egui::TextStyle::Monospace)
-                                .interactive(false)
-                                .id_salt("shellzip-view-text"),
-                        );
+                        egui::ScrollArea::both()
+                            .id_salt("shellzip-view-text")
+                            .auto_shrink([false, false])
+                            .max_width(VIEW_WIDTH)
+                            .max_height(VIEW_TEXT_HEIGHT)
+                            .show(ui, |ui| {
+                                ui.set_max_width(VIEW_WIDTH - 16.0);
+                                ui.add(
+                                    egui::Label::new(egui::RichText::new(text).monospace())
+                                        .wrap()
+                                        .selectable(true),
+                                );
+                            });
                     }
                     PreviewBody::Binary => {
                         ui.label(format!("Size: {}", chrome::format_grouped(self.size)));
