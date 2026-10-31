@@ -16,13 +16,13 @@ use crate::explorer::{Row, RowKind, Target};
 /// Which shell picture to load.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum IconKey {
-    /// One directory picture shared by `..`, folders, and archive folders.
+    /// The plain shell folder. Desktop, This PC, and drives do not use this.
     Folder,
     /// Lowercase extension without the dot. Empty means the name has none.
     Extension(String),
-    /// A real path. Drives, Desktop, and `.exe` / `.lnk` files use this.
+    /// A real path. Desktop, drives, and `.exe` / `.lnk` files use this.
     Path(PathBuf),
-    /// The virtual computer node (This PC).
+    /// This PC, or Computer on Unix. It is not a filesystem path.
     Computer,
 }
 

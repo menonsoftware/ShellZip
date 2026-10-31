@@ -40,33 +40,37 @@ mod desktop {
         path_icon(&sample_dir()?, pixels)
     }
 
-    fn computer_icon(pixels: u32) -> Option<RgbaIcon> {
-        #[cfg(windows)]
-        {
-            path_icon(
-                Path::new("::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"),
-                pixels,
-            )
-        }
-        #[cfg(target_os = "macos")]
-        {
-            path_icon(Path::new("/"), pixels)
-        }
+    /// This PC. `imageres.dll` extract index 104 is resource 109
+    /// (`SIID_DESKTOPPC`). `windows-icons` takes that index plus one.
+    #[cfg(windows)]
+    fn computer_icon(_pixels: u32) -> Option<RgbaIcon> {
+        let spec = windows_icons::DllIcon::new().with_imageres(105);
+        let image = windows_icons::get_icon_by_dll(spec).ok()?;
+        packed_rgba(image)
     }
 
+    #[cfg(target_os = "macos")]
+    fn computer_icon(_pixels: u32) -> Option<RgbaIcon> {
+        None
+    }
+
+    /// A normal directory, so the shell returns the yellow folder.
+    ///
+    /// Desktop's picture is a monitor. Home can be a person or a house.
+    /// Either one is the wrong stand-in for every folder in the tree.
     fn sample_dir() -> Option<std::path::PathBuf> {
+        let temp = std::env::temp_dir();
+        if temp.is_dir() {
+            return Some(temp);
+        }
         let dirs = directories::UserDirs::new()?;
+        let home = dirs.home_dir();
+        if home.is_dir() {
+            return Some(home.to_path_buf());
+        }
         dirs.desktop_dir()
             .filter(|path| path.is_dir())
             .map(Path::to_path_buf)
-            .or_else(|| {
-                let home = dirs.home_dir();
-                home.is_dir().then(|| home.to_path_buf())
-            })
-            .or_else(|| {
-                let temp = std::env::temp_dir();
-                temp.is_dir().then_some(temp)
-            })
     }
 
     fn packed(icon: file_icon_provider::Icon) -> Option<RgbaIcon> {
@@ -80,6 +84,24 @@ mod desktop {
             width: icon.width,
             height: icon.height,
             pixels: icon.pixels,
+        })
+    }
+
+    #[cfg(windows)]
+    fn packed_rgba(image: image::RgbaImage) -> Option<RgbaIcon> {
+        let width = image.width();
+        let height = image.height();
+        let pixels = image.into_raw();
+        let expected = (width as usize)
+            .checked_mul(height as usize)?
+            .checked_mul(4)?;
+        if width == 0 || height == 0 || pixels.len() != expected {
+            return None;
+        }
+        Some(RgbaIcon {
+            width,
+            height,
+            pixels,
         })
     }
 }
@@ -99,9 +121,13 @@ mod desktop {
     fn names_for(key: &IconKey) -> Vec<String> {
         match key {
             IconKey::Folder => vec!["folder".to_string(), "inode-directory".to_string()],
-            IconKey::Computer => vec!["computer".to_string(), "computer-symbolic".to_string()],
             IconKey::Extension(ext) => mime_names(ext),
             IconKey::Path(path) => path_names(path),
+            IconKey::Computer => vec![
+                "computer".to_string(),
+                "computer-symbolic".to_string(),
+                "drive-harddisk".to_string(),
+            ],
         }
     }
 
@@ -329,6 +355,29 @@ mod tests {
     }
 
     #[test]
+    fn folder_icon_is_yellow_not_the_desktop_monitor() {
+        let icon = raster(&IconKey::Folder, 32).expect("folder icon");
+        let mut yellow = 0;
+        let mut blue = 0;
+        for px in icon.pixels.as_chunks::<4>().0 {
+            if px[3] < 32 {
+                continue;
+            }
+            let (r, g, b) = (u16::from(px[0]), u16::from(px[1]), u16::from(px[2]));
+            if r > 180 && g > 140 && b < 120 {
+                yellow += 1;
+            }
+            if b > 140 && b > r + 40 && b > g {
+                blue += 1;
+            }
+        }
+        assert!(
+            yellow > blue,
+            "the shared folder picture should be the yellow shell folder, not the blue desktop monitor (yellow={yellow} blue={blue})"
+        );
+    }
+
+    #[test]
     fn folder_and_drive_have_shell_icons() {
         let folder = raster(&IconKey::Folder, 16);
         assert!(
@@ -337,10 +386,53 @@ mod tests {
         );
         let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
         let drive = std::path::PathBuf::from(format!("{drive}\\"));
-        let icon = raster(&IconKey::Path(drive), 16);
-        assert!(
-            icon.is_some_and(|icon| icon.width > 0 && !icon.pixels.is_empty()),
-            "the system drive should yield a shell icon"
+        let icon = raster(&IconKey::Path(drive), 32).expect("drive icon");
+        let folder = raster(&IconKey::Folder, 32).expect("folder icon");
+        assert_ne!(
+            icon.pixels, folder.pixels,
+            "a drive must not reuse the yellow folder"
         );
+        let computer = raster(&IconKey::Computer, 32).expect("This PC icon");
+        assert!(
+            blue_pixels(&computer) > yellow_pixels(&computer),
+            "This PC should be the shell monitor, not the yellow folder"
+        );
+        if let Some(desktop) = directories::UserDirs::new()
+            .and_then(|dirs| dirs.desktop_dir().map(std::path::Path::to_path_buf))
+            .filter(|path| path.is_dir())
+        {
+            let desktop = raster(&IconKey::Path(desktop), 32).expect("desktop icon");
+            assert_ne!(
+                desktop.pixels, folder.pixels,
+                "Desktop must not reuse the yellow folder"
+            );
+        }
+    }
+
+    fn yellow_pixels(icon: &crate::shell_icons::RgbaIcon) -> u32 {
+        color_count(icon, true)
+    }
+
+    fn blue_pixels(icon: &crate::shell_icons::RgbaIcon) -> u32 {
+        color_count(icon, false)
+    }
+
+    fn color_count(icon: &crate::shell_icons::RgbaIcon, yellow: bool) -> u32 {
+        let mut count = 0;
+        for px in icon.pixels.as_chunks::<4>().0 {
+            if px[3] < 32 {
+                continue;
+            }
+            let (r, g, b) = (u16::from(px[0]), u16::from(px[1]), u16::from(px[2]));
+            let hit = if yellow {
+                r > 180 && g > 140 && b < 120
+            } else {
+                b > 140 && b > r + 40 && b > g
+            };
+            if hit {
+                count += 1;
+            }
+        }
+        count
     }
 }

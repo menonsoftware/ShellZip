@@ -474,7 +474,8 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, tip: &str) -> egui::Response {
 /// on the address bar above the file list.
 ///
 /// `bar` is the address row in global coordinates. The menu hangs under that
-/// row, uses its full width, and shrinks to the expanded folder list.
+/// row at the address-bar width. Its height is the 7-Zip path-combo drop
+/// height, clamped so the list stays on screen above the status bar.
 fn parent_menu(
     ui: &mut egui::Ui,
     tree: &mut FolderTree,
@@ -486,7 +487,7 @@ fn parent_menu(
     if response.clicked() {
         tree.reveal(focus);
     }
-    let room = (ui.ctx().screen_rect().bottom() - bar.bottom()).max(120.0);
+    let height = dropdown_height(ui.ctx().screen_rect().bottom() - bar.bottom());
     let mut event = None;
     egui::Popup::menu(&response)
         .anchor(bar)
@@ -502,17 +503,26 @@ fn parent_menu(
             if let Some(message) = tree.loader_error() {
                 ui.label(egui::RichText::new(message).color(DANGER));
             }
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, true])
-                .max_height(room)
-                .show(ui, |ui| {
-                    for row in tree.rows(focus) {
-                        if let Some(target) = tree_row(ui, tree, cache, &row) {
-                            event = Some(AddressEvent::Jump(target));
-                            ui.close();
-                        }
-                    }
-                });
+            // `allocate_ui` fixes the popup height. A scroll area alone shrinks
+            // to the three open rows, which is not the path-combo drop height.
+            let width = ui.available_width().min(bar.width());
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .max_height(height)
+                        .show(ui, |ui| {
+                            for row in tree.rows(focus) {
+                                if let Some(target) = tree_row(ui, tree, cache, &row) {
+                                    event = Some(AddressEvent::Jump(target));
+                                    ui.close();
+                                }
+                            }
+                        });
+                },
+            );
         });
     event
 }
@@ -566,15 +576,16 @@ fn tree_row(
             } else {
                 ui.add_space(14.0);
             }
+            // Shell pictures keep their own colors on the selection bar.
+            // A miss falls back to the yellow folder, or the file glyph for an extension.
             let fallback = match &row.icon {
                 IconKey::Extension(_) => Icon::File,
-                IconKey::Computer => Icon::Archive,
                 _ => Icon::Folder,
             };
-            let tint = if row.current {
-                SELECT_TEXT
-            } else if matches!(fallback, Icon::Folder) {
+            let tint = if matches!(fallback, Icon::Folder) {
                 FOLDER
+            } else if row.current {
+                SELECT_TEXT
             } else {
                 MUTED
             };
@@ -600,6 +611,18 @@ fn tree_row(
     navigate
 }
 
+/// Dropped-list height for the address menu.
+///
+/// 7-Zip creates the path combo 620px tall. Win32 treats that as the edit
+/// field plus the list, so the list itself stays at 620 until the space under
+/// the address bar (above the status line) is shorter.
+fn dropdown_height(space_below: f32) -> f32 {
+    const PREFERRED: f32 = 620.0;
+    const STATUS: f32 = 32.0;
+    let room = (space_below - STATUS).max(22.0);
+    PREFERRED.min(room)
+}
+
 fn caret_button(ui: &mut egui::Ui, tip: &str) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(22.0, 22.0), Sense::click());
     if response.hovered() {
@@ -608,4 +631,17 @@ fn caret_button(ui: &mut egui::Ui, tip: &str) -> egui::Response {
     let caret = Rect::from_center_size(rect.center(), Vec2::new(9.0, 6.0));
     icons::paint_caret(ui, Caret::Down, INK, caret);
     response.on_hover_text(tip)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dropdown_height;
+
+    #[test]
+    fn dropdown_keeps_the_sevenzip_height_until_the_window_runs_out() {
+        assert_eq!(dropdown_height(2000.0), 620.0);
+        assert_eq!(dropdown_height(620.0 + 32.0), 620.0);
+        assert_eq!(dropdown_height(400.0), 368.0);
+        assert_eq!(dropdown_height(40.0), 22.0);
+    }
 }

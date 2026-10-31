@@ -27,6 +27,7 @@ workspace = true
 [target."cfg(windows)".dependencies]
 file_icon_provider = "1.0.2"
 systemicons = "0.9.13"
+windows-icons = { version = "0.4.0", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 file_icon_provider = "1.0.2"
