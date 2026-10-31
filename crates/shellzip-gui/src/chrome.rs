@@ -6,9 +6,12 @@
 
 use egui::{Align2, Color32, FontId, Rect, Sense, Vec2};
 
-use crate::explorer::{Jump, JumpTarget};
+use crate::explorer::{FolderTree, Jump, JumpTarget, TreeFocus, TreeRow};
 use crate::icons::{self, Caret, Icon};
-use crate::theme::{ADD, DANGER, EXTRACT, HOVER, INK, MUTED, OK, OPEN, PANEL, TEST};
+use crate::shell_icons::{self, IconCache, IconKey};
+use crate::theme::{
+    ADD, DANGER, EXTRACT, FOLDER, HOVER, INK, MUTED, OK, OPEN, PANEL, SELECT, SELECT_TEXT, TEST,
+};
 use shellzip_core::{Overwrite, SevenZMethod, ZipMethod};
 
 /// Pack choices remembered for the add dialog, and extract choices from the menu.
@@ -223,14 +226,17 @@ fn crumb_label(jump: &Jump) -> String {
     }
 }
 
-/// Up button, editable path, and a dropdown of parent folders.
+/// Up button, editable path, and a folder-tree dropdown.
 pub fn address_bar(
     ui: &mut egui::Ui,
     text: &mut String,
     can_up: bool,
-    jumps: &[Jump],
+    tree: &mut FolderTree,
+    focus: &TreeFocus,
+    cache: &mut IconCache,
 ) -> Option<AddressEvent> {
     let mut event = None;
+    let bar = global_rect(ui);
     ui.horizontal(|ui| {
         ui.add_enabled_ui(can_up, |ui| {
             if icon_button(ui, Icon::ArrowUp, "Up one level").clicked() {
@@ -246,7 +252,7 @@ pub fn address_bar(
         if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
             event = Some(AddressEvent::Submit);
         }
-        if let Some(jump) = parent_menu(ui, jumps) {
+        if let Some(jump) = parent_menu(ui, tree, focus, cache, bar) {
             event = Some(jump);
         }
     });
@@ -466,21 +472,132 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, tip: &str) -> egui::Response {
 
 /// Painted caret. The default font has no ▾ glyph, which was drawing as an empty box
 /// on the address bar above the file list.
-fn parent_menu(ui: &mut egui::Ui, jumps: &[Jump]) -> Option<AddressEvent> {
-    let response = caret_button(ui, "Parent folders");
+///
+/// `bar` is the address row in global coordinates. The menu hangs under that
+/// row, uses its full width, and is at least as tall as the ShellZip window.
+fn parent_menu(
+    ui: &mut egui::Ui,
+    tree: &mut FolderTree,
+    focus: &TreeFocus,
+    cache: &mut IconCache,
+    bar: Rect,
+) -> Option<AddressEvent> {
+    let response = caret_button(ui, "Folders");
+    if response.clicked() {
+        tree.reveal(focus);
+    }
+    let window_height = ui.ctx().screen_rect().height();
     let mut event = None;
-    egui::Popup::menu(&response).show(|ui| {
-        if jumps.is_empty() {
-            ui.label(egui::RichText::new("No parent folders").color(MUTED));
-            return;
-        }
-        for jump in jumps {
-            if ui.button(&jump.label).clicked() {
-                event = Some(AddressEvent::Jump(jump.target.clone()));
+    egui::Popup::menu(&response)
+        .anchor(bar)
+        .align(egui::RectAlign::BOTTOM_START)
+        .align_alternatives(&[])
+        .width(bar.width())
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            let inset = ui.spacing().menu_margin.sum().x + ui.visuals().window_stroke.width * 2.0;
+            ui.set_min_width((bar.width() - inset).max(48.0));
+            ui.spacing_mut().item_spacing.y = 0.0;
+            if let Some(message) = tree.loader_error() {
+                ui.label(egui::RichText::new(message).color(DANGER));
             }
-        }
-    });
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .min_scrolled_height(window_height)
+                .max_height(window_height)
+                .show(ui, |ui| {
+                    for row in tree.rows(focus) {
+                        if let Some(target) = tree_row(ui, tree, cache, &row) {
+                            event = Some(AddressEvent::Jump(target));
+                            ui.close();
+                        }
+                    }
+                });
+        });
     event
+}
+
+fn global_rect(ui: &egui::Ui) -> Rect {
+    let rect = ui.max_rect();
+    ui.ctx()
+        .layer_transform_to_global(ui.layer_id())
+        .map(|to_global| to_global * rect)
+        .unwrap_or(rect)
+}
+
+fn tree_row(
+    ui: &mut egui::Ui,
+    tree: &mut FolderTree,
+    cache: &mut IconCache,
+    row: &TreeRow,
+) -> Option<JumpTarget> {
+    let width = ui.available_width();
+    let mut navigate = None;
+    let mut toggle = false;
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, 22.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let rect = ui.max_rect();
+            let text = if row.current { SELECT_TEXT } else { INK };
+            if row.current {
+                ui.painter().rect_filled(rect, 0.0, SELECT);
+            } else if ui.rect_contains_pointer(rect) {
+                ui.painter().rect_filled(rect, 0.0, HOVER);
+            }
+            ui.add_space(4.0 + f32::from(row.depth) * 14.0);
+            if row.expandable {
+                let (caret_rect, caret_response) =
+                    ui.allocate_exact_size(egui::vec2(14.0, 18.0), Sense::click());
+                let mark = egui::Rect::from_center_size(caret_rect.center(), egui::vec2(8.0, 6.0));
+                icons::paint_caret(
+                    ui,
+                    if row.expanded {
+                        Caret::Down
+                    } else {
+                        Caret::Right
+                    },
+                    text,
+                    mark,
+                );
+                if caret_response.clicked() {
+                    toggle = true;
+                }
+            } else {
+                ui.add_space(14.0);
+            }
+            let fallback = match &row.icon {
+                IconKey::Extension(_) => Icon::File,
+                IconKey::Computer => Icon::Archive,
+                _ => Icon::Folder,
+            };
+            let tint = if row.current {
+                SELECT_TEXT
+            } else if matches!(fallback, Icon::Folder) {
+                FOLDER
+            } else {
+                MUTED
+            };
+            if !shell_icons::paint(ui, cache, &row.icon, icons::SIZE_ROW) {
+                icons::show(ui, fallback, tint, icons::SIZE_ROW);
+            }
+            ui.add_space(4.0);
+            let label = ui.add(
+                egui::Label::new(egui::RichText::new(&row.label).color(text)).sense(Sense::click()),
+            );
+            if label.clicked() && !toggle {
+                if let Some(target) = row.target.clone() {
+                    navigate = Some(target);
+                } else {
+                    toggle = true;
+                }
+            }
+        },
+    );
+    if toggle {
+        tree.toggle(&row.id);
+    }
+    navigate
 }
 
 fn caret_button(ui: &mut egui::Ui, tip: &str) -> egui::Response {

@@ -62,8 +62,10 @@ pub enum Icon {
 pub enum Caret {
     /// Sort ascending, or the address-bar parent list.
     Up,
-    /// Sort descending.
+    /// Sort descending, or an expanded tree node.
     Down,
+    /// A collapsed tree node.
+    Right,
 }
 
 impl Icon {
@@ -184,6 +186,11 @@ pub fn paint_caret(ui: &mut egui::Ui, caret: Caret, color: Color32, rect: Rect) 
             rect.left_top(),
             rect.right_top(),
             egui::pos2(rect.center().x, rect.bottom()),
+        ],
+        Caret::Right => vec![
+            rect.left_top(),
+            rect.left_bottom(),
+            egui::pos2(rect.right(), rect.center().y),
         ],
     };
     ui.painter().add(egui::Shape::convex_polygon(

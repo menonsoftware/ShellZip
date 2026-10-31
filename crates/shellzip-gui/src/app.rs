@@ -12,10 +12,11 @@ use shellzip_core::{
 use crate::add_dialog::{self, AddAction, AddRequest, AskPrompt, AskReply};
 use crate::chrome::{self, AddressEvent, MenuCommand, PackSettings, ToolCommand};
 use crate::explorer::{
-    ArchiveIndex, Explorer, JumpTarget, Row, RowKind, Target, archive_prefix, folder_parent,
-    is_supported_archive, jumps, location_text, path_under, read_directory, sort_rows, totals,
-    totals_label,
+    ArchiveIndex, Explorer, FolderTree, JumpTarget, Row, RowKind, Target, TreeFocus,
+    archive_prefix, folder_parent, is_supported_archive, jumps, location_text, path_under,
+    read_directory, sort_rows, totals, totals_label,
 };
+use crate::shell_icons::IconCache;
 use crate::theme::{self, CANVAS};
 use crate::worker::{self, Outcome, PasswordJob, PasswordRequest, SharedProgress};
 
@@ -62,6 +63,8 @@ pub struct ShellZipApp {
     options: PackSettings,
     saved: PackSettings,
     generation: u64,
+    icons: IconCache,
+    tree: FolderTree,
     progress: Arc<SharedProgress>,
     tx: Sender<Outcome>,
     rx: Receiver<Outcome>,
@@ -113,6 +116,8 @@ impl ShellZipApp {
             options,
             saved: options,
             generation,
+            icons: IconCache::new(),
+            tree: FolderTree::new(),
             progress: Arc::new(SharedProgress::new()),
             tx,
             rx,
@@ -1017,6 +1022,13 @@ impl ShellZipApp {
         Some(paths)
     }
 
+    fn tree_focus(&self) -> TreeFocus {
+        match &self.place {
+            Place::Folder { path, .. } => TreeFocus::folder(path),
+            Place::Archive { path, prefix, .. } => TreeFocus::archive(path, prefix),
+        }
+    }
+
     fn address_jumps(&self) -> Vec<crate::explorer::Jump> {
         match &self.place {
             Place::Folder { path, .. } => jumps(path, None),
@@ -1190,10 +1202,16 @@ fn is_sfx_name(path: &Path) -> bool {
 impl eframe::App for ShellZipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
+        self.tree.poll();
+        if self.error.is_none()
+            && let Some(message) = self.tree.take_loader_error()
+        {
+            self.error = Some(message);
+        }
         self.poll_ask();
         self.password_window(ctx);
         crate::icons::warm(ctx);
-        if self.busy || !self.loaded {
+        if self.busy || !self.loaded || self.tree.is_loading() || self.icons.is_pending() {
             ctx.request_repaint();
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.title()));
@@ -1225,12 +1243,19 @@ impl eframe::App for ShellZipApp {
         }
 
         let can_up = self.can_go_up() && !self.busy;
-        let jump_list = self.address_jumps();
+        let focus = self.tree_focus();
         let mut address_event = None;
         egui::TopBottomPanel::top("address")
             .frame(chrome::bar_frame(6, 4))
             .show(ctx, |ui| {
-                address_event = chrome::address_bar(ui, &mut self.address, can_up, &jump_list);
+                address_event = chrome::address_bar(
+                    ui,
+                    &mut self.address,
+                    can_up,
+                    &mut self.tree,
+                    &focus,
+                    &mut self.icons,
+                );
             });
         let submitted = matches!(address_event, Some(AddressEvent::Submit));
         if let Some(event) = address_event {
@@ -1286,6 +1311,7 @@ impl eframe::App for ShellZipApp {
                     &mut self.explorer,
                     &mut self.view,
                     &mut self.scroll_to,
+                    &mut self.icons,
                 ) {
                     self.activate(index);
                 }
