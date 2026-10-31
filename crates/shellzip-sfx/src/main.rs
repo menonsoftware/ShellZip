@@ -261,4 +261,13 @@ mod tests {
         let count = u16::from_le_bytes([bytes[4], bytes[5]]);
         assert!(count >= 5, "icon sizes: {count}");
     }
+
+    #[test]
+    fn stub_banner_file_is_a_png() {
+        let bytes = include_bytes!("../assets/banner.png");
+        assert_eq!(
+            &bytes[..8],
+            &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
+        );
+    }
 }

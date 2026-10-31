@@ -27,6 +27,9 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 
+[workspace.dependencies]
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
 [profile.release]
 lto = true
 codegen-units = 1
