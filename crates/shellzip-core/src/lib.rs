@@ -39,8 +39,8 @@ pub use error::Error;
 pub use extractor::{ArchiveReader, Opened, Verify};
 pub use options::{
     AddReport, CompressOpts, ConflictChoice, ConflictDecider, DEFAULT_STORE_EXTS, DeleteReport,
-    ExtractOpts, ExtractReport, ListOpts, MAX_THREADS, Overwrite, SevenZMethod, SevenZOpts,
-    StoreList, TestReport, UpdateMode, UpdatePrompt, ZipMethod,
+    ExtractOpts, ExtractReport, ExtractUpdate, ListOpts, MAX_THREADS, Overwrite, SevenZMethod,
+    SevenZOpts, StoreList, TestReport, UpdateMode, UpdatePrompt, ZipMethod,
 };
 pub use progress::{NopProgress, ProgressSink};
 pub use sfx::{

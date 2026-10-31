@@ -16,7 +16,9 @@ use chrono::TimeZone;
 use unrar::error::{Code, UnrarError};
 use unrar::{Archive, CursorBeforeHeader, List, OpenArchive, Process};
 
-use super::policy::{Budget, Destination, destination, mark_extracted, stage_path};
+use super::policy::{
+    Budget, Destination, destination, mark_extracted, restore_entry_time, stage_path,
+};
 use crate::crypto::Password;
 use crate::entry::{Entry, EntryKind};
 use crate::error::Error;
@@ -118,9 +120,13 @@ pub fn extract_rar(
         progress.begin_entry(&name, size);
         if header.entry().is_directory() {
             if !opts.flat {
-                destination(&name, opts, false, true, decide)?;
+                match destination(&name, opts, false, true, None, decide)? {
+                    Destination::Skip => report.skipped += 1,
+                    Destination::Write(_) => report.extracted += 1,
+                }
+            } else {
+                report.extracted += 1;
             }
-            report.extracted += 1;
             archive = header.skip().map_err(|err| map_unrar(err, had_password))?;
             progress.end_entry();
             continue;
@@ -137,14 +143,14 @@ pub fn extract_rar(
             }
             return Err(Error::Encrypted(name));
         }
-        match destination(&name, opts, opts.flat, false, decide)? {
+        let modified = dos_time(header.entry().file_time);
+        match destination(&name, opts, opts.flat, false, modified, decide)? {
             Destination::Skip => {
                 report.skipped += 1;
                 archive = header.skip().map_err(|err| map_unrar(err, had_password))?;
             }
             Destination::Write(dest) => {
                 let staged = stage_path(&dest);
-                let modified = dos_time(header.entry().file_time);
                 archive = match header.extract_to(&staged) {
                     Ok(next) => next,
                     Err(err) => {
@@ -284,9 +290,7 @@ fn finish_staged(
     }
     std::fs::rename(staged, dest)
         .map_err(|err| Error::io(format!("rename {}", dest.display()), err))?;
-    if let Some(modified) = modified
-        && let Err(err) = crate::fs::metadata::restore_mtime(dest, modified)
-    {
+    if let Err(err) = restore_entry_time(dest, modified, opts) {
         report.warnings.push(err.to_string());
     }
     if let Err(err) = mark_extracted(archive, dest, opts) {

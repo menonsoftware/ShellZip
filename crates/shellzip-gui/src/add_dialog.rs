@@ -172,10 +172,12 @@ pub struct AskPrompt {
     pub replies: Sender<AskReply>,
     /// Name currently on screen.
     pub pending: Option<String>,
+    /// Sentence under the name.
+    pub detail: &'static str,
 }
 
-/// Ask about one existing member. Closing the window cancels the pack.
-pub fn ask_overwrite(ctx: &egui::Context, name: &str) -> Option<AskReply> {
+/// Ask about one existing name. Closing the window cancels the job.
+pub fn ask_overwrite(ctx: &egui::Context, name: &str, detail: &str) -> Option<AskReply> {
     let mut open = true;
     let mut reply = None;
     egui::Window::new("Confirm file replace")
@@ -186,7 +188,7 @@ pub fn ask_overwrite(ctx: &egui::Context, name: &str) -> Option<AskReply> {
         .show(ctx, |ui| {
             ui.set_min_width(420.0);
             ui.label(egui::RichText::new(name).strong());
-            ui.label("This name is already in the archive.");
+            ui.label(detail);
             ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Replace").clicked() {

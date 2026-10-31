@@ -48,6 +48,10 @@ pub enum NodeId {
     Home,
     /// Virtual computer: This PC, or mounts.
     Computer,
+    /// Shell library folder. Shown, not opened.
+    Libraries,
+    /// Shell network folder. Shown, not opened.
+    Network,
     /// A real directory.
     Dir(PathBuf),
     /// The open archive file.
@@ -97,6 +101,15 @@ impl TreeFocus {
     }
 }
 
+/// A named folder under This PC, such as Documents or Downloads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KnownFolder {
+    /// Label in the tree.
+    pub label: String,
+    /// Real directory.
+    pub path: PathBuf,
+}
+
 /// Desktop and home, when those folders exist.
 #[derive(Clone, Debug, Default)]
 pub struct Places {
@@ -104,24 +117,53 @@ pub struct Places {
     pub desktop: Option<PathBuf>,
     /// Home directory.
     pub home: Option<PathBuf>,
+    /// Documents, Downloads, and the other known folders, in display order.
+    pub known: Vec<KnownFolder>,
 }
 
 impl Places {
     /// Folders reported by the OS.
     pub fn detect() -> Self {
         let dirs = directories::UserDirs::new();
+        let desktop = dirs.as_ref().and_then(|dirs| {
+            dirs.desktop_dir()
+                .filter(|path| path.is_dir())
+                .map(Path::to_path_buf)
+        });
+        let home = dirs
+            .as_ref()
+            .map(|dirs| dirs.home_dir().to_path_buf())
+            .filter(|path| path.is_dir());
+        let mut known = Vec::new();
+        if let Some(dirs) = dirs.as_ref() {
+            let objects = dirs.home_dir().join("3D Objects");
+            push_known(&mut known, "3D Objects", Some(objects.as_path()));
+            push_known(&mut known, "Desktop", dirs.desktop_dir());
+            push_known(&mut known, "Documents", dirs.document_dir());
+            push_known(&mut known, "Downloads", dirs.download_dir());
+            push_known(&mut known, "Music", dirs.audio_dir());
+            push_known(&mut known, "Pictures", dirs.picture_dir());
+            push_known(&mut known, "Videos", dirs.video_dir());
+        }
         Self {
-            desktop: dirs.as_ref().and_then(|dirs| {
-                dirs.desktop_dir()
-                    .filter(|path| path.is_dir())
-                    .map(Path::to_path_buf)
-            }),
-            home: dirs
-                .as_ref()
-                .map(|dirs| dirs.home_dir().to_path_buf())
-                .filter(|path| path.is_dir()),
+            desktop,
+            home,
+            known,
         }
     }
+}
+
+fn push_known(known: &mut Vec<KnownFolder>, label: &str, path: Option<&Path>) {
+    let Some(path) = path.filter(|path| path.is_dir()) else {
+        return;
+    };
+    if known.iter().any(|item| same_path(&item.path, path)) {
+        return;
+    }
+    known.push(KnownFolder {
+        label: label.to_string(),
+        path: path.to_path_buf(),
+    });
 }
 
 /// A mounted volume.
@@ -258,6 +300,12 @@ impl FolderTree {
         for id in spine {
             self.expanded.insert(id);
         }
+    }
+
+    /// Drop a cached directory listing so the next paint reads it again.
+    pub fn forget(&mut self, path: &Path) {
+        self.children.retain(|key, _| !same_path(key, path));
+        self.pending.retain(|key| !same_path(key, path));
     }
 
     /// Open or close one node.
@@ -595,7 +643,8 @@ impl Builder<'_> {
     }
 
     fn emit(&mut self, id: NodeId, depth: u8) {
-        let expanded = self.is_expanded(&id);
+        let expandable = !matches!(id, NodeId::Libraries | NodeId::Network);
+        let expanded = expandable && self.is_expanded(&id);
         let current = self.spine.last().is_some_and(|item| same_id(item, &id));
         let (label, target, icon) = self.describe(&id);
         self.rows.push(TreeRow {
@@ -604,7 +653,7 @@ impl Builder<'_> {
             depth,
             target,
             icon,
-            expandable: true,
+            expandable,
             expanded,
             current,
         });
@@ -621,6 +670,10 @@ impl Builder<'_> {
                 if let Some(path) = self.input.places.desktop.clone() {
                     self.emit_dir_children(&path, depth);
                 }
+                if self.input.namespace == Namespace::Windows {
+                    self.emit(NodeId::Libraries, child_depth);
+                    self.emit(NodeId::Network, child_depth);
+                }
             }
             NodeId::Home => {
                 if let Some(path) = self.input.places.home.clone() {
@@ -628,6 +681,18 @@ impl Builder<'_> {
                 }
             }
             NodeId::Computer => {
+                if self.input.namespace == Namespace::Windows {
+                    for folder in &self.input.places.known {
+                        if self
+                            .volumes
+                            .iter()
+                            .any(|volume| same_path(&volume.path, &folder.path))
+                        {
+                            continue;
+                        }
+                        self.emit(NodeId::Dir(folder.path.clone()), child_depth);
+                    }
+                }
                 let volumes = self.volumes.clone();
                 for volume in volumes {
                     self.emit(NodeId::Dir(volume.path), child_depth);
@@ -635,6 +700,7 @@ impl Builder<'_> {
             }
             NodeId::Dir(path) => self.emit_dir_children(path, depth),
             NodeId::Archive(_) | NodeId::Prefix { .. } => self.emit_next_prefix(id, child_depth),
+            NodeId::Libraries | NodeId::Network => {}
         }
     }
 
@@ -767,7 +833,22 @@ impl Builder<'_> {
                 None,
                 IconKey::Computer,
             ),
+            NodeId::Libraries => ("Libraries".to_string(), None, IconKey::Folder),
+            NodeId::Network => ("Network".to_string(), None, IconKey::Folder),
             NodeId::Dir(path) => {
+                if let Some(known) = self
+                    .input
+                    .places
+                    .known
+                    .iter()
+                    .find(|folder| same_path(&folder.path, path))
+                {
+                    return (
+                        known.label.clone(),
+                        Some(JumpTarget::Folder(path.clone())),
+                        IconKey::Path(path.clone()),
+                    );
+                }
                 let volume = self
                     .volumes
                     .iter()
@@ -891,7 +972,9 @@ fn same_id(left: &NodeId, right: &NodeId) -> bool {
     match (left, right) {
         (NodeId::Desktop, NodeId::Desktop)
         | (NodeId::Home, NodeId::Home)
-        | (NodeId::Computer, NodeId::Computer) => true,
+        | (NodeId::Computer, NodeId::Computer)
+        | (NodeId::Libraries, NodeId::Libraries)
+        | (NodeId::Network, NodeId::Network) => true,
         (NodeId::Dir(left), NodeId::Dir(right))
         | (NodeId::Archive(left), NodeId::Archive(right)) => same_path(left, right),
         (
@@ -936,6 +1019,7 @@ mod tests {
                 Places {
                     desktop: Some(directory),
                     home: Some(PathBuf::from(r"C:\Users\Administrator")),
+                    known: Vec::new(),
                 },
             )
         } else {
@@ -948,6 +1032,7 @@ mod tests {
                 Places {
                     desktop: None,
                     home: Some(home),
+                    known: Vec::new(),
                 },
             )
         };
@@ -1037,6 +1122,7 @@ mod tests {
         let places = Places {
             desktop: Some(desktop),
             home: Some(admin.clone()),
+            known: Vec::new(),
         };
         let focus = TreeFocus::folder(&downloads);
         let volumes = vec![Volume {
@@ -1066,6 +1152,8 @@ mod tests {
                 "Administrator",
                 "Downloads",
                 "Programs",
+                "Libraries",
+                "Network",
             ]
         );
         assert!(
@@ -1093,6 +1181,59 @@ mod tests {
         assert_eq!(icon_for(&layout.rows, "Downloads"), IconKey::Folder);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn lists_known_folders_before_drives_and_shell_places() {
+        let desktop = PathBuf::from(r"C:\Users\Administrator\Desktop");
+        let docs = PathBuf::from(r"C:\Users\Administrator\Documents");
+        let places = Places {
+            desktop: Some(desktop.clone()),
+            home: Some(PathBuf::from(r"C:\Users\Administrator")),
+            known: vec![KnownFolder {
+                label: "Documents".to_string(),
+                path: docs,
+            }],
+        };
+        let focus = TreeFocus::folder(&desktop);
+        let volumes = vec![Volume {
+            label: "Local Disk (C:)".to_string(),
+            path: PathBuf::from(r"C:\"),
+        }];
+        let expanded = HashSet::from([NodeId::Desktop, NodeId::Computer]);
+        let layout = layout_rows(&LayoutInput {
+            namespace: Namespace::Windows,
+            places: &places,
+            focus: &focus,
+            expanded: &expanded,
+            children: &HashMap::new(),
+            volumes: &volumes,
+        });
+        let labels: Vec<_> = layout.rows.iter().map(|row| row.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Desktop",
+                "This PC",
+                "Documents",
+                "Local Disk (C:)",
+                "Libraries",
+                "Network",
+            ]
+        );
+        assert!(
+            layout
+                .rows
+                .iter()
+                .any(|row| { row.label == "Libraries" && !row.expandable && row.target.is_none() })
+        );
+        assert!(
+            layout
+                .rows
+                .iter()
+                .any(|row| row.label == "Network" && !row.expandable)
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn expands_home_and_lists_siblings() {
@@ -1102,6 +1243,7 @@ mod tests {
         let places = Places {
             desktop: Some(home.join("Desktop")),
             home: Some(home.clone()),
+            known: Vec::new(),
         };
         let focus = TreeFocus::folder(&src);
         let spine = spine(Namespace::Unix, &places, &focus, &[]);
@@ -1140,6 +1282,7 @@ mod tests {
         let places = Places {
             desktop: None,
             home: None,
+            known: Vec::new(),
         };
         let focus = TreeFocus::archive(&archive, "docs/api");
         let namespace = host_namespace();
@@ -1184,6 +1327,7 @@ mod tests {
             Places {
                 desktop: None,
                 home: Some(home.clone()),
+                known: Vec::new(),
             },
             tx,
             rx,
@@ -1222,6 +1366,7 @@ mod tests {
             Places {
                 desktop: None,
                 home: Some(root.clone()),
+                known: Vec::new(),
             },
         );
         let focus = TreeFocus::folder(&root.join("docs"));

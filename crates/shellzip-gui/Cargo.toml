@@ -20,6 +20,7 @@ rfd = "0.15"
 shellzip-core = { path = "../shellzip-core", features = ["rar", "sevenz-codecs", "sevenz-parallel"] }
 sysinfo = { version = "0.40.1", default-features = false, features = ["disk"] }
 toml = "1.1.8"
+trash = { version = "5.2.9", default-features = false, features = ["coinit_apartmentthreaded"] }
 
 [lints]
 workspace = true

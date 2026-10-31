@@ -1,8 +1,8 @@
 //! Menu bar, icon toolbar, address bar, and status line.
 //!
 //! The commands are the ones ShellZip already performs. Compression is chosen
-//! in the add dialog. The menu holds extract options. The toolbar is Add,
-//! Extract To, Test, Delete, and Info.
+//! in the add dialog. Extract options are chosen in the extract dialog. The
+//! toolbar is Add, Extract To, Test, Delete, and Info.
 
 use egui::{Align2, Color32, FontId, Rect, Sense, Vec2};
 
@@ -12,7 +12,7 @@ use crate::shell_icons::{self, IconCache, IconKey};
 use crate::theme::{
     ADD, DANGER, EXTRACT, FOLDER, HOVER, INK, MUTED, OK, OPEN, PANEL, SELECT, SELECT_TEXT, TEST,
 };
-use shellzip_core::{Overwrite, SevenZMethod, ZipMethod};
+use shellzip_core::{SevenZMethod, ZipMethod};
 
 /// Pack choices remembered for the add dialog, and extract choices from the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,10 +25,6 @@ pub struct PackSettings {
     pub sevenz_method: SevenZMethod,
     /// Solid 7z blocks. Default is on.
     pub solid: bool,
-    /// What to do when a destination file exists.
-    pub overwrite: Overwrite,
-    /// Drop archive directories on extract.
-    pub flat: bool,
 }
 
 /// Menu entries that run a command.
@@ -82,7 +78,7 @@ pub enum AddressEvent {
 }
 
 /// File, Commands, Options, and Help.
-pub fn menu_bar(ui: &mut egui::Ui, options: &mut PackSettings) -> Option<MenuCommand> {
+pub fn menu_bar(ui: &mut egui::Ui) -> Option<MenuCommand> {
     let mut command = None;
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
@@ -118,7 +114,6 @@ pub fn menu_bar(ui: &mut egui::Ui, options: &mut PackSettings) -> Option<MenuCom
                 command = Some(MenuCommand::SelectNone);
             }
         });
-        options_menu(ui, options);
         ui.menu_button("Help", |ui| {
             if ui.button("About ShellZip").clicked() {
                 command = Some(MenuCommand::About);
@@ -392,27 +387,6 @@ pub fn bar_frame(x: i8, y: i8) -> egui::Frame {
         .inner_margin(egui::Margin::symmetric(x, y))
 }
 
-fn options_menu(ui: &mut egui::Ui, options: &mut PackSettings) {
-    egui::containers::menu::MenuButton::from_button(egui::Button::new("Options"))
-        .config(
-            egui::containers::menu::MenuConfig::default()
-                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
-        )
-        .ui(ui, |ui| {
-            ui.set_min_width(220.0);
-            ui.label("When a file exists");
-            ui.selectable_value(&mut options.overwrite, Overwrite::Never, "Skip existing");
-            ui.selectable_value(
-                &mut options.overwrite,
-                Overwrite::Always,
-                "Replace existing",
-            );
-            ui.selectable_value(&mut options.overwrite, Overwrite::Rename, "Rename");
-            ui.separator();
-            ui.checkbox(&mut options.flat, "Flat extract");
-        });
-}
-
 fn tool(
     ui: &mut egui::Ui,
     icon: Icon,
@@ -535,7 +509,7 @@ fn global_rect(ui: &egui::Ui) -> Rect {
         .unwrap_or(rect)
 }
 
-fn tree_row(
+pub(crate) fn tree_row(
     ui: &mut egui::Ui,
     tree: &mut FolderTree,
     cache: &mut IconCache,

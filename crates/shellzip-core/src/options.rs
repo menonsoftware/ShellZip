@@ -122,6 +122,18 @@ pub enum ZipMethod {
     Zstd,
 }
 
+/// Which archive files are written when the destination already has a copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExtractUpdate {
+    /// Write every selected file. Collisions follow [`Overwrite`].
+    #[default]
+    Replace,
+    /// Write a missing file, and replace an existing file only when the archive copy is newer.
+    Update,
+    /// Replace an existing file only when the archive copy is newer. Skip a file that is not there.
+    Freshen,
+}
+
 /// What to do when the destination file already exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Overwrite {
@@ -339,10 +351,18 @@ impl CompressOpts {
 pub struct ExtractOpts {
     /// Directory that receives the extracted tree.
     pub output: PathBuf,
-    /// Collision policy.
+    /// Which existing files are eligible to be replaced.
+    pub update: ExtractUpdate,
+    /// Collision policy for a file that [`Self::update`] decided to replace.
     pub overwrite: Overwrite,
     /// Drop archive directories and write every file into [`Self::output`].
     pub flat: bool,
+    /// Archive folder removed from the front of each name. Empty keeps the full path.
+    ///
+    /// Used by "extract relative paths" while a subfolder of the archive is open.
+    pub strip_prefix: String,
+    /// Write the archive modification time onto extracted files.
+    pub restore_mtime: bool,
     /// Keep a partial file when decoding fails.
     pub keep_broken: bool,
     /// Include globs. Empty means every entry.
@@ -366,8 +386,11 @@ impl ExtractOpts {
     pub fn new(output: impl Into<PathBuf>) -> Self {
         Self {
             output: output.into(),
+            update: ExtractUpdate::Replace,
             overwrite: Overwrite::Ask,
             flat: false,
+            strip_prefix: String::new(),
+            restore_mtime: true,
             keep_broken: false,
             includes: Vec::new(),
             exact_paths: None,

@@ -16,9 +16,19 @@ use crate::explorer::{
     archive_prefix, folder_parent, is_supported_archive, jumps, location_text, path_under,
     read_directory, sort_rows, totals, totals_label,
 };
+use crate::extract_dialog::{self, ExtractAction, ExtractRequest};
+use crate::settings::{self, DeleteArchive, ExtractSettings};
 use crate::shell_icons::IconCache;
 use crate::theme::{self, CANVAS};
+use crate::worker::ExtractJob;
 use crate::worker::{self, Outcome, PasswordJob, PasswordRequest, SharedProgress};
+
+/// An unpacked archive waiting for a delete confirmation.
+struct PendingArchiveDelete {
+    path: PathBuf,
+    recycle: bool,
+    open: bool,
+}
 
 /// Password dialog waiting on the window.
 struct PasswordAsk {
@@ -56,12 +66,16 @@ pub struct ShellZipApp {
     info: Option<String>,
     pending_delete: Option<Vec<String>>,
     add_dialog: Option<add_dialog::AddDialog>,
+    extract_dialog: Option<extract_dialog::ExtractDialog>,
+    pending_archive_delete: Option<PendingArchiveDelete>,
     ask: Option<AskPrompt>,
     password_ask: Option<PasswordAsk>,
     /// Password that opened the archive currently shown, if it needed one.
     opened_secret: Option<(PathBuf, Password)>,
     options: PackSettings,
     saved: PackSettings,
+    extract: ExtractSettings,
+    recent: Vec<String>,
     generation: u64,
     icons: IconCache,
     tree: FolderTree,
@@ -88,7 +102,8 @@ impl ShellZipApp {
             None => starting_folder(),
         };
         let generation = 1;
-        let options = crate::settings::load();
+        let stored = settings::load();
+        let options = stored.pack;
         if !open_file {
             spawn_directory(tx.clone(), path.clone(), generation);
         }
@@ -110,11 +125,15 @@ impl ShellZipApp {
             info: None,
             pending_delete: None,
             add_dialog: None,
+            extract_dialog: None,
+            pending_archive_delete: None,
             ask: None,
             password_ask: None,
             opened_secret: None,
             options,
             saved: options,
+            extract: stored.extract,
+            recent: stored.recent,
             generation,
             icons: IconCache::new(),
             tree: FolderTree::new(),
@@ -188,58 +207,103 @@ impl ShellZipApp {
             self.error = Some("Open an archive, or select one.".to_string());
             return;
         };
-        if self.busy {
+        if self.busy || self.extract_dialog.is_some() {
             return;
         }
-        let Some(output) = rfd::FileDialog::new().pick_folder() else {
-            return;
-        };
         let names = self.member_filter(&archive);
-        let flat = self.options.flat;
-        let overwrite = self.options.overwrite;
-        let password = self.saved_password(&archive);
-        self.spawn_extract(archive, output, flat, overwrite, names, password);
+        let prefix = match &self.place {
+            Place::Archive { path, prefix, .. } if path == &archive => prefix.clone(),
+            _ => String::new(),
+        };
+        self.extract_dialog = Some(extract_dialog::ExtractDialog::prepare(
+            &archive,
+            names,
+            &prefix,
+            self.extract,
+            &self.recent,
+        ));
     }
 
-    fn spawn_extract(
-        &mut self,
-        archive: PathBuf,
-        output: PathBuf,
-        flat: bool,
-        overwrite: shellzip_core::Overwrite,
-        names: Option<Vec<String>>,
-        password: Option<Password>,
-    ) {
+    fn start_extract(&mut self, request: ExtractRequest) {
+        let password = self.saved_password(&request.archive);
+        let archive = request.archive;
+        let job = ExtractJob {
+            output: request.output,
+            update: request.update,
+            overwrite: request.overwrite,
+            flat: request.flat,
+            strip_prefix: request.strip_prefix,
+            keep_broken: request.keep_broken,
+            restore_mtime: request.restore_mtime,
+            show_in_explorer: request.show_in_explorer,
+            delete: request.delete,
+            recycle: request.recycle,
+            names: request.names,
+        };
+        self.spawn_extract(archive, job, password);
+    }
+
+    fn spawn_extract(&mut self, archive: PathBuf, job: ExtractJob, password: Option<Password>) {
         if self.busy {
             return;
         }
+        let asking = job.overwrite == shellzip_core::Overwrite::Ask;
         let progress = Arc::clone(&self.progress);
         let generation = self.generation;
         self.begin_job();
         let tx = self.tx.clone();
         let again = password.is_some();
+        if !asking {
+            self.ask = None;
+        }
+        let prompt = asking.then(|| {
+            let (names_tx, names_rx) = mpsc::channel();
+            let (replies_tx, replies_rx) = mpsc::channel();
+            self.ask = Some(AskPrompt {
+                names: names_rx,
+                replies: replies_tx,
+                pending: None,
+                detail: "This file is already in the destination.",
+            });
+            (names_tx, replies_rx)
+        });
         worker::spawn(tx, move || {
-            let mut opts = ExtractOpts::new(&output);
-            opts.flat = flat;
-            opts.overwrite = overwrite;
+            let mut opts = ExtractOpts::new(&job.output);
+            opts.update = job.update;
+            opts.overwrite = job.overwrite;
+            opts.flat = job.flat;
+            opts.strip_prefix = job.strip_prefix.clone();
+            opts.keep_broken = job.keep_broken;
+            opts.restore_mtime = job.restore_mtime;
             opts.password = password;
-            if names.is_some() {
-                opts.exact_paths = names.clone();
+            if job.names.is_some() {
+                opts.exact_paths = job.names.clone();
             }
-            match extract(&archive, &opts, None, progress.as_ref()) {
-                Ok(report) => Ok(Outcome::Finished(format!(
-                    "extracted {}, skipped {}",
-                    report.extracted, report.skipped
-                ))),
+            let report = if let Some((names_tx, replies_rx)) = prompt {
+                let policy = std::sync::Mutex::new(None);
+                let decide = move |path: &Path| {
+                    decide_member(&path.display().to_string(), &policy, &names_tx, &replies_rx)
+                };
+                extract(&archive, &opts, Some(&decide), progress.as_ref())
+            } else {
+                extract(&archive, &opts, None, progress.as_ref())
+            };
+            match report {
+                Ok(report) => Ok(Outcome::Extracted {
+                    summary: format!("extracted {}, skipped {}", report.extracted, report.skipped),
+                    output: job.output,
+                    archive,
+                    show_in_explorer: job.show_in_explorer,
+                    delete: job.delete,
+                    recycle: job.recycle,
+                    clean: report.warnings.is_empty(),
+                    full: job.names.is_none(),
+                    wrote: report.extracted > 0,
+                }),
                 Err(err) if needs_password(&err) => Ok(Outcome::NeedPassword(PasswordRequest {
                     generation,
                     path: archive,
-                    job: PasswordJob::Extract {
-                        output,
-                        flat,
-                        overwrite,
-                        names,
-                    },
+                    job: PasswordJob::Extract(job),
                     again,
                 })),
                 Err(err) => Err(err),
@@ -386,6 +450,7 @@ impl ShellZipApp {
                 names: names_rx,
                 replies: replies_tx,
                 pending: None,
+                detail: "This name is already in the archive.",
             });
             (names_tx, replies_rx)
         });
@@ -587,6 +652,36 @@ impl ShellZipApp {
                     self.ask = None;
                     self.status = summary;
                 }
+                Outcome::Extracted {
+                    summary,
+                    output,
+                    archive,
+                    show_in_explorer,
+                    delete,
+                    recycle,
+                    clean,
+                    full,
+                    wrote,
+                } => {
+                    self.busy = false;
+                    self.ask = None;
+                    self.status = summary;
+                    self.remember_destination(&output);
+                    if show_in_explorer {
+                        self.open_destination(&output);
+                    }
+                    if clean && full && wrote && delete != DeleteArchive::Never {
+                        if delete == DeleteArchive::Always {
+                            self.remove_archive(&archive, recycle);
+                        } else {
+                            self.pending_archive_delete = Some(PendingArchiveDelete {
+                                path: archive,
+                                recycle,
+                                open: true,
+                            });
+                        }
+                    }
+                }
                 Outcome::Failed(message) => {
                     self.busy = false;
                     self.ask = None;
@@ -683,12 +778,9 @@ impl ShellZipApp {
         match request.job {
             PasswordJob::List => self.start_list_with(request.path, Some(password)),
             PasswordJob::Test => self.spawn_test(request.path, Some(password)),
-            PasswordJob::Extract {
-                output,
-                flat,
-                overwrite,
-                names,
-            } => self.spawn_extract(request.path, output, flat, overwrite, names, Some(password)),
+            PasswordJob::Extract(job) => {
+                self.spawn_extract(request.path, job, Some(password));
+            }
             PasswordJob::Delete { names } => self.spawn_delete(request.path, names, Some(password)),
         }
     }
@@ -1174,6 +1266,50 @@ impl ShellZipApp {
             self.status = "Cancelling...".to_string();
         }
     }
+
+    fn remember_destination(&mut self, path: &Path) {
+        let text = path.display().to_string();
+        self.recent.retain(|item| item != &text);
+        self.recent.insert(0, text);
+        self.recent.truncate(12);
+        self.persist_settings();
+    }
+
+    fn persist_settings(&mut self) {
+        if let Err(err) = settings::save(&self.options, &self.extract, &self.recent)
+            && self.error.is_none()
+        {
+            self.error = Some(err);
+        }
+    }
+
+    fn open_destination(&mut self, path: &Path) {
+        #[cfg(windows)]
+        {
+            if let Err(err) = std::process::Command::new("explorer").arg(path).spawn()
+                && self.error.is_none()
+            {
+                self.error = Some(format!("open {}: {err}", path.display()));
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = path;
+        }
+    }
+
+    fn remove_archive(&mut self, path: &Path, recycle: bool) {
+        let result = if recycle {
+            trash::delete(path).map_err(|err| err.to_string())
+        } else {
+            std::fs::remove_file(path).map_err(|err| format!("delete {}: {err}", path.display()))
+        };
+        if let Err(err) = result
+            && self.error.is_none()
+        {
+            self.error = Some(err);
+        }
+    }
 }
 
 fn needs_password(err: &Error) -> bool {
@@ -1221,7 +1357,7 @@ impl eframe::App for ShellZipApp {
         egui::TopBottomPanel::top("menu")
             .frame(chrome::bar_frame(4, 0))
             .show(ctx, |ui| {
-                menu_command = chrome::menu_bar(ui, &mut self.options);
+                menu_command = chrome::menu_bar(ui);
             });
         if matches!(menu_command, Some(MenuCommand::Exit)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1319,6 +1455,37 @@ impl eframe::App for ShellZipApp {
 
         chrome::about(ctx, &mut self.about);
         chrome::info_window(ctx, &mut self.info);
+        let extract_action = if let Some(dialog) = &mut self.extract_dialog {
+            extract_dialog::show(ctx, dialog, &mut self.icons)
+        } else {
+            None
+        };
+        match extract_action {
+            Some(ExtractAction::Submit(request)) => {
+                self.extract_dialog = None;
+                self.start_extract(request);
+            }
+            Some(ExtractAction::Save(settings)) => {
+                self.extract = settings;
+                self.persist_settings();
+            }
+            Some(ExtractAction::Close) => self.extract_dialog = None,
+            None => {}
+        }
+        let delete_choice = self.pending_archive_delete.as_mut().map(|pending| {
+            let path = pending.path.clone();
+            let recycle = pending.recycle;
+            let confirmed = extract_dialog::confirm_delete_archive(ctx, &path, &mut pending.open);
+            (confirmed, pending.open, path, recycle)
+        });
+        if let Some((confirmed, still_open, path, recycle)) = delete_choice {
+            if confirmed {
+                self.pending_archive_delete = None;
+                self.remove_archive(&path, recycle);
+            } else if !still_open {
+                self.pending_archive_delete = None;
+            }
+        }
         let add_action = self
             .add_dialog
             .as_mut()
@@ -1331,9 +1498,12 @@ impl eframe::App for ShellZipApp {
             Some(AddAction::Close) => self.add_dialog = None,
             None => {}
         }
-        let pending_name = self.ask.as_ref().and_then(|ask| ask.pending.clone());
-        if let Some(name) = pending_name
-            && let Some(reply) = add_dialog::ask_overwrite(ctx, &name)
+        let pending_ask = self
+            .ask
+            .as_ref()
+            .and_then(|ask| ask.pending.clone().map(|name| (name, ask.detail)));
+        if let Some((name, detail)) = pending_ask
+            && let Some(reply) = add_dialog::ask_overwrite(ctx, &name, detail)
         {
             self.answer_ask(reply);
         }
@@ -1344,14 +1514,14 @@ impl eframe::App for ShellZipApp {
             self.pending_delete = None;
         }
         if self.options != self.saved {
-            if let Err(err) = crate::settings::save(&self.options)
-                && self.error.is_none()
-            {
-                self.error = Some(err);
-            }
+            self.persist_settings();
             self.saved = self.options;
         }
-        if !submitted && self.add_dialog.is_none() && self.ask.is_none() {
+        if !submitted
+            && self.add_dialog.is_none()
+            && self.extract_dialog.is_none()
+            && self.ask.is_none()
+        {
             self.shortcuts(ctx);
         }
     }

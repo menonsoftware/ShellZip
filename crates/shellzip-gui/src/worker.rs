@@ -5,9 +5,10 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 
-use shellzip_core::{Entry, Error, Overwrite, ProgressSink};
+use shellzip_core::{Entry, Error, ExtractUpdate, Overwrite, ProgressSink};
 
 use crate::explorer::Row;
+use crate::settings::DeleteArchive;
 
 /// Byte counters the window reads each frame.
 pub struct SharedProgress {
@@ -107,6 +108,27 @@ pub enum Outcome {
     },
     /// The job finished and `summary` can go in the status line.
     Finished(String),
+    /// An extract finished. The window may open Explorer or delete the archive.
+    Extracted {
+        /// Status line.
+        summary: String,
+        /// Destination folder.
+        output: PathBuf,
+        /// Archive that was unpacked.
+        archive: PathBuf,
+        /// Open `output` in Explorer.
+        show_in_explorer: bool,
+        /// Whether to delete `archive`.
+        delete: DeleteArchive,
+        /// Send the archive to the recycle bin.
+        recycle: bool,
+        /// No warnings were reported.
+        clean: bool,
+        /// Every member was selected.
+        full: bool,
+        /// At least one file was written.
+        wrote: bool,
+    },
     /// The job failed. The text is safe to show.
     Failed(String),
     /// The archive needs a password before the job can continue.
@@ -132,21 +154,38 @@ pub enum PasswordJob {
     /// Test checksums.
     Test,
     /// Extract into `output`.
-    Extract {
-        /// Destination folder.
-        output: PathBuf,
-        /// Drop archive directories.
-        flat: bool,
-        /// Collision policy.
-        overwrite: Overwrite,
-        /// Member names, or every member when `None`.
-        names: Option<Vec<String>>,
-    },
+    Extract(ExtractJob),
     /// Remove these members.
     Delete {
         /// Archive paths to remove.
         names: Vec<String>,
     },
+}
+
+/// Extract choices that survive a password retry.
+pub struct ExtractJob {
+    /// Destination folder.
+    pub output: PathBuf,
+    /// Replace, update, or freshen.
+    pub update: ExtractUpdate,
+    /// Collision policy.
+    pub overwrite: Overwrite,
+    /// Drop archive directories.
+    pub flat: bool,
+    /// Open archive folder removed from each name.
+    pub strip_prefix: String,
+    /// Keep a partial file when decoding fails.
+    pub keep_broken: bool,
+    /// Restore modification times.
+    pub restore_mtime: bool,
+    /// Open the destination in Explorer afterwards.
+    pub show_in_explorer: bool,
+    /// Delete the archive after a clean full extract.
+    pub delete: DeleteArchive,
+    /// Move a deleted archive to the recycle bin.
+    pub recycle: bool,
+    /// Member names, or every member when `None`.
+    pub names: Option<Vec<String>>,
 }
 
 /// Run `job` on a new thread and send one [`Outcome`].
