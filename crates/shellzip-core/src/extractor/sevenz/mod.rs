@@ -16,7 +16,8 @@ use std::path::Path;
 
 use self::entry::{entry_from, methods_by_name};
 use super::policy::{
-    Budget, Destination, destination, mark_extracted, restore_entry_time, symlink_destination,
+    Budget, BudgetWriter, Destination, destination, mark_extracted, restore_entry_time,
+    symlink_destination,
 };
 use crate::crypto::Password;
 use crate::entry::Entry;
@@ -79,6 +80,7 @@ pub fn test_sevenz(
     path: &Path,
     progress: &dyn ProgressSink,
     password: Option<&Password>,
+    limits: &crate::options::ReadLimits,
 ) -> Result<TestReport, Error> {
     let mut archive = open_streaming(path, password)?;
     let encrypted: Vec<String> = archive
@@ -96,6 +98,7 @@ pub fn test_sevenz(
         return Ok(report);
     }
     let had_password = password.is_some();
+    let mut budget = Budget::for_archive(path, limits.max_bytes, limits.max_ratio);
     let mut iter = archive
         .entries()
         .map_err(|err| map_zesven(err, had_password))?;
@@ -111,15 +114,23 @@ pub fn test_sevenz(
             progress.end_entry();
             continue;
         }
+        budget.reserve(member.size, None)?;
         progress.begin_entry(&member.name, member.size);
         let mut hasher = CrcWriter::new();
-        let mut ignored = 0u64;
-        let mut writer = ProgressWrite {
-            inner: &mut hasher,
-            progress,
-            written: &mut ignored,
+        let extracted = {
+            let mut ignored = 0u64;
+            let mut capped = BudgetWriter {
+                inner: &mut hasher,
+                budget: &mut budget,
+            };
+            let mut writer = ProgressWrite {
+                inner: &mut capped,
+                progress,
+                written: &mut ignored,
+            };
+            iter.extract_current_to(&mut writer)
         };
-        match iter.extract_current_to(&mut writer) {
+        match extracted {
             Ok(_) => {
                 report.bytes += hasher.bytes;
                 // The archive CRC is checked inside zesven. A mismatch arrives as
@@ -193,7 +204,7 @@ pub fn extract_sevenz(
         }
     }
     progress.begin(&format!("extract {}", path.display()), 0);
-    let mut budget = Budget::new(opts.max_bytes);
+    let mut budget = Budget::for_archive(path, opts.max_bytes, opts.max_ratio);
     let had_password = opts.password.is_some();
     let mut iter = archive
         .entries()
@@ -257,13 +268,25 @@ pub fn copy_sevenz_index(
     if member.is_directory || member.is_anti {
         return Ok((0, 0));
     }
+    let mut budget = Budget::for_archive(
+        path,
+        crate::options::DEFAULT_MAX_BYTES,
+        crate::options::DEFAULT_MAX_RATIO,
+    );
+    budget.reserve(member.size, None)?;
     let mut hasher = CrcWriter::new();
-    let mut tee = Tee {
-        left: &mut hasher,
-        right: sink,
-    };
-    iter.extract_current_to(&mut tee)
-        .map_err(|err| map_zesven(err, had_password))?;
+    {
+        let mut tee = Tee {
+            left: &mut hasher,
+            right: sink,
+        };
+        let mut capped = BudgetWriter {
+            inner: &mut tee,
+            budget: &mut budget,
+        };
+        iter.extract_current_to(&mut capped)
+            .map_err(|err| map_zesven(err, had_password))?;
+    }
     Ok((hasher.bytes, hasher.crc()))
 }
 
@@ -297,7 +320,7 @@ fn write_member<R: std::io::Read + std::io::Seek + Send>(
         ctx.report.skipped += 1;
         return Ok(());
     }
-    ctx.budget.reserve(member.size)?;
+    ctx.budget.reserve(member.size, None)?;
     ctx.progress.begin_entry(&member.name, member.size);
     if member.is_directory {
         if !ctx.opts.flat {
@@ -320,10 +343,14 @@ fn write_member<R: std::io::Read + std::io::Seek + Send>(
     }
     if member.is_symlink {
         let mut target = Vec::new();
-        iter.extract_current_to(&mut target)
-            .map_err(|err| map_zesven(err, ctx.had_password))?;
-        ctx.budget
-            .charge(u64::try_from(target.len()).unwrap_or(u64::MAX))?;
+        {
+            let mut capped = BudgetWriter {
+                inner: &mut target,
+                budget: ctx.budget,
+            };
+            iter.extract_current_to(&mut capped)
+                .map_err(|err| map_zesven(err, ctx.had_password))?;
+        }
         let target = String::from_utf8(target).map_err(|_| {
             Error::Archive(format!("symlink `{}` target is not UTF-8", member.name))
         })?;
@@ -353,14 +380,17 @@ fn write_member<R: std::io::Read + std::io::Seek + Send>(
             let progress = ctx.progress;
             super::policy::write_atomic(&dest, ctx.opts.keep_broken, |out| {
                 let mut written = 0u64;
-                let mut writer = ProgressWrite {
+                let mut capped = BudgetWriter {
                     inner: out,
+                    budget: ctx.budget,
+                };
+                let mut writer = ProgressWrite {
+                    inner: &mut capped,
                     progress,
                     written: &mut written,
                 };
                 iter.extract_current_to(&mut writer)
                     .map_err(|err| map_zesven(err, had_password))?;
-                ctx.budget.charge(written)?;
                 Ok(())
             })?;
             if let Err(err) = restore_entry_time(&dest, modified, ctx.opts) {

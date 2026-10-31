@@ -178,6 +178,23 @@ fn overwrite_skip_and_rename() {
 }
 
 #[test]
+fn ratio_cap_stops_a_highly_compressible_zip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("zeros.txt");
+    fs::write(&src, vec![0u8; 4096]).unwrap();
+    let archive = tmp.path().join("zeros.zip");
+    add(&archive, &[src], &opts_fast(), &NopProgress).unwrap();
+    let mut opts = ExtractOpts::new(tmp.path().join("out"));
+    opts.overwrite = Overwrite::Always;
+    opts.max_ratio = 1;
+    let err = extract(&archive, &opts, None, &NopProgress).unwrap_err();
+    assert!(err.to_string().contains("ratio cap"), "{err}");
+
+    opts.max_ratio = 0;
+    extract(&archive, &opts, None, &NopProgress).unwrap();
+}
+
+#[test]
 fn byte_cap_stops_extraction() {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("big.txt");

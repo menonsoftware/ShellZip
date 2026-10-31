@@ -26,6 +26,7 @@ pub fn safe_rel(raw: &str) -> Result<PathBuf, Error> {
             continue;
         }
         if component == ".."
+            || component.contains(':')
             || component.ends_with(' ')
             || component.ends_with('.')
             || is_reserved(component)
@@ -40,6 +41,12 @@ pub fn safe_rel(raw: &str) -> Result<PathBuf, Error> {
     let mut path = PathBuf::new();
     for part in parts {
         path.push(part);
+    }
+    if path
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(Error::UnsafePath(raw.to_string()));
     }
     Ok(path)
 }
@@ -212,6 +219,8 @@ mod tests {
 
     #[test]
     fn rejects_escape_and_reserved() {
+        assert!(safe_rel(r"A\a:").is_err());
+        assert!(safe_rel("dir/file:stream").is_err());
         assert!(safe_rel("../evil.txt").is_err());
         assert!(safe_rel("foo/../../evil.txt").is_err());
         assert!(safe_rel(r"C:\evil").is_err());
@@ -230,5 +239,20 @@ mod tests {
         let joined = safe_join(&dest, &rel).unwrap();
         let root = lexical_absolute(&dest).unwrap();
         assert!(is_inside(&root, &lexical_absolute(&joined).unwrap()));
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+        #[test]
+        fn random_names_never_escape(raw in "\\PC{0,48}") {
+            if let Ok(rel) = safe_rel(&raw) {
+                proptest::prop_assert!(rel.components().all(|component| matches!(component, Component::Normal(_))));
+                let dest = Path::new("dest-root");
+                let joined = safe_join(dest, &rel).unwrap();
+                let root = lexical_absolute(dest).unwrap();
+                let abs = lexical_absolute(&joined).unwrap();
+                proptest::prop_assert!(is_inside(&root, &abs));
+            }
+        }
     }
 }

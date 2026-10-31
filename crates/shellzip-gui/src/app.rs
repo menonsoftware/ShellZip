@@ -9,6 +9,7 @@ use shellzip_core::{
     add_prompted, add_sfx, delete, extract, format_bytes, format_crc, list_with, test,
 };
 
+use crate::about;
 use crate::add_dialog::{self, AddAction, AddRequest, AskPrompt, AskReply};
 use crate::chrome::{self, AddressEvent, MenuCommand, PackSettings, ToolCommand};
 use crate::explorer::{
@@ -1763,7 +1764,7 @@ impl eframe::App for ShellZipApp {
                 }
             });
 
-        chrome::about(ctx, &mut self.about);
+        about::show(ctx, &mut self.about);
         chrome::info_window(ctx, &mut self.info);
         self.show_progress(ctx);
         let extract_action = if let Some(dialog) = &mut self.extract_dialog {

@@ -9,8 +9,8 @@ use chrono::TimeZone;
 use zip::ZipArchive;
 
 use super::policy::{
-    Budget, Destination, destination, mark_extracted, restore_entry_time, symlink_destination,
-    write_atomic,
+    Budget, Destination, copy_limited, destination, mark_extracted, restore_entry_time,
+    symlink_destination, write_atomic,
 };
 use crate::entry::{Entry, EntryKind};
 use crate::error::Error;
@@ -43,20 +43,26 @@ pub fn list_zip(
         };
         let mut entry = entry_from(&mut file)?;
         if hash && entry.kind == EntryKind::File && !entry.encrypted {
-            let mut blake = Blake2spWriter::new();
-            std::io::copy(&mut file, &mut blake)
-                .map_err(|err| Error::io(entry.path.clone(), err))?;
-            entry.blake2sp = Some(blake.finish());
+            entry.blake2sp = Some(hash_capped(
+                path,
+                &entry.path,
+                entry.size,
+                entry.packed_size,
+                &mut file,
+            )?);
         } else if hash && entry.kind == EntryKind::File && entry.encrypted {
             drop(file);
             if let Some(password) = password {
                 let mut file = archive
                     .by_index_decrypt(index, password.expose().as_bytes())
                     .map_err(|err| annotate(err, path))?;
-                let mut blake = Blake2spWriter::new();
-                std::io::copy(&mut file, &mut blake)
-                    .map_err(|err| Error::io(entry.path.clone(), err))?;
-                entry.blake2sp = Some(blake.finish());
+                entry.blake2sp = Some(hash_capped(
+                    path,
+                    &entry.path,
+                    entry.size,
+                    entry.packed_size,
+                    &mut file,
+                )?);
             }
         }
         entries.push(entry);
@@ -69,6 +75,7 @@ pub fn test_zip(
     path: &Path,
     password: Option<&crate::crypto::Password>,
     progress: &dyn ProgressSink,
+    limits: &crate::options::ReadLimits,
 ) -> Result<TestReport, Error> {
     let mut archive = open_zip(path)?;
     let total: u64 = (0..archive.len())
@@ -81,6 +88,7 @@ pub fn test_zip(
         .sum();
     progress.begin(&format!("test {}", path.display()), total);
     let mut report = TestReport::default();
+    let mut budget = Budget::for_archive(path, limits.max_bytes, limits.max_ratio);
     for index in 0..archive.len() {
         crate::progress::ensure_running(progress)?;
         let file = archive
@@ -108,13 +116,15 @@ pub fn test_zip(
             drop(file);
             archive.by_index(index).map_err(|err| annotate(err, path))?
         };
-        progress.begin_entry(&name, file.size());
+        let declared = file.size();
+        let packed = file.compressed_size();
+        budget.reserve(declared, Some(packed))?;
+        progress.begin_entry(&name, declared);
         let expected = file.crc32();
         let mut hasher = CrcWriter::new();
         let mut reader = ProgressReader::new(&mut file, progress);
-        if let Err(err) = std::io::copy(&mut reader, &mut hasher) {
-            let mapped = Error::io(name.clone(), err);
-            match mapped {
+        if let Err(err) = copy_limited(&mut reader, &mut hasher, &mut budget, &name) {
+            match err {
                 Error::BadChecksum { entry } => report.checksums.push(entry),
                 other => return Err(other),
             }
@@ -154,7 +164,7 @@ pub fn extract_zip(
         .sum();
     progress.begin(&format!("extract {}", path.display()), total);
     let mut report = ExtractReport::default();
-    let mut budget = Budget::new(opts.max_bytes);
+    let mut budget = Budget::for_archive(path, opts.max_bytes, opts.max_ratio);
     for index in chosen {
         crate::progress::ensure_running(progress)?;
         let file = archive
@@ -181,8 +191,10 @@ pub fn extract_zip(
             drop(file);
             archive.by_index(index).map_err(|err| annotate(err, path))?
         };
-        progress.begin_entry(&name, file.size());
-        budget.reserve(file.size())?;
+        let declared = file.size();
+        let packed = file.compressed_size();
+        progress.begin_entry(&name, declared);
+        budget.reserve(declared, Some(packed))?;
         if file.is_dir() {
             if !opts.flat {
                 match destination(&name, opts, false, true, None, decide)? {
@@ -217,10 +229,7 @@ pub fn extract_zip(
                 let mode = file.unix_mode();
                 write_atomic(&dest, opts.keep_broken, |out| {
                     let mut reader = ProgressReader::new(&mut file, progress);
-                    let mut buf = Vec::new();
-                    let copied = crate::fs::copy_chunked(&mut reader, out, &mut buf)
-                        .map_err(|err| Error::io(name.clone(), err))?;
-                    budget.charge(copied)?;
+                    copy_limited(&mut reader, out, &mut budget, &name)?;
                     Ok(())
                 })?;
                 if let Err(err) = restore_entry_time(&dest, modified, opts) {
@@ -270,7 +279,15 @@ pub fn extract_zip_index(
         archive.by_index(index).map_err(|err| annotate(err, path))?
     };
     let name = file.name().to_string();
-    progress.begin_entry(&name, file.size());
+    let declared = file.size();
+    let packed = file.compressed_size();
+    progress.begin_entry(&name, declared);
+    let mut budget = Budget::for_archive(
+        path,
+        crate::options::DEFAULT_MAX_BYTES,
+        crate::options::DEFAULT_MAX_RATIO,
+    );
+    budget.reserve(declared, Some(packed))?;
     let mut hasher = CrcWriter::new();
     {
         let mut reader = ProgressReader::new(&mut file, progress);
@@ -278,7 +295,7 @@ pub fn extract_zip_index(
             left: &mut hasher,
             right: sink,
         };
-        std::io::copy(&mut reader, &mut tee).map_err(|err| Error::io(name.clone(), err))?;
+        copy_limited(&mut reader, &mut tee, &mut budget, &name)?;
     }
     progress.end_entry();
     if !(file.encrypted() && file.crc32() == 0) && hasher.crc() != file.crc32() {
@@ -292,6 +309,26 @@ type Source = crate::sfx::Section<File>;
 fn open_zip(path: &Path) -> Result<ZipArchive<Source>, Error> {
     let file = crate::sfx::open_section(path)?;
     ZipArchive::new(file).map_err(|err| annotate(err, path))
+}
+
+fn hash_capped(
+    archive: &Path,
+    name: &str,
+    declared: Option<u64>,
+    packed: Option<u64>,
+    src: &mut dyn Read,
+) -> Result<[u8; 32], Error> {
+    let mut budget = Budget::for_archive(
+        archive,
+        crate::options::DEFAULT_MAX_BYTES,
+        crate::options::DEFAULT_MAX_RATIO,
+    );
+    if let Some(size) = declared {
+        budget.reserve(size, packed)?;
+    }
+    let mut blake = Blake2spWriter::new();
+    copy_limited(src, &mut blake, &mut budget, name)?;
+    Ok(blake.finish())
 }
 
 fn annotate(err: zip::result::ZipError, path: &Path) -> Error {

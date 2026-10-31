@@ -9,8 +9,8 @@ use flate2::read::GzDecoder;
 use tar::{Archive, EntryType};
 
 use super::policy::{
-    Budget, Destination, destination, mark_extracted, restore_entry_time, symlink_destination,
-    write_atomic,
+    Budget, Destination, copy_limited, destination, mark_extracted, restore_entry_time,
+    symlink_destination, write_atomic,
 };
 use crate::detect::{Compression, prefix_is_tar};
 use crate::entry::{Entry, EntryKind};
@@ -76,10 +76,12 @@ pub fn test_tar(
     path: &Path,
     compression: Compression,
     progress: &dyn ProgressSink,
+    limits: &crate::options::ReadLimits,
 ) -> Result<TestReport, Error> {
     progress.begin(&format!("test {}", path.display()), 0);
     let mut archive = Archive::new(open_input(path, compression)?);
     let mut report = TestReport::default();
+    let mut budget = Budget::for_archive(path, limits.max_bytes, limits.max_ratio);
     for entry in archive
         .entries()
         .map_err(|err| Error::io(format!("read {}", path.display()), err))?
@@ -93,10 +95,11 @@ pub fn test_tar(
             progress.end_entry();
             continue;
         }
+        budget.reserve(declared, None)?;
         progress.begin_entry(&name, declared);
         let mut hasher = CrcWriter::new();
         let mut reader = ProgressReader::new(&mut entry, progress);
-        std::io::copy(&mut reader, &mut hasher).map_err(|err| Error::io(name.clone(), err))?;
+        copy_limited(&mut reader, &mut hasher, &mut budget, &name)?;
         if hasher.bytes != declared {
             report.checksums.push(format!(
                 "{name} (read {} bytes, header says {declared})",
@@ -121,7 +124,7 @@ pub fn extract_tar(
     progress.begin(&format!("extract {}", path.display()), 0);
     let mut archive = Archive::new(open_input(path, compression)?);
     let mut report = ExtractReport::default();
-    let mut budget = Budget::new(opts.max_bytes);
+    let mut budget = Budget::for_archive(path, opts.max_bytes, opts.max_ratio);
     for entry in archive
         .entries()
         .map_err(|err| Error::io(format!("read {}", path.display()), err))?
@@ -135,7 +138,7 @@ pub fn extract_tar(
         let kind = entry.header().entry_type();
         let declared = entry.size();
         progress.begin_entry(&name, declared);
-        budget.reserve(declared)?;
+        budget.reserve(declared, None)?;
         match kind {
             EntryType::Directory => {
                 if !opts.flat {
@@ -252,6 +255,7 @@ pub fn test_single(
     path: &Path,
     compression: Compression,
     progress: &dyn ProgressSink,
+    limits: &crate::options::ReadLimits,
 ) -> Result<TestReport, Error> {
     let name = single_name(path, compression)?;
     progress.begin(&format!("test {}", path.display()), 0);
@@ -259,7 +263,8 @@ pub fn test_single(
     let mut input = open_input(path, compression)?;
     let mut hasher = CrcWriter::new();
     let mut reader = ProgressReader::new(&mut input, progress);
-    std::io::copy(&mut reader, &mut hasher).map_err(|err| Error::io(name, err))?;
+    let mut budget = Budget::for_archive(path, limits.max_bytes, limits.max_ratio);
+    copy_limited(&mut reader, &mut hasher, &mut budget, &name)?;
     progress.end_entry();
     Ok(TestReport {
         entries: 1,
@@ -284,17 +289,14 @@ pub fn extract_single(
     progress.begin(&format!("extract {}", path.display()), 0);
     progress.begin_entry(&name, 0);
     let mut report = ExtractReport::default();
-    let mut budget = Budget::new(opts.max_bytes);
+    let mut budget = Budget::for_archive(path, opts.max_bytes, opts.max_ratio);
     let mut input = open_input(path, compression)?;
     match destination(&name, opts, opts.flat, false, None, decide)? {
         Destination::Skip => report.skipped += 1,
         Destination::Write(dest) => {
             write_atomic(&dest, opts.keep_broken, |out| {
                 let mut reader = ProgressReader::new(&mut input, progress);
-                let mut buf = Vec::new();
-                let copied = crate::fs::copy_chunked(&mut reader, out, &mut buf)
-                    .map_err(|err| Error::io(name.clone(), err))?;
-                budget.charge(copied)?;
+                copy_limited(&mut reader, out, &mut budget, &name)?;
                 Ok(())
             })?;
             if let Err(err) = mark_extracted(path, &dest, opts) {
@@ -333,15 +335,12 @@ fn extract_regular(
             let mode = entry.header().mode().ok();
             write_atomic(&dest, opts.keep_broken, |out| {
                 let mut reader = ProgressReader::new(entry, progress);
-                let mut buf = Vec::new();
-                let copied = crate::fs::copy_chunked(&mut reader, out, &mut buf)
-                    .map_err(|err| Error::io(name.to_string(), err))?;
+                let copied = copy_limited(&mut reader, out, budget, name)?;
                 if copied != declared {
                     return Err(Error::BadChecksum {
                         entry: format!("{name} (read {copied} bytes, header says {declared})"),
                     });
                 }
-                budget.charge(copied)?;
                 Ok(())
             })?;
             if let Err(err) = restore_entry_time(&dest, modified, opts) {
@@ -567,18 +566,33 @@ pub fn copy_tar_index(
     {
         let mut entry = entry.map_err(|err| Error::io(format!("read {}", path.display()), err))?;
         if index != idx {
-            std::io::copy(&mut entry, &mut std::io::sink())
-                .map_err(|err| Error::io(format!("skip {index}"), err))?;
+            let mut skip = Budget::for_archive(
+                path,
+                crate::options::DEFAULT_MAX_BYTES,
+                crate::options::DEFAULT_MAX_RATIO,
+            );
+            copy_limited(
+                &mut entry,
+                &mut std::io::sink(),
+                &mut skip,
+                &format!("skip {index}"),
+            )?;
             continue;
         }
+        let declared = entry.size();
+        let mut budget = Budget::for_archive(
+            path,
+            crate::options::DEFAULT_MAX_BYTES,
+            crate::options::DEFAULT_MAX_RATIO,
+        );
+        budget.reserve(declared, None)?;
         let mut hasher = CrcWriter::new();
         {
             let mut fan = Fanout {
                 left: &mut hasher,
                 right: sink,
             };
-            std::io::copy(&mut entry, &mut fan)
-                .map_err(|err| Error::io(format!("entry {idx}"), err))?;
+            copy_limited(&mut entry, &mut fan, &mut budget, &format!("entry {idx}"))?;
         }
         return Ok((hasher.bytes, hasher.crc()));
     }
@@ -593,13 +607,22 @@ pub fn copy_single(
 ) -> Result<(u64, u32), Error> {
     let mut input = open_input(path, compression)?;
     let mut hasher = CrcWriter::new();
+    let mut budget = Budget::for_archive(
+        path,
+        crate::options::DEFAULT_MAX_BYTES,
+        crate::options::DEFAULT_MAX_RATIO,
+    );
     {
         let mut fan = Fanout {
             left: &mut hasher,
             right: sink,
         };
-        std::io::copy(&mut input, &mut fan)
-            .map_err(|err| Error::io(format!("read {}", path.display()), err))?;
+        copy_limited(
+            &mut input,
+            &mut fan,
+            &mut budget,
+            &format!("read {}", path.display()),
+        )?;
     }
     Ok((hasher.bytes, hasher.crc()))
 }

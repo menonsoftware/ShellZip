@@ -443,22 +443,6 @@ pub fn confirm_delete(ctx: &egui::Context, pending: &mut Option<usize>) -> bool 
     confirmed
 }
 
-/// Short about window. The Lucide credit lives here so the status line stays a total.
-pub fn about(ctx: &egui::Context, open: &mut bool) {
-    egui::Window::new("About ShellZip")
-        .open(open)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.label("Open, list, test, extract, and create ZIP and tar archives.");
-            ui.add_space(8.0);
-            ui.label("Author: Ajay Menon");
-            ui.add_space(8.0);
-            ui.hyperlink_to("Icons by Lucide", "https://lucide.dev/icons/");
-        });
-}
-
 /// Chrome strip in the active palette.
 pub fn bar_frame(ctx: &egui::Context, x: i8, y: i8) -> egui::Frame {
     egui::Frame::new()

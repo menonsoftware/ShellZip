@@ -1,16 +1,18 @@
 //! `szip t`.
 
-use shellzip_core::{Error, test as test_archive};
+use shellzip_core::{Error, test_with};
 
 use super::Shared;
-use crate::cli::ArchiveArgs;
+use crate::cli::TestArgs;
 
 /// Decode every member and report checksum or encryption failures.
-pub fn test(args: &ArchiveArgs, shared: &Shared) -> Result<i32, Error> {
-    let report = test_archive(
+pub fn test(args: &TestArgs, shared: &Shared) -> Result<i32, Error> {
+    let limits = args.limits.read_limits();
+    let report = test_with(
         &args.archive,
         shared.password.as_ref(),
         shared.sink.as_ref(),
+        &limits,
     )?;
     for name in &report.checksums {
         anstream::eprintln!("szip: checksum mismatch for `{name}`");

@@ -47,10 +47,12 @@ pub fn test_rar(
     path: &Path,
     progress: &dyn ProgressSink,
     password: Option<&Password>,
+    limits: &crate::options::ReadLimits,
 ) -> Result<TestReport, Error> {
     let mut archive = open_process(path, password)?;
     progress.begin(&format!("test {}", path.display()), 0);
     let mut report = TestReport::default();
+    let mut budget = Budget::for_archive(path, limits.max_bytes, limits.max_ratio);
     loop {
         let Some(header) = archive
             .read_header()
@@ -76,6 +78,7 @@ pub fn test_rar(
             continue;
         }
         let size = header.entry().unpacked_size;
+        budget.reserve(size, None)?;
         progress.begin_entry(&name, size);
         archive = match header.test() {
             Ok(next) => next,
@@ -84,6 +87,7 @@ pub fn test_rar(
             }
             Err(err) => return Err(map_unrar(err, password.is_some())),
         };
+        budget.charge(size)?;
         report.bytes += size;
         progress.end_entry();
     }
@@ -101,7 +105,7 @@ pub fn extract_rar(
     let mut archive = open_process(path, opts.password.as_ref())?;
     progress.begin(&format!("extract {}", path.display()), 0);
     let mut report = ExtractReport::default();
-    let mut budget = Budget::new(opts.max_bytes);
+    let mut budget = Budget::for_archive(path, opts.max_bytes, opts.max_ratio);
     let had_password = opts.password.is_some();
     loop {
         let Some(header) = archive
@@ -116,7 +120,7 @@ pub fn extract_rar(
             continue;
         }
         let size = header.entry().unpacked_size;
-        budget.reserve(size)?;
+        budget.reserve(size, None)?;
         progress.begin_entry(&name, size);
         if header.entry().is_directory() {
             if !opts.flat {
@@ -199,6 +203,12 @@ pub fn copy_rar_index(
         if header.entry().is_encrypted() && password.is_none() {
             return Err(Error::Encrypted(name));
         }
+        let budget = Budget::for_archive(
+            path,
+            crate::options::DEFAULT_MAX_BYTES,
+            crate::options::DEFAULT_MAX_RATIO,
+        );
+        budget.reserve(header.entry().unpacked_size, None)?;
         let staged =
             std::env::temp_dir().join(format!("szip-rar-{}-{cursor}.bin", std::process::id()));
         let extracted = header.extract_to(&staged);

@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
 use shellzip_core::{
-    CompressOpts, Error, Format, Overwrite, Password, SevenZMethod, SevenZOpts, StoreList,
-    UpdateMode, ZipMethod, format_from_extension,
+    CompressOpts, Error, Format, Overwrite, Password, ReadLimits, SevenZMethod, SevenZOpts,
+    StoreList, UpdateMode, ZipMethod, format_from_extension,
 };
 use zeroize::Zeroize;
 
@@ -85,7 +85,7 @@ pub enum Command {
     Print(PrintArgs),
     /// Test checksums and declared sizes.
     #[command(name = "t")]
-    Test(ArchiveArgs),
+    Test(TestArgs),
     /// Convert a ZIP into a self-extracting archive, or the reverse.
     ///
     /// A ZIP is wrapped with the `shellzip-sfx` stub and a 24-byte trailer.
@@ -267,9 +267,57 @@ pub struct ExtractArgs {
     /// Include glob. Repeatable.
     #[arg(short = 'n', long = "include")]
     pub include: Vec<String>,
+    /// Byte and ratio caps for this extract.
+    #[command(flatten)]
+    pub limits: LimitArgs,
 }
 
-/// Archive path shared by `l` and `t`.
+/// `szip t`.
+#[derive(Debug, Parser)]
+pub struct TestArgs {
+    /// Archive to read.
+    pub archive: PathBuf,
+    /// Byte and ratio caps for this test.
+    #[command(flatten)]
+    pub limits: LimitArgs,
+}
+
+/// Shared `--max-size` and `--max-ratio` switches.
+#[derive(Debug, Parser)]
+pub struct LimitArgs {
+    /// Stop after this many uncompressed bytes. Default is 64 GiB.
+    #[arg(long = "max-size", value_name = "BYTES")]
+    pub max_size: Option<u64>,
+    /// Uncompressed bytes allowed per packed byte. Default is 1000000. `0` disables the ratio cap.
+    #[arg(long = "max-ratio", value_name = "N")]
+    pub max_ratio: Option<u64>,
+}
+
+impl LimitArgs {
+    /// Apply overrides onto extract options. Unset flags keep the defaults.
+    pub fn apply(&self, opts: &mut shellzip_core::ExtractOpts) {
+        if let Some(bytes) = self.max_size {
+            opts.max_bytes = bytes;
+        }
+        if let Some(ratio) = self.max_ratio {
+            opts.max_ratio = ratio;
+        }
+    }
+
+    /// Caps for `szip t`.
+    pub fn read_limits(&self) -> ReadLimits {
+        let mut limits = ReadLimits::default();
+        if let Some(bytes) = self.max_size {
+            limits.max_bytes = bytes;
+        }
+        if let Some(ratio) = self.max_ratio {
+            limits.max_ratio = ratio;
+        }
+        limits
+    }
+}
+
+/// Archive path for `l`.
 #[derive(Debug, Parser)]
 pub struct ArchiveArgs {
     /// Archive to read.

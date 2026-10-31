@@ -15,7 +15,7 @@ use crate::crypto::Password;
 use crate::detect::{Compression, Format, detect_file};
 use crate::entry::Entry;
 use crate::error::Error;
-use crate::options::{ConflictDecider, ExtractOpts, ExtractReport, TestReport};
+use crate::options::{ConflictDecider, ExtractOpts, ExtractReport, ReadLimits, TestReport};
 use crate::progress::ProgressSink;
 
 /// Random-access view of an archive. Streaming formats reopen the file per call.
@@ -36,6 +36,7 @@ pub trait ArchiveReader {
         &mut self,
         progress: &dyn ProgressSink,
         password: Option<&Password>,
+        limits: &ReadLimits,
     ) -> Result<TestReport, Error>;
 }
 
@@ -251,28 +252,29 @@ impl ArchiveReader for Opened {
         &mut self,
         progress: &dyn ProgressSink,
         password: Option<&Password>,
+        limits: &ReadLimits,
     ) -> Result<TestReport, Error> {
         let path = self.path.clone();
         let format = self.format.clone();
         let stored = self.password.clone();
         let password = password.or(stored.as_ref());
         match &format {
-            Format::Zip => zip::test_zip(&path, password, progress),
+            Format::Zip => zip::test_zip(&path, password, progress, limits),
             Format::Sfx { inner, .. } if matches!(inner.as_ref(), Format::Zip) => {
-                zip::test_zip(&path, password, progress)
+                zip::test_zip(&path, password, progress, limits)
             }
-            Format::Tar(compression) => tar::test_tar(&self.path, *compression, progress),
-            Format::Gzip => tar::test_single(&self.path, Compression::Gzip, progress),
-            Format::Zstd => tar::test_single(&self.path, Compression::Zstd, progress),
-            Format::Xz => tar::test_single(&self.path, Compression::Xz, progress),
-            Format::Bzip2 => tar::test_single(&path, Compression::Bzip2, progress),
+            Format::Tar(compression) => tar::test_tar(&self.path, *compression, progress, limits),
+            Format::Gzip => tar::test_single(&self.path, Compression::Gzip, progress, limits),
+            Format::Zstd => tar::test_single(&self.path, Compression::Zstd, progress, limits),
+            Format::Xz => tar::test_single(&self.path, Compression::Xz, progress, limits),
+            Format::Bzip2 => tar::test_single(&path, Compression::Bzip2, progress, limits),
             #[cfg(feature = "rar")]
-            Format::Rar4 | Format::Rar5 => rar::test_rar(&path, progress, password),
+            Format::Rar4 | Format::Rar5 => rar::test_rar(&path, progress, password, limits),
             #[cfg(feature = "sevenz")]
-            Format::SevenZ => sevenz::test_sevenz(&path, progress, password),
+            Format::SevenZ => sevenz::test_sevenz(&path, progress, password, limits),
             #[cfg(feature = "sevenz")]
             Format::Sfx { inner, .. } if matches!(inner.as_ref(), Format::SevenZ) => {
-                sevenz::test_sevenz(&path, progress, password)
+                sevenz::test_sevenz(&path, progress, password, limits)
             }
             Format::Sfx { .. } => Err(unsupported(&format)),
             #[cfg(not(feature = "rar"))]
