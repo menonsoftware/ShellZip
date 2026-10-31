@@ -9,7 +9,7 @@ use super::appearance;
 use super::model::{self, Row, RowKind, SortColumn, SortOrder};
 use crate::icons::{self, Caret};
 use crate::shell_icons::{self, IconCache};
-use crate::theme::{INK, SELECT_TEXT};
+use crate::theme;
 
 /// Selection and sort for the file pane.
 #[derive(Debug, Default)]
@@ -139,6 +139,7 @@ pub fn show(
     // Cells share edges, so the selection fill is one bar instead of a strip behind each label.
     ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
     ui.style_mut().interaction.selectable_labels = false;
+    let colors = *theme::palette(ui.ctx());
 
     let mut builder = TableBuilder::new(ui)
         .id_salt("shellzip-files")
@@ -228,14 +229,18 @@ pub fn show(
             let item = &rows[index];
             let selected = explorer.selected.contains(&item.key);
             row.set_selected(selected);
-            let text = if selected { SELECT_TEXT } else { INK };
+            let text = if selected {
+                colors.select_text
+            } else {
+                colors.ink
+            };
             let key = shell_icons::row_icon_key(item);
             // The icon lives in its own unclipped cell. Clipping the name text
             // was also clipping the SVG down to an empty square.
             row.col(|ui| {
                 ui.add_space(8.0);
                 if !shell_icons::paint(ui, cache, &key, icons::SIZE_ROW) {
-                    let (icon, tint) = appearance::row_glyph(item.kind, selected);
+                    let (icon, tint) = appearance::row_glyph(item.kind, selected, colors);
                     icons::show(ui, icon, tint, icons::SIZE_ROW);
                 }
             });
@@ -294,7 +299,7 @@ fn header_clicked(
                     SortOrder::Asc => Caret::Up,
                     SortOrder::Desc => Caret::Down,
                 },
-                INK,
+                theme::palette(ui.ctx()).ink,
             );
         }
     });

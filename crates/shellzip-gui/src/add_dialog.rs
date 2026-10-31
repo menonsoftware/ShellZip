@@ -12,7 +12,7 @@ use shellzip_core::{
 };
 
 use crate::chrome::PackSettings;
-use crate::theme::{DANGER, MUTED};
+use crate::theme;
 
 /// Which page of the add dialog is visible.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -122,7 +122,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut AddDialog) -> Option<AddAction> {
             }
             if let Some(notice) = &dialog.notice {
                 ui.add_space(4.0);
-                ui.colored_label(DANGER, notice);
+                ui.colored_label(theme::palette(ui.ctx()).danger, notice);
             }
             ui.add_space(8.0);
             ui.separator();
@@ -272,7 +272,7 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut AddDialog) {
         egui::RichText::new(
             "An SFX package is a ZIP or 7z archive wrapped in the ShellZip extractor. A password is requested when that package is opened.",
         )
-        .color(MUTED),
+        .color(theme::palette(ui.ctx()).muted),
     );
     ui.add_space(6.0);
     ui.label("Password");
@@ -310,7 +310,10 @@ fn comment_tab(ui: &mut egui::Ui, dialog: &mut AddDialog) {
     ui.add_space(8.0);
     ui.label("Enter a comment manually");
     if !dialog.stores_comment() {
-        ui.label(egui::RichText::new("Comments are stored in ZIP and 7z archives.").color(MUTED));
+        ui.label(
+            egui::RichText::new("Comments are stored in ZIP and 7z archives.")
+                .color(theme::palette(ui.ctx()).muted),
+        );
     }
     let response = ui.add_sized(
         egui::vec2(ui.available_width(), 180.0),

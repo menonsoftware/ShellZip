@@ -216,9 +216,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/icons.rs": {
-    "mtime": 1793444166.4306996,
-    "seen": 1793445043.367901,
-    "ast_hash": "a0c641faad9b3e68803646bb450aaf1e",
+    "mtime": 1793453550.990488,
+    "seen": 1793453614.9520028,
+    "ast_hash": "ce08293d502dc0d82ec39d276aee723a",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/main.rs": {
@@ -240,9 +240,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/chrome.rs": {
-    "mtime": 1793452862.9867823,
-    "seen": 1793453113.4731264,
-    "ast_hash": "bc39254c7f2582e211458b5673c197b6",
+    "mtime": 1793453590.4488838,
+    "seen": 1793453614.951989,
+    "ast_hash": "645238721caeb78c0ad529fda49b5779",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/explorer/listing.rs": {
@@ -642,9 +642,39 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/extract_dialog.rs": {
-    "mtime": 1793452985.1386352,
-    "seen": 1793453113.4731321,
-    "ast_hash": "8bc0f654f91e2e87aaf7eee9ef3017bc",
+    "mtime": 1793454756.438753,
+    "seen": 1793454775.5851712,
+    "ast_hash": "f89964a2fee1a3a5e0b2a3662dd96564",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-gui/assets/lucide/check.svg": {
+    "mtime": 1793453540.310786,
+    "seen": 1793453614.9520516,
+    "ast_hash": "d0206633457bc869f75f774ea779b1ec",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-gui/assets/lucide/circle-help.svg": {
+    "mtime": 1793453543.2550561,
+    "seen": 1793453614.9520555,
+    "ast_hash": "ff21300c3609ec6261cbdca16158e720",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-gui/assets/lucide/folder-plus.svg": {
+    "mtime": 1793453541.5150788,
+    "seen": 1793453614.9520636,
+    "ast_hash": "91b93a294cb9ef6d0f4e695ace798441",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-gui/assets/lucide/folder-search.svg": {
+    "mtime": 1793453542.549695,
+    "seen": 1793453614.9520652,
+    "ast_hash": "1437ea4d83dc29e8197ff2bd210bd1c1",
+    "semantic_hash": ""
+  },
+  "crates/shellzip-gui/assets/lucide/save.svg": {
+    "mtime": 1793453540.594784,
+    "seen": 1793453614.9520745,
+    "ast_hash": "378f87cafc1d5817921dac4cbc9ba435",
     "semantic_hash": ""
   }
 }

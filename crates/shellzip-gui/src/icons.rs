@@ -1,5 +1,5 @@
-//! Lucide icons. egui tints by multiplying, so a black shape stays black.
-//! The folder file is white and picks up [`crate::theme::FOLDER`].
+//! Lucide icons. egui tints by multiplying, so every glyph is white and picks up
+//! the color passed to [`paint`].
 //!
 //! Source: <https://lucide.dev/icons/>. The SVG files and their ISC license
 //! live in `assets/lucide/`.
@@ -263,13 +263,22 @@ fn sized_texture(ctx: &egui::Context, icon: Icon) -> Option<egui::load::SizedTex
 
 #[cfg(test)]
 mod tests {
-    use super::Icon;
+    use super::ALL;
 
     #[test]
-    fn folder_svg_is_white_so_the_yellow_tint_shows() {
-        let svg = std::str::from_utf8(Icon::Folder.bytes()).expect("folder svg is utf-8");
-        assert!(svg.contains("fill=\"#ffffff\""));
-        assert!(svg.contains("stroke=\"#ffffff\""));
-        assert!(!svg.contains("#000000"));
+    fn lucide_strokes_are_white_so_tints_show() {
+        for icon in ALL {
+            let svg = std::str::from_utf8(icon.bytes()).expect("svg is utf-8");
+            assert!(
+                !svg.contains("#000000"),
+                "{} still has a black stroke",
+                icon.uri()
+            );
+            assert!(
+                svg.contains("#ffffff"),
+                "{} has no white stroke for tinting",
+                icon.uri()
+            );
+        }
     }
 }
