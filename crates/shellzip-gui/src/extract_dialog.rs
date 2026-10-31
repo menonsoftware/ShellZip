@@ -8,11 +8,17 @@ use std::path::{Path, PathBuf};
 
 use shellzip_core::{ExtractUpdate, Overwrite};
 
+use egui::{Rect, Sense, Vec2};
+
 use crate::chrome;
 use crate::explorer::{FolderTree, JumpTarget, TreeFocus};
+use crate::icons::{self, Caret, Icon};
 use crate::settings::{DeleteArchive, ExtractSettings, PathMode};
 use crate::shell_icons::IconCache;
-use crate::theme::{DANGER, MUTED};
+use crate::theme::{DANGER, HOVER, INK, MUTED, OK, OPEN};
+
+/// Every option group uses this inner width, on every page.
+const GROUP_INNER: f32 = 320.0;
 
 /// Which page of the extract dialog is visible.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -184,21 +190,18 @@ pub fn show(
             ui.separator();
             ui.horizontal(|ui| {
                 let dirty = dialog.settings != dialog.saved;
-                if ui
-                    .add_enabled(dirty, egui::Button::new("Save settings"))
-                    .clicked()
-                {
+                if chrome::icon_button(ui, Icon::Save, INK, "Save settings", dirty).clicked() {
                     dialog.saved = dialog.settings;
                     action = Some(ExtractAction::Save(dialog.settings));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Help").clicked() {
+                    if chrome::icon_button(ui, Icon::CircleHelp, OPEN, "Help", true).clicked() {
                         dialog.help = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if chrome::icon_button(ui, Icon::X, DANGER, "Cancel", true).clicked() {
                         action = Some(ExtractAction::Close);
                     }
-                    if ui.button("OK").clicked()
+                    if chrome::icon_button(ui, Icon::Check, OK, "OK", true).clicked()
                         && let Some(request) = dialog.request()
                     {
                         action = Some(ExtractAction::Submit(request));
@@ -228,10 +231,10 @@ pub fn confirm_delete_archive(ctx: &egui::Context, path: &Path, open: &mut bool)
             ui.label(egui::RichText::new(path.display().to_string()).strong());
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button("Delete").clicked() {
+                if chrome::icon_button(ui, Icon::Trash, DANGER, "Delete", true).clicked() {
                     confirmed = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if chrome::icon_button(ui, Icon::X, INK, "Cancel", true).clicked() {
                     dismiss = true;
                 }
             });
@@ -268,34 +271,32 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCa
             dialog.tree_touched = false;
         }
         let recent = dialog.recent.clone();
-        ui.menu_button("▾", |ui| {
-            if recent.is_empty() {
-                ui.label(egui::RichText::new("No recent folders").color(MUTED));
-            }
-            for path in recent {
-                if ui.button(&path).clicked() {
-                    dialog.path = path;
-                    dialog.tree_touched = false;
-                    ui.close();
+        let history = history_button(ui);
+        egui::Popup::menu(&history)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                if recent.is_empty() {
+                    ui.label(egui::RichText::new("No recent folders").color(MUTED));
                 }
-            }
-        });
-        ui.vertical(|ui| {
-            if ui.button("Display").clicked() {
-                display_path(dialog);
-            }
-            if ui.button("New folder").clicked() {
-                create_folder(dialog);
-            }
-        });
+                for path in recent {
+                    if ui.button(&path).clicked() {
+                        dialog.path = path;
+                        dialog.tree_touched = false;
+                        ui.close();
+                    }
+                }
+            });
+        if chrome::icon_button(ui, Icon::FolderSearch, OPEN, "Display", true).clicked() {
+            display_path(dialog);
+        }
+        if chrome::icon_button(ui, Icon::FolderPlus, INK, "New folder", true).clicked() {
+            create_folder(dialog);
+        }
     });
     ui.add_space(4.0);
     ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
         ui.vertical(|ui| {
-            ui.set_min_width(320.0);
-            ui.set_width(340.0);
-            ui.group(|ui| {
-                ui.label(egui::RichText::new("Update mode").strong());
+            option_group(ui, "Update mode", |ui| {
                 ui.radio_value(
                     &mut dialog.settings.update,
                     ExtractUpdate::Replace,
@@ -312,8 +313,7 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCa
                     "Freshen existing files only",
                 );
             });
-            ui.group(|ui| {
-                ui.label(egui::RichText::new("Overwrite mode").strong());
+            option_group(ui, "Overwrite mode", |ui| {
                 ui.radio_value(
                     &mut dialog.settings.overwrite,
                     Overwrite::Ask,
@@ -335,8 +335,7 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCa
                     "Rename automatically",
                 );
             });
-            ui.group(|ui| {
-                ui.label(egui::RichText::new("Miscellaneous").strong());
+            option_group(ui, "Miscellaneous", |ui| {
                 ui.checkbox(&mut dialog.settings.keep_broken, "Keep broken files");
                 ui.checkbox(
                     &mut dialog.settings.show_in_explorer,
@@ -351,8 +350,7 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCa
 }
 
 fn advanced_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog) {
-    ui.group(|ui| {
-        ui.label(egui::RichText::new("File time").strong());
+    option_group(ui, "File time", |ui| {
         ui.checkbox(&mut dialog.settings.restore_mtime, "Set modification time");
         ui.checkbox(&mut dialog.settings.restore_created, "Set creation time");
         ui.checkbox(
@@ -369,8 +367,7 @@ fn advanced_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog) {
         );
     });
     ui.add_space(8.0);
-    ui.group(|ui| {
-        ui.label(egui::RichText::new("File paths").strong());
+    option_group(ui, "File paths", |ui| {
         ui.radio_value(
             &mut dialog.settings.paths,
             PathMode::Relative,
@@ -390,8 +387,7 @@ fn advanced_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog) {
 }
 
 fn options_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog) {
-    ui.group(|ui| {
-        ui.label(egui::RichText::new("Delete archive").strong());
+    option_group(ui, "Delete archive", |ui| {
         ui.radio_value(&mut dialog.settings.delete, DeleteArchive::Never, "Never");
         ui.radio_value(
             &mut dialog.settings.delete,
@@ -409,6 +405,25 @@ fn options_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog) {
             .small(),
         );
     });
+}
+
+fn option_group(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
+    ui.group(|ui| {
+        ui.set_min_width(GROUP_INNER);
+        ui.set_max_width(GROUP_INNER);
+        ui.label(egui::RichText::new(title).strong());
+        body(ui);
+    });
+}
+
+fn history_button(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
+    if response.hovered() {
+        ui.painter().rect_filled(rect, 2.0, HOVER);
+    }
+    let caret = Rect::from_center_size(rect.center(), Vec2::new(9.0, 6.0));
+    icons::paint_caret(ui, Caret::Down, INK, caret);
+    response.on_hover_text("Recent folders")
 }
 
 fn folder_tree(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCache) {

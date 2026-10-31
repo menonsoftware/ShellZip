@@ -55,6 +55,16 @@ pub enum Icon {
     Trash,
     /// Details of the selection or archive.
     Info,
+    /// Confirm.
+    Check,
+    /// Remember the current choices.
+    Save,
+    /// Create a directory.
+    FolderPlus,
+    /// Find a folder in the tree.
+    FolderSearch,
+    /// Explain the dialog.
+    CircleHelp,
 }
 
 /// Up or down triangle, painted so we do not depend on font glyphs.
@@ -86,6 +96,11 @@ impl Icon {
             Self::ArrowUp => "bytes://lucide/arrow-up.svg",
             Self::Trash => "bytes://lucide/trash-2.svg",
             Self::Info => "bytes://lucide/info.svg",
+            Self::Check => "bytes://lucide/check.svg",
+            Self::Save => "bytes://lucide/save.svg",
+            Self::FolderPlus => "bytes://lucide/folder-plus.svg",
+            Self::FolderSearch => "bytes://lucide/folder-search.svg",
+            Self::CircleHelp => "bytes://lucide/circle-help.svg",
         }
     }
 
@@ -106,12 +121,17 @@ impl Icon {
             Self::ArrowUp => include_bytes!("../assets/lucide/arrow-up.svg"),
             Self::Trash => include_bytes!("../assets/lucide/trash-2.svg"),
             Self::Info => include_bytes!("../assets/lucide/info.svg"),
+            Self::Check => include_bytes!("../assets/lucide/check.svg"),
+            Self::Save => include_bytes!("../assets/lucide/save.svg"),
+            Self::FolderPlus => include_bytes!("../assets/lucide/folder-plus.svg"),
+            Self::FolderSearch => include_bytes!("../assets/lucide/folder-search.svg"),
+            Self::CircleHelp => include_bytes!("../assets/lucide/circle-help.svg"),
         }
     }
 }
 
 /// Every icon, so the SVG textures can be created before the file table asks for them.
-pub const ALL: [Icon; 15] = [
+pub const ALL: [Icon; 20] = [
     Icon::FolderOpen,
     Icon::FolderDown,
     Icon::CircleCheck,
@@ -127,6 +147,11 @@ pub const ALL: [Icon; 15] = [
     Icon::ArrowUp,
     Icon::Trash,
     Icon::Info,
+    Icon::Check,
+    Icon::Save,
+    Icon::FolderPlus,
+    Icon::FolderSearch,
+    Icon::CircleHelp,
 ];
 
 /// Rasterize the icons once, at the master pixel size.
