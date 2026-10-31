@@ -214,16 +214,15 @@ pub fn show(
                     action = Some(ExtractAction::Save(dialog.settings));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if chrome::icon_button(ui, Icon::CircleHelp, colors(ui).open, "Help", true)
+                    if chrome::labeled_button(ui, Icon::CircleHelp, colors(ui).open, "Help")
                         .clicked()
                     {
                         dialog.help = true;
                     }
-                    if chrome::icon_button(ui, Icon::X, colors(ui).danger, "Cancel", true).clicked()
-                    {
+                    if chrome::labeled_button(ui, Icon::X, colors(ui).danger, "Cancel").clicked() {
                         action = Some(ExtractAction::Close);
                     }
-                    if chrome::icon_button(ui, Icon::Check, colors(ui).ok, "OK", true).clicked()
+                    if chrome::labeled_button(ui, Icon::Check, colors(ui).ok, "OK").clicked()
                         && let Some(request) = dialog.request()
                     {
                         action = Some(ExtractAction::Submit(request));

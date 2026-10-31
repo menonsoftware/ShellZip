@@ -176,6 +176,16 @@ pub fn warm(ctx: &egui::Context) {
     }
 }
 
+/// Tinted glyph for `Button::image_and_text`.
+pub fn image(
+    ctx: &egui::Context,
+    icon: Icon,
+    tint: Color32,
+    size: f32,
+) -> Option<egui::Image<'static>> {
+    tinted(ctx, icon, tint, Vec2::splat(size))
+}
+
 /// Draw `icon` at `size` points. The widget does not take clicks, so a table row can.
 pub fn show(ui: &mut egui::Ui, icon: Icon, tint: Color32, size: f32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::empty());

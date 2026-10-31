@@ -5,8 +5,10 @@
 
 use std::time::Duration;
 
-use shellzip_core::format_bytes;
-
+use crate::chrome;
+use crate::explorer::format_size;
+use crate::icons::Icon;
+use crate::theme;
 use crate::worker::ProgressSnapshot;
 
 /// What the progress window wants the shell to do.
@@ -77,9 +79,18 @@ pub fn show(
                 if ui.button("Background").clicked() {
                     command = Some(ProgressCommand::Background);
                 }
-                if ui.button("Cancel").clicked() {
-                    command = Some(ProgressCommand::Cancel);
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if chrome::labeled_button(
+                        ui,
+                        Icon::X,
+                        theme::palette(ui.ctx()).danger,
+                        "Cancel",
+                    )
+                    .clicked()
+                    {
+                        command = Some(ProgressCommand::Cancel);
+                    }
+                });
             });
         });
     if command.is_none() && !open {
@@ -107,12 +118,12 @@ fn fraction(done: u64, total: u64) -> (f32, bool) {
 
 fn bytes_line(snapshot: &ProgressSnapshot) -> String {
     let amount = if snapshot.total == 0 {
-        format!("{} processed", format_bytes(snapshot.done))
+        format!("{} processed", format_size(snapshot.done))
     } else {
         format!(
             "{} of {}",
-            format_bytes(snapshot.done),
-            format_bytes(snapshot.total)
+            format_size(snapshot.done),
+            format_size(snapshot.total)
         )
     };
     match format_speed(snapshot.done, snapshot.elapsed) {
@@ -136,7 +147,7 @@ fn format_speed(done: u64, elapsed: Duration) -> Option<String> {
     }
     let per_sec = u128::from(done).saturating_mul(1000) / millis;
     let per_sec = u64::try_from(per_sec).unwrap_or(u64::MAX);
-    Some(format!("{}/s", format_bytes(per_sec)))
+    Some(format!("{}/s", format_size(per_sec)))
 }
 
 fn format_clock(elapsed: Duration) -> String {

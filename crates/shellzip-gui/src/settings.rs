@@ -78,7 +78,7 @@ impl Default for ExtractSettings {
     }
 }
 
-/// Pack options, extract options, theme, and recent destination paths.
+/// Pack options, extract options, theme, recent destinations, and recent archives.
 pub struct StoredSettings {
     /// Compression choices.
     pub pack: PackSettings,
@@ -86,6 +86,8 @@ pub struct StoredSettings {
     pub extract: ExtractSettings,
     /// Recent destination paths, newest first.
     pub recent: Vec<String>,
+    /// Recently opened archives, newest first.
+    pub opened: Vec<String>,
     /// Light, dark, or follow the operating system.
     pub theme: Preference,
 }
@@ -106,6 +108,7 @@ pub fn save(
     pack: &PackSettings,
     extract: &ExtractSettings,
     recent: &[String],
+    opened: &[String],
     theme: Preference,
 ) -> Result<(), String> {
     let Some(path) = settings_path() else {
@@ -115,7 +118,7 @@ pub fn save(
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("create {}: {err}", parent.display()))?;
     }
-    let body = serialize(pack, extract, recent, theme)?;
+    let body = serialize(pack, extract, recent, opened, theme)?;
     let tmp = path.with_extension("toml.tmp");
     std::fs::write(&tmp, body).map_err(|err| format!("write {}: {err}", tmp.display()))?;
     std::fs::rename(&tmp, &path).map_err(|err| format!("rename {}: {err}", path.display()))?;
@@ -133,6 +136,7 @@ fn defaults() -> StoredSettings {
         },
         extract: ExtractSettings::default(),
         recent: Vec::new(),
+        opened: Vec::new(),
         theme: Preference::System,
     }
 }
@@ -146,6 +150,7 @@ fn serialize(
     pack: &PackSettings,
     extract: &ExtractSettings,
     recent: &[String],
+    opened: &[String],
     theme: Preference,
 ) -> Result<String, String> {
     let mut table = toml::Table::new();
@@ -214,6 +219,10 @@ fn serialize(
     table.insert(
         "recent".to_string(),
         toml::Value::Array(recent.iter().cloned().map(toml::Value::String).collect()),
+    );
+    table.insert(
+        "opened".to_string(),
+        toml::Value::Array(opened.iter().cloned().map(toml::Value::String).collect()),
     );
     table.insert(
         "theme".to_string(),
@@ -286,6 +295,16 @@ fn parse(text: &str) -> Option<StoredSettings> {
                 .collect()
         })
         .unwrap_or_default();
+    let opened = table
+        .get("opened")
+        .and_then(toml::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
     Some(StoredSettings {
         pack: PackSettings {
             level,
@@ -308,6 +327,7 @@ fn parse(text: &str) -> Option<StoredSettings> {
             background: bool_or("extract_background", false),
         },
         recent,
+        opened,
         theme: table
             .get("theme")
             .and_then(toml::Value::as_str)
@@ -394,12 +414,26 @@ mod tests {
             background: true,
         };
         let recent = vec![r"C:\work\out".to_string()];
-        let parsed = parse(&serialize(&pack, &extract, &recent, Preference::Dark).expect("toml"))
-            .expect("settings");
+        let opened = vec![r"C:\work\docs.zip".to_string()];
+        let parsed =
+            parse(&serialize(&pack, &extract, &recent, &opened, Preference::Dark).expect("toml"))
+                .expect("settings");
         assert_eq!(parsed.pack, pack);
         assert_eq!(parsed.extract, extract);
         assert_eq!(parsed.recent, recent);
+        assert_eq!(parsed.opened, opened);
         assert_eq!(parsed.theme, Preference::Dark);
+    }
+
+    #[test]
+    fn missing_opened_list_stays_empty() {
+        let text = "\
+level = 3
+method = \"deflate\"
+overwrite = \"ask\"
+";
+        let parsed = parse(text).expect("old settings");
+        assert!(parsed.opened.is_empty());
     }
 
     #[test]

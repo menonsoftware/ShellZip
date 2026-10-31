@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use shellzip_core::{Entry, EntryKind, format_bytes, format_from_extension, format_time};
+use shellzip_core::{Entry, EntryKind, format_from_extension, format_time};
 
 /// Stable key for the parent row. It cannot collide with a real path.
 pub const PARENT_KEY: &str = "\u{1}..";
@@ -250,6 +250,22 @@ pub fn totals(rows: &[Row]) -> (usize, usize, u64) {
         }
     }
     (folders, files, bytes)
+}
+
+/// Byte count in 1024-based units labeled B, KB, MB, GB, and TB.
+pub fn format_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} {}", UNITS[0])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 /// Status sentence, for example `Total 1 folder and 912 bytes in 2 files`.
@@ -547,7 +563,7 @@ fn byte_phrase(bytes: u64) -> String {
         let unit = if bytes == 1 { "byte" } else { "bytes" };
         format!("{bytes} {unit}")
     } else {
-        format_bytes(bytes)
+        format_size(bytes)
     }
 }
 
@@ -579,8 +595,8 @@ fn normalize_sep(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ArchiveIndex, Row, RowKind, SortColumn, SortOrder, Target, path_under, sort_rows, totals,
-        totals_label,
+        ArchiveIndex, Row, RowKind, SortColumn, SortOrder, Target, format_size, path_under,
+        sort_rows, totals, totals_label,
     };
     use shellzip_core::{Entry, EntryKind};
     use std::path::PathBuf;
@@ -692,6 +708,17 @@ mod tests {
             totals_label(folders, files, bytes),
             "Total 1 folder and 912 bytes in 2 files"
         );
+    }
+
+    #[test]
+    fn format_size_picks_kb_mb_and_gb() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(282), "282 B");
+        assert_eq!(format_size(2421), "2.4 KB");
+        assert_eq!(format_size(1_121_928), "1.1 MB");
+        assert_eq!(format_size(1024), "1.0 KB");
+        assert_eq!(format_size(1024 * 1024), "1.0 MB");
+        assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
     }
 
     #[test]

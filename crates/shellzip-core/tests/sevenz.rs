@@ -95,6 +95,26 @@ fn update_and_delete_rewrite_kept_members() {
 }
 
 #[test]
+fn updating_an_encrypted_7z_keeps_earlier_members() {
+    let tmp = tempfile::tempdir().unwrap();
+    let keep = tmp.path().join("keep.txt");
+    fs::write(&keep, b"keep").unwrap();
+    let dest = tmp.path().join("notes.7z");
+    let opts = CompressOpts {
+        level: 1,
+        password: Some(password()),
+        ..CompressOpts::default()
+    };
+    add(&dest, std::slice::from_ref(&keep), &opts, &NopProgress).unwrap();
+    let extra = tmp.path().join("extra.txt");
+    fs::write(&extra, b"extra").unwrap();
+    add(&dest, std::slice::from_ref(&extra), &opts, &NopProgress).unwrap();
+    let out = extract_bytes(&dest, Some(password()));
+    assert_eq!(fs::read(out.path().join("keep.txt")).unwrap(), b"keep");
+    assert_eq!(fs::read(out.path().join("extra.txt")).unwrap(), b"extra");
+}
+
+#[test]
 fn lzma2_lists_and_extracts() {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("hello.txt");
