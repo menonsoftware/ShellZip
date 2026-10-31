@@ -27,9 +27,10 @@ COPY_RELEASE_SFX = mkdir -p target/release && cp -f target/minisize/shellzip-sfx
 endif
 
 ifeq ($(OS),Windows_NT)
-OPEN_RELEASE = powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path 'target/release' | Out-Null; explorer 'target/release'"
+# Relative paths make Explorer open the user profile (often Documents); pass a full path from $(CURDIR).
+OPEN_RELEASE = powershell -NoProfile -Command "$$p = Join-Path '$(CURDIR)' 'target/release'; $$dir = (New-Item -ItemType Directory -Force -Path $$p).FullName; explorer $$dir"
 else
-OPEN_RELEASE = mkdir -p target/release && (xdg-open target/release 2>/dev/null || open target/release)
+OPEN_RELEASE = mkdir -p "$(CURDIR)/target/release" && (xdg-open "$(CURDIR)/target/release" 2>/dev/null || open "$(CURDIR)/target/release")
 endif
 
 .PHONY: all build release build-cli build-gui build-core \
