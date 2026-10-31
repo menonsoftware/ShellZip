@@ -29,7 +29,7 @@ pub struct TreeRow {
     pub depth: u8,
     /// `None` for This PC, which only expands.
     pub target: Option<JumpTarget>,
-    /// Shell picture for this node.
+    /// Shell picture: a folder, the Desktop or a drive path, or This PC.
     pub icon: IconKey,
     /// Whether a caret is drawn.
     pub expandable: bool,
@@ -768,17 +768,18 @@ impl Builder<'_> {
                 IconKey::Computer,
             ),
             NodeId::Dir(path) => {
-                let label = self
+                let volume = self
                     .volumes
                     .iter()
                     .find(|volume| same_path(&volume.path, path))
-                    .map(|volume| volume.label.clone())
-                    .unwrap_or_else(|| file_label(path));
-                (
-                    label,
-                    Some(JumpTarget::Folder(path.clone())),
-                    IconKey::Path(path.clone()),
-                )
+                    .map(|volume| volume.label.clone());
+                let icon = if volume.is_some() {
+                    IconKey::Path(path.clone())
+                } else {
+                    IconKey::Folder
+                };
+                let label = volume.unwrap_or_else(|| file_label(path));
+                (label, Some(JumpTarget::Folder(path.clone())), icon)
             }
             NodeId::Archive(path) => (
                 file_label(path),
@@ -917,6 +918,13 @@ fn cmp_name(left: &Path, right: &Path) -> std::cmp::Ordering {
 mod tests {
     use super::*;
 
+    fn icon_for(rows: &[TreeRow], label: &str) -> IconKey {
+        rows.iter()
+            .find(|row| row.label == label)
+            .map(|row| row.icon.clone())
+            .unwrap_or(IconKey::Folder)
+    }
+
     #[test]
     fn reveal_opens_the_path_and_leaves_a_closed_folder_closed() {
         let (directory, label, namespace, places) = if cfg!(windows) {
@@ -960,6 +968,18 @@ mod tests {
         let rows = tree.rows(&focus);
         let current = rows.iter().find(|row| row.current).expect("current folder");
         assert_eq!(current.label, label);
+        assert!(
+            rows.iter().any(|row| {
+                matches!(row.id, NodeId::Desktop | NodeId::Home)
+                    && matches!(row.icon, IconKey::Path(_))
+            }),
+            "Desktop and Home use their own shell picture"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| matches!(row.id, NodeId::Computer) && row.icon == IconKey::Computer),
+            "This PC keeps the computer picture"
+        );
         assert!(current.expanded, "the current folder should be open");
         assert!(
             rows.iter().any(|row| row.depth == 0 && row.expanded),
@@ -1060,6 +1080,17 @@ mod tests {
                 .iter()
                 .any(|row| row.label == "Programs" && !row.current)
         );
+        assert!(matches!(
+            icon_for(&layout.rows, "Desktop"),
+            IconKey::Path(_)
+        ));
+        assert_eq!(icon_for(&layout.rows, "This PC"), IconKey::Computer);
+        assert!(matches!(
+            icon_for(&layout.rows, "Local Disk (C:)"),
+            IconKey::Path(_)
+        ));
+        assert_eq!(icon_for(&layout.rows, "Users"), IconKey::Folder);
+        assert_eq!(icon_for(&layout.rows, "Downloads"), IconKey::Folder);
     }
 
     #[cfg(unix)]
@@ -1093,6 +1124,10 @@ mod tests {
                 .iter()
                 .any(|row| row.label == "src" && row.current)
         );
+        assert!(matches!(icon_for(&layout.rows, "Home"), IconKey::Path(_)));
+        assert_eq!(icon_for(&layout.rows, "Computer"), IconKey::Computer);
+        assert_eq!(icon_for(&layout.rows, "docs"), IconKey::Folder);
+        assert_eq!(icon_for(&layout.rows, "src"), IconKey::Folder);
     }
 
     #[test]
