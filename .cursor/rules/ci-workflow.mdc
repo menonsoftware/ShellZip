@@ -24,7 +24,7 @@ alwaysApply: false
 
 ## Release builds
 
-- `cargo build --workspace --release --locked`; upload `szip` and `shellzip` per OS as artifacts.
+- CLI/GUI: `cargo build --release --locked`. SFX stub: `cargo build --profile minisize --locked`. Upload `szip`, `shellzip`, and `shellzip-sfx` per OS.
 - Never `--allow-dirty` or skip `--locked` in release jobs.
 
 ## Makefile
