@@ -1,7 +1,10 @@
 //! The stub extracts the ZIP appended to a copy of itself.
 
 use std::fs;
-use std::process::Command;
+use std::io;
+use std::process::{Command, Output};
+use std::thread;
+use std::time::Duration;
 
 use shellzip_core::{CompressOpts, NopProgress, Password, SfxPayload, add, build};
 
@@ -28,11 +31,8 @@ fn stub_extracts_its_appended_zip() {
 
     let dest = tmp.path().join("out");
     fs::create_dir(&dest).unwrap();
-    let status = Command::new(&sfx)
-        .args(["-s", "-y", "-d", dest.to_str().unwrap()])
-        .status()
-        .unwrap();
-    assert!(status.success(), "stub exit {status}");
+    let output = run_stub(&sfx, &["-s", "-y", "-d", dest.to_str().unwrap()], &[]);
+    assert!(output.status.success(), "stub exit {}", output.status);
     assert_eq!(fs::read(dest.join("hello.txt")).unwrap(), b"hello-sfx");
 }
 
@@ -58,12 +58,12 @@ fn stub_extracts_an_encrypted_zip_when_the_password_is_set() {
     let sfx = encrypted_sfx(tmp.path());
     let dest = tmp.path().join("out");
     fs::create_dir(&dest).unwrap();
-    let status = Command::new(&sfx)
-        .args(["-s", "-y", "-d", dest.to_str().unwrap()])
-        .env("SZIP_PASSWORD", "sfx-test-password")
-        .status()
-        .unwrap();
-    assert!(status.success(), "stub exit {status}");
+    let output = run_stub(
+        &sfx,
+        &["-s", "-y", "-d", dest.to_str().unwrap()],
+        &[("SZIP_PASSWORD", "sfx-test-password")],
+    );
+    assert!(output.status.success(), "stub exit {}", output.status);
     assert_eq!(fs::read(dest.join("hello.txt")).unwrap(), b"secret-sfx");
 }
 
@@ -73,12 +73,11 @@ fn silent_encrypted_stub_fails_without_a_password() {
     let sfx = encrypted_sfx(tmp.path());
     let dest = tmp.path().join("out");
     fs::create_dir(&dest).unwrap();
-    let output = Command::new(&sfx)
-        .args(["-s", "-y", "-d", dest.to_str().unwrap()])
-        .env("CI", "1")
-        .env_remove("SZIP_PASSWORD")
-        .output()
-        .unwrap();
+    let output = run_stub(
+        &sfx,
+        &["-s", "-y", "-d", dest.to_str().unwrap()],
+        &[("CI", "1")],
+    );
     assert_eq!(output.status.code(), Some(11));
     let err = String::from_utf8_lossy(&output.stderr);
     assert!(err.contains("password"), "{err}");
@@ -91,12 +90,11 @@ fn silent_encrypted_stub_rejects_a_wrong_password() {
     let sfx = encrypted_sfx(tmp.path());
     let dest = tmp.path().join("out");
     fs::create_dir(&dest).unwrap();
-    let output = Command::new(&sfx)
-        .args(["-s", "-y", "-d", dest.to_str().unwrap()])
-        .env("CI", "1")
-        .env("SZIP_PASSWORD", "wrong-password")
-        .output()
-        .unwrap();
+    let output = run_stub(
+        &sfx,
+        &["-s", "-y", "-d", dest.to_str().unwrap()],
+        &[("CI", "1"), ("SZIP_PASSWORD", "wrong-password")],
+    );
     assert_eq!(output.status.code(), Some(11), "{output:?}");
     assert!(!dest.join("hello.txt").exists());
 }
@@ -143,11 +141,8 @@ fn stub_extracts_its_appended_7z() {
     build(&sfx, &stub_bin(), &archive, SfxPayload::SevenZ).unwrap();
     let dest = tmp.path().join("out");
     fs::create_dir(&dest).unwrap();
-    let status = Command::new(&sfx)
-        .args(["-s", "-y", "-d", dest.to_str().unwrap()])
-        .status()
-        .unwrap();
-    assert!(status.success(), "stub exit {status}");
+    let output = run_stub(&sfx, &["-s", "-y", "-d", dest.to_str().unwrap()], &[]);
+    assert!(output.status.success(), "stub exit {}", output.status);
     assert_eq!(fs::read(dest.join("hello.txt")).unwrap(), b"hello-7z");
 }
 
@@ -169,13 +164,38 @@ fn stub_extracts_a_header_encrypted_7z_with_the_password() {
     build(&sfx, &stub_bin(), &archive, SfxPayload::SevenZ).unwrap();
     let dest = tmp.path().join("out");
     fs::create_dir(&dest).unwrap();
-    let status = Command::new(&sfx)
-        .args(["-s", "-y", "-d", dest.to_str().unwrap()])
-        .env("SZIP_PASSWORD", "sfx-test-password")
-        .status()
-        .unwrap();
-    assert!(status.success(), "stub exit {status}");
+    let output = run_stub(
+        &sfx,
+        &["-s", "-y", "-d", dest.to_str().unwrap()],
+        &[("SZIP_PASSWORD", "sfx-test-password")],
+    );
+    assert!(output.status.success(), "stub exit {}", output.status);
     assert_eq!(fs::read(dest.join("hello.txt")).unwrap(), b"hidden-7z");
+}
+
+/// Run the package, retrying the Linux `ETXTBSY` window after a just-written exec.
+fn run_stub(sfx: &std::path::Path, args: &[&str], envs: &[(&str, &str)]) -> Output {
+    let mut last_err = None;
+    for _ in 0..16 {
+        let mut cmd = Command::new(sfx);
+        cmd.args(args).env_remove("SZIP_PASSWORD");
+        for (key, value) in envs {
+            cmd.env(key, value);
+        }
+        match cmd.output() {
+            Ok(output) => return output,
+            Err(err) if err.kind() == io::ErrorKind::ExecutableFileBusy => {
+                last_err = Some(err);
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(err) => panic!("run {}: {err}", sfx.display()),
+        }
+    }
+    panic!(
+        "run {}: {}",
+        sfx.display(),
+        last_err.expect("ETXTBSY retry")
+    );
 }
 
 fn stub_bin() -> std::path::PathBuf {

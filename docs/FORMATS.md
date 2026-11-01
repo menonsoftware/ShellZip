@@ -1,6 +1,6 @@
 # Archive formats
 
-ShellZip identifies containers from **magic bytes**, then falls back to the file extension when creating. A PE image with an archive appended after the stub is reported as SFX.
+ShellZip identifies containers from **magic bytes**, then falls back to the file extension when creating. A ShellZip trailer after any stub, or a PE image with an archive appended after the stub, is reported as SFX.
 
 ## Capability matrix
 
@@ -86,7 +86,7 @@ Stub switches: `-s` silent, `-y` replace, `-d DIR` destination. On Windows witho
 
 ## Detection versus extension
 
-`detect_file` / `detect_bytes` look at signatures (`PK\x03\x04`, `Rar!`, `7z\xBC\xAF\x27\x1C`, gzip/zstd/xz/bzip2 magic, ustar, PE-plus-payload). `format_from_extension` is used when **creating**, so `szip a out.zip …` writes ZIP even if `out.zip` does not exist yet.
+`detect_file` / `detect_bytes` look at signatures (`PK\x03\x04`, `Rar!`, `7z\xBC\xAF\x27\x1C`, gzip/zstd/xz/bzip2 magic, ustar, ShellZip trailer, PE-plus-payload). `format_from_extension` is used when **creating**, so `szip a out.zip …` writes ZIP even if `out.zip` does not exist yet.
 
 When **reading**, content wins. That matches the observed WinRAR behaviour: `rar lt out.zip` can report RAR 5 if the bytes are RAR 5.
 
