@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/theme.rs": {
-    "mtime": 1793458515.7372146,
-    "seen": 1793458688.5309186,
-    "ast_hash": "14768f78dbbfbf4f87b35ad2a8ec462f",
+    "mtime": 1793486192.917551,
+    "seen": 1793486243.0146842,
+    "ast_hash": "38830134734d9ea800edfd09e7edb537",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/worker.rs": {
@@ -240,9 +240,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/chrome.rs": {
-    "mtime": 1793486004.47208,
-    "seen": 1793486018.6633022,
-    "ast_hash": "d29429cb3aefb8a2b4b1064b0c0cb55f",
+    "mtime": 1793486193.8475845,
+    "seen": 1793486243.014647,
+    "ast_hash": "c901cbe289691f2366979dd3083d97a4",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/explorer/listing.rs": {
@@ -570,9 +570,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/src/setup.rs": {
-    "mtime": 1793472439.1966784,
-    "seen": 1793472478.2151754,
-    "ast_hash": "a0fdf08aa240ad46891e60fd54bd180b",
+    "mtime": 1793486225.2736638,
+    "seen": 1793486243.0146966,
+    "ast_hash": "787124c4998f9bd1a8fd6a39bd619dcb",
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/archiver/sevenz/mod.rs": {
@@ -690,9 +690,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/progress_dialog.rs": {
-    "mtime": 1793481797.8996136,
-    "seen": 1793482584.6583862,
-    "ast_hash": "4ceab1a9e4f26a98cb12e489a2f80c71",
+    "mtime": 1793486193.3161435,
+    "seen": 1793486243.0146713,
+    "ast_hash": "9d51f250a167750a9cee536428bb8548",
     "semantic_hash": ""
   },
   "crates/shellzip-core/tests/property.rs": {
@@ -786,9 +786,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/info_dialog.rs": {
-    "mtime": 1793483475.335534,
-    "seen": 1793483491.0103998,
-    "ast_hash": "e2a7efd975c057b194337c12515f2f7d",
+    "mtime": 1793486194.1177862,
+    "seen": 1793486243.0146673,
+    "ast_hash": "91814ad155eff4b5d93f9a7f40e86885",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/rename_dialog.rs": {
