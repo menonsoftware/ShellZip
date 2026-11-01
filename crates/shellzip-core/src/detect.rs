@@ -1,7 +1,8 @@
 //! Magic-byte identification of archive containers.
 //!
-//! Detection looks at signatures, not file extensions. A PE image with an
-//! archive appended after the stub is reported as [`Format::Sfx`].
+//! Detection looks at signatures, not file extensions. A ShellZip trailer
+//! after any stub, or a PE image with an archive appended after the stub, is
+//! reported as [`Format::Sfx`].
 
 use std::fs::File;
 use std::io::Read;
@@ -45,7 +46,7 @@ pub enum Format {
     Rar5,
     /// 7z signature. Extracted when the `sevenz` feature is enabled.
     SevenZ,
-    /// Executable stub with an archive payload at `offset`.
+    /// Stub executable with an archive payload at `offset`.
     Sfx {
         /// Byte offset of the inner signature.
         offset: u64,
@@ -200,10 +201,10 @@ pub fn detect_bytes(bytes: &[u8]) -> Option<Format> {
     if let Some(format) = detect_header(bytes) {
         return Some(format);
     }
-    if bytes.len() >= 2 && &bytes[..2] == b"MZ" {
-        if let Some(format) = sfx_from_trailer(bytes) {
-            return Some(format);
-        }
+    if let Some(format) = sfx_from_trailer(bytes) {
+        return Some(format);
+    }
+    if is_pe_image(bytes) {
         return find_embedded(bytes).map(|(offset, inner)| Format::Sfx {
             offset: offset as u64,
             inner: Box::new(inner),
@@ -223,17 +224,17 @@ pub fn detect_file(path: &Path) -> Result<Format, Error> {
     if let Some(format) = detect_header(&head[..n]) {
         return Ok(format);
     }
-    if n >= 2 && &head[..2] == b"MZ" {
-        match crate::sfx::locate(path) {
-            Ok(Some(trailer)) => {
-                return Ok(Format::Sfx {
-                    offset: trailer.archive_offset,
-                    inner: Box::new(trailer.payload().format()),
-                });
-            }
-            Ok(None) => {}
-            Err(err) => return Err(err),
+    match crate::sfx::locate(path) {
+        Ok(Some(trailer)) => {
+            return Ok(Format::Sfx {
+                offset: trailer.archive_offset,
+                inner: Box::new(trailer.payload().format()),
+            });
         }
+        Ok(None) => {}
+        Err(err) => return Err(err),
+    }
+    if is_pe_image(&head[..n]) {
         if let Some((offset, inner)) = find_embedded(&head[..n]) {
             return Ok(Format::Sfx {
                 offset: offset as u64,
@@ -252,6 +253,10 @@ pub fn detect_file(path: &Path) -> Result<Format, Error> {
         "unrecognized archive `{}`",
         path.display()
     )))
+}
+
+fn is_pe_image(bytes: &[u8]) -> bool {
+    bytes.len() >= 2 && bytes.starts_with(b"MZ")
 }
 
 fn detect_header(bytes: &[u8]) -> Option<Format> {
@@ -488,6 +493,36 @@ mod tests {
         match detect_bytes(&bytes) {
             Some(Format::Sfx { inner, .. }) => assert_eq!(*inner, Format::Rar5),
             other => panic!("expected sfx rar, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn elf_stub_with_trailer_is_sfx() {
+        let mut bytes = vec![0x7F, b'E', b'L', b'F'];
+        bytes.resize(16, 0);
+        bytes.extend_from_slice(b"PK\x03\x04");
+        let trailer = crate::sfx::SfxTrailer {
+            archive_offset: 16,
+            archive_len: 4,
+            flags: 0,
+        };
+        bytes.extend_from_slice(&trailer.encode());
+        match detect_bytes(&bytes) {
+            Some(Format::Sfx { offset, inner }) => {
+                assert_eq!(offset, 16);
+                assert_eq!(*inner, Format::Zip);
+            }
+            other => panic!("expected elf sfx zip, got {other:?}"),
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("package");
+        std::fs::write(&path, &bytes).unwrap();
+        match detect_file(&path).unwrap() {
+            Format::Sfx { offset, inner } => {
+                assert_eq!(offset, 16);
+                assert_eq!(*inner, Format::Zip);
+            }
+            other => panic!("expected elf sfx zip, got {other:?}"),
         }
     }
 

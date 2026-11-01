@@ -161,11 +161,15 @@ pub(crate) fn commit_output(tmp: &Path, final_path: &Path) -> Result<u64, Error>
 }
 
 fn temp_beside(path: &Path) -> PathBuf {
+    // Parallel writers in one process must not share a temp name. A leftover
+    // write handle on a renamed inode is Linux ETXTBSY when the dest is exec'd.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let name = path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "archive".to_string());
-    path.with_file_name(format!(".{name}.{}.szip-tmp", std::process::id()))
+    path.with_file_name(format!(".{name}.{}.{id}.szip-tmp", std::process::id()))
 }
 
 pub(crate) fn copy_in(
