@@ -1,8 +1,8 @@
 {
   "Cargo.toml": {
-    "mtime": 1793472286.5093925,
-    "seen": 1793472478.2151005,
-    "ast_hash": "2e83989baaa2adbc1e6bbe5150e7bfcf",
+    "mtime": 1793525265.215302,
+    "seen": 1793525288.5013998,
+    "ast_hash": "627cad732efb434534f97dfa7ab3fd71",
     "semantic_hash": ""
   },
   "crates/shellzip-cli/Cargo.toml": {
@@ -72,9 +72,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/archiver/mod.rs": {
-    "mtime": 1793481671.7111552,
-    "seen": 1793482584.6583424,
-    "ast_hash": "ceb84aa38618638127c613fbe87a7305",
+    "mtime": 1793520303.5337596,
+    "seen": 1793525288.5014262,
+    "ast_hash": "9520989f1c7748aab55ba2b0eac97b97",
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/archiver/stream.rs": {
@@ -102,9 +102,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/detect.rs": {
-    "mtime": 1792863651.2769105,
-    "seen": 1792863951.1749914,
-    "ast_hash": "accbb8f3b908d6b85c737d98f4072015",
+    "mtime": 1793520280.1958952,
+    "seen": 1793525288.501435,
+    "ast_hash": "01d0b638bf56811b27cc3e7bfb73cda3",
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/entry.rs": {
@@ -282,9 +282,9 @@
     "semantic_hash": ""
   },
   "docs/Rust_MVP_Plan.md": {
-    "mtime": 1792863591.073588,
-    "seen": 1792863951.1750884,
-    "ast_hash": "30770f93206ab8e5b01a5ae9b1b04184",
+    "mtime": 1793525266.372186,
+    "seen": 1793525288.5015082,
+    "ast_hash": "79f156e40a2f4a48578080a7ce54a76b",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/assets/lucide/archive.svg": {
@@ -534,9 +534,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-sfx/tests/extract.rs": {
-    "mtime": 1792863003.484355,
-    "seen": 1792863951.1750643,
-    "ast_hash": "3d1ec24dfdb66c1400abd6a6076e02a0",
+    "mtime": 1793520312.2010045,
+    "seen": 1793525288.5014882,
+    "ast_hash": "4b2541f8ad9a9070e9b397151f7ac38d",
     "semantic_hash": ""
   },
   "scripts/register-open-with.ps1": {
@@ -708,9 +708,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/about.rs": {
-    "mtime": 1793477796.698643,
-    "seen": 1793477980.4335494,
-    "ast_hash": "a4637a2f2de927952c354e2726b5aed0",
+    "mtime": 1793525277.7647736,
+    "seen": 1793525288.501463,
+    "ast_hash": "685f36267b4d5358b795a902fef0da30",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/credits.rs": {
@@ -1398,9 +1398,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793486515.3658195,
-    "seen": 1793516374.124308,
-    "ast_hash": "7917089fe81d99c74bfce970d6b496c6",
+    "mtime": 1793525265.496701,
+    "seen": 1793525288.5015004,
+    "ast_hash": "e64e12a760d535be90eb51f76b47dce5",
     "semantic_hash": ""
   },
   "docs/BUILDING.md": {
@@ -1422,9 +1422,9 @@
     "semantic_hash": ""
   },
   "docs/FORMATS.md": {
-    "mtime": 1793486550.1875854,
-    "seen": 1793516374.12432,
-    "ast_hash": "4a4498edc36062690f443b3b5e79e389",
+    "mtime": 1793520412.1259122,
+    "seen": 1793525288.5015054,
+    "ast_hash": "2275bca54dda5ff85abe527da441ed27",
     "semantic_hash": ""
   },
   "docs/GUI.md": {
@@ -1437,6 +1437,12 @@
     "mtime": 1793486558.6922445,
     "seen": 1793516374.124323,
     "ast_hash": "3dc830833dc047f909b010b3ea053416",
+    "semantic_hash": ""
+  },
+  ".github/workflows/release.yml": {
+    "mtime": 1793524226.9923725,
+    "seen": 1793525288.5014994,
+    "ast_hash": "91df2c0874e1ea34556759826d81f579",
     "semantic_hash": ""
   }
 }

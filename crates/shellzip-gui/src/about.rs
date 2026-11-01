@@ -128,10 +128,7 @@ fn identity(ui: &mut egui::Ui) {
 }
 
 fn license(ui: &mut egui::Ui) {
-    ui.label(
-        "ShellZip is licensed under the MIT License. \
-         You may also use it under the Apache License, Version 2.0.",
-    );
+    ui.label("ShellZip is licensed under the MIT License.");
     ui.label(
         "That license covers the ShellZip source. The packages below keep their own licenses.",
     );

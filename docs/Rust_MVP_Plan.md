@@ -234,5 +234,5 @@ Explorer `IExplorerCommand` context menu via `windows` crate + sparse MSIX (same
 ## 6. Licensing notes
 
 - **RAR creation is excluded by design.** The RAR compressor is proprietary (never published); the UnRAR source licence permits building extractors only and explicitly forbids using it to develop a RAR‑compatible archiver. Shipping `unrar` crate bindings for *extraction* is permitted.
-- `zip`, `flate2`, `tar`, `zstd` (BSD/GPL dual → use BSD), `sevenz-rust2` (Apache‑2.0) are compatible with an MIT/Apache‑2.0 project; `xz2` links liblzma (public domain), `bzip2` (BSD‑like). Record all with `cargo deny` / `cargo about` in CI.
+- `zip`, `flate2`, `tar`, `zstd` (BSD/GPL dual → use BSD), `sevenz-rust2` (Apache‑2.0) are compatible with an MIT project; `xz2` links liblzma (public domain), `bzip2` (BSD‑like). Record all with `cargo deny` / `cargo about` in CI.
 - SFX stubs we ship are our own code; nothing from WinRAR is copied.
