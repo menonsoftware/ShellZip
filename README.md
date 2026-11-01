@@ -4,7 +4,7 @@ ShellZip is a Rust archive manager: a desktop window (`shellzip`), a command-lin
 
 It packs and unpacks ZIP, 7z, tar, gzip, and zstd, extracts xz, bzip2, and RAR, and never creates a RAR archive. Detection uses magic bytes, not the file extension. Entry names are checked before anything is written to disk.
 
-Version **0.1.0**. Dual-licensed MIT OR Apache-2.0. Not published to crates.io.
+Version **0.1.0**. Licensed under MIT. Not published to crates.io.
 
 ## Features
 
@@ -141,6 +141,6 @@ CI runs the same steps on `windows-latest` and `ubuntu-latest`. The workspace fo
 
 ## Licence
 
-ShellZip is **MIT OR Apache-2.0**. See [LICENSE](LICENSE), [LICENSE-MIT](LICENSE-MIT), and [LICENSE-APACHE](LICENSE-APACHE). Third-party crates are listed in the About dialog.
+ShellZip is **MIT**. See [LICENSE](LICENSE). Third-party crates are listed in the About dialog.
 
 RAR extraction uses UnRAR. That source may be used to handle RAR archives, but it **cannot** be used to develop a RAR-compatible archiver or to recreate the RAR compression algorithm. The required UnRAR paragraph is also shown in About.
