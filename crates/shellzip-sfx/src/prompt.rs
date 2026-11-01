@@ -230,6 +230,7 @@ fn password_text(slot: &PasswordSlot) -> Result<String, Error> {
 }
 
 /// Edit-control id inside [`password_dialog_template`].
+#[cfg(any(windows, test))]
 const PASSWORD_ID: u16 = 100;
 
 /// Characters the password edit accepts, including the terminating NUL.
@@ -238,6 +239,7 @@ const PASSWORD_UNITS: usize = 1024;
 
 /// `ES_PASSWORD`. Masks the edit control. Declared here so the template does
 /// not depend on the common-controls feature.
+#[cfg(any(windows, test))]
 const ES_PASSWORD: u32 = 0x0020;
 
 /// In-memory `DLGTEMPLATE` for a password question.
@@ -247,6 +249,7 @@ const ES_PASSWORD: u32 = 0x0020;
 ///
 /// Window and dialog styles are the Win32 values. They live here so the
 /// template can be checked without linking the controls feature.
+#[cfg(any(windows, test))]
 fn password_dialog_template(prompt: &str) -> Vec<u8> {
     const WS_POPUP: u32 = 0x8000_0000;
     const WS_CAPTION: u32 = 0x00C0_0000;
@@ -338,13 +341,18 @@ fn password_dialog_template(prompt: &str) -> Vec<u8> {
 }
 
 /// `ES_AUTOHSCROLL` so a long password can be typed in the edit control.
+#[cfg(any(windows, test))]
 const ES_AUTOHSCROLL: u32 = 0x0080;
 
 /// Predefined dialog class atoms: button, edit, static.
+#[cfg(any(windows, test))]
 const CLASS_BUTTON: u16 = 0x0080;
+#[cfg(any(windows, test))]
 const CLASS_EDIT: u16 = 0x0081;
+#[cfg(any(windows, test))]
 const CLASS_STATIC: u16 = 0x0082;
 
+#[cfg(any(windows, test))]
 struct DialogControl<'a> {
     style: u32,
     x: u16,
@@ -356,6 +364,7 @@ struct DialogControl<'a> {
     title: &'a str,
 }
 
+#[cfg(any(windows, test))]
 fn push_item(buf: &mut Vec<u8>, item: DialogControl<'_>) {
     while !buf.len().is_multiple_of(4) {
         buf.push(0);
@@ -373,14 +382,17 @@ fn push_item(buf: &mut Vec<u8>, item: DialogControl<'_>) {
     push_u16(buf, 0);
 }
 
+#[cfg(any(windows, test))]
 fn push_u16(buf: &mut Vec<u8>, value: u16) {
     buf.extend_from_slice(&value.to_le_bytes());
 }
 
+#[cfg(any(windows, test))]
 fn push_u32(buf: &mut Vec<u8>, value: u32) {
     buf.extend_from_slice(&value.to_le_bytes());
 }
 
+#[cfg(any(windows, test))]
 fn push_wide(buf: &mut Vec<u8>, text: &str) {
     for unit in text.encode_utf16() {
         push_u16(buf, unit);
@@ -389,6 +401,7 @@ fn push_wide(buf: &mut Vec<u8>, text: &str) {
 }
 
 /// Copy `bytes` into `u32`s so the dialog template is 4-byte aligned.
+#[cfg(any(windows, test))]
 fn dword_words(bytes: &[u8]) -> Vec<u32> {
     let mut padded = bytes.to_vec();
     while !padded.len().is_multiple_of(4) {

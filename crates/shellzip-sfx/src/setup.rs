@@ -3,6 +3,7 @@
 //! The window shows the ShellZip banner, instructions, a destination folder,
 //! Browse, a progress bar, and Extract / Cancel.
 //! Browse opens the system Browse For Folder dialog.
+#![cfg(any(windows, test))]
 
 /// Child-control ids. Extract is `IDOK` (1) and Cancel is `IDCANCEL` (2).
 const ID_INTRO: i32 = 101;
