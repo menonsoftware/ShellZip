@@ -34,7 +34,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y g++ pkg-config libgtk-3-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} -p shellzip-cli -p shellzip-gui
+        run: cargo build --release --locked --target ${{ matrix.target }} -p shellzip-cli -p shellzip-gui
+      - name: Build SFX stub
+        run: cargo build --profile minisize --locked --target ${{ matrix.target }} -p shellzip-sfx
       - name: Package
         shell: bash
         run: |
@@ -42,6 +44,7 @@ jobs:
           mkdir "$name"
           cp target/${{ matrix.target }}/release/szip${{ matrix.ext }} "$name/"
           cp target/${{ matrix.target }}/release/shellzip${{ matrix.ext }} "$name/"
+          cp target/${{ matrix.target }}/minisize/shellzip-sfx${{ matrix.ext }} "$name/"
           cp README.md "$name/"
           if [ "$RUNNER_OS" = "Windows" ]; then 7z a "$name.zip" "$name"; else tar czf "$name.tar.gz" "$name"; fi
       - uses: softprops/action-gh-release@v2
