@@ -141,6 +141,6 @@ CI runs the same steps on `windows-latest` and `ubuntu-latest`. The workspace fo
 
 ## Licence
 
-ShellZip is **MIT OR Apache-2.0**. Third-party crates are listed in the About dialog.
+ShellZip is **MIT OR Apache-2.0**. See [LICENSE](LICENSE), [LICENSE-MIT](LICENSE-MIT), and [LICENSE-APACHE](LICENSE-APACHE). Third-party crates are listed in the About dialog.
 
 RAR extraction uses UnRAR. That source may be used to handle RAR archives, but it **cannot** be used to develop a RAR-compatible archiver or to recreate the RAR compression algorithm. The required UnRAR paragraph is also shown in About.
