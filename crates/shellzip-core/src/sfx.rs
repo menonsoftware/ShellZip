@@ -162,7 +162,8 @@ pub fn locate(path: &Path) -> Result<Option<SfxTrailer>, Error> {
 
 /// Copy `stub` and `archive` into `dest` and append a trailer.
 ///
-/// `dest` is replaced only after the temporary file is complete.
+/// `dest` is replaced only after the temporary file is complete. On Unix the
+/// package keeps the stub's permission bits so it can be executed.
 ///
 /// # Errors
 ///
@@ -202,7 +203,27 @@ pub fn build(dest: &Path, stub: &Path, archive: &Path, payload: SfxPayload) -> R
         let _ = std::fs::remove_file(&tmp);
         return Err(err);
     }
+    copy_stub_permissions(stub, &tmp)?;
     crate::archiver::commit_output(&tmp, dest)
+}
+
+/// Copy the stub's Unix mode onto the package. Windows has no execute bit.
+fn copy_stub_permissions(stub: &Path, dest: &Path) -> Result<(), Error> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = std::fs::metadata(stub)
+            .map_err(|err| Error::io(format!("stat {}", stub.display()), err))?
+            .permissions()
+            .mode();
+        crate::fs::metadata::restore_mode(dest, mode)?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (stub, dest);
+    }
+    Ok(())
 }
 
 /// Write the ZIP payload of an SFX file to `dest`.
@@ -580,6 +601,24 @@ mod tests {
             SfxDirection::Stripped
         );
         assert!(convert(&back, &back, Some(&stub_path)).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_keeps_the_stub_executable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let stub_path = tmp.path().join("stub.bin");
+        let zip_path = tmp.path().join("in.zip");
+        let sfx_path = tmp.path().join("out.exe");
+        std::fs::write(&stub_path, b"MZ-stub-bytes").unwrap();
+        std::fs::set_permissions(&stub_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(&zip_path, tiny_zip()).unwrap();
+
+        build(&sfx_path, &stub_path, &zip_path, SfxPayload::Zip).unwrap();
+        let mode = std::fs::metadata(&sfx_path).unwrap().permissions().mode();
+        assert_ne!(mode & 0o111, 0, "sfx mode {mode:#o}");
     }
 
     #[cfg(feature = "sevenz")]

@@ -1,7 +1,7 @@
 # Graph Report - ShellZip  (2026-11-01)
 
 ## Corpus Check
-- 112 files · ~245,279 words
+- 112 files · ~245,309 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 31 file(s) not represented in the graph (top: .mdc 11, .rar 8, (none) 4)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `a2b88ac0`
+- Built from commit: `491bdf9d`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -540,7 +540,7 @@ Nodes (3): Building and internals, ShellZip documentation, User guides
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `Error` connect `Error` to `worker.rs`, `ops.rs`, `policy.rs`, `src/sfx.rs`, `Password`, `stream.rs`, `shellzip-sfx/src/main.rs`, `setup.rs`, `archiver/zip.rs`, `parallel.rs`, `walk.rs`, `extractor/tar.rs`, `Entry`, `extract.rs`, `src/cli.rs`, `Command`, `milestone2.rs`, `view_dialog.rs`, `archiver/tar.rs`, `Format`, `prompt.rs`, `extractor/zip.rs`, `add.rs`, `Password`, `EntryMeta`, `milestone3.rs`, `add_dialog.rs`, `round_trip.rs`, `app.rs`, `folder_formats.rs`, `rename_summary.rs`, `CompressOpts`, `extractor/sevenz/mod.rs`?**
-  _High betweenness centrality (0.076) - this node is a cross-community bridge._
+  _High betweenness centrality (0.081) - this node is a cross-community bridge._
 - **What connects `shellzip-cli`, `Add`, `Update` to the rest of the system?**
   _273 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `worker.rs` be split into smaller, more focused modules?**

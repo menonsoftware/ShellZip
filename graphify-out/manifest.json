@@ -504,9 +504,9 @@
     "semantic_hash": ""
   },
   "crates/shellzip-core/src/sfx.rs": {
-    "mtime": 1793515391.4875638,
-    "seen": 1793516374.1241953,
-    "ast_hash": "1a76acdd613625f99da47fd8cfed8fb0",
+    "mtime": 1793519375.6423068,
+    "seen": 1793519469.0507154,
+    "ast_hash": "d8cdcad32785d3c1f539e29d1b5e0753",
     "semantic_hash": ""
   },
   "crates/shellzip-gui/src/settings.rs": {
