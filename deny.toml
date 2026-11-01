@@ -3,6 +3,12 @@
 # The vendored UnRAR sources are extraction-only; see the unrar_sys clarify below.
 
 [graph]
+# Same platforms as CI. Without this, `cargo deny` only sees the host triple
+# and misses Linux-only GUI crates when run on Windows (and the reverse).
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
 all-features = true
 no-default-features = false
 
