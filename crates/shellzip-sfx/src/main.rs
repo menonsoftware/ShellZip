@@ -14,6 +14,7 @@ use shellzip_core::{
 };
 
 mod prompt;
+#[cfg(any(windows, test))]
 mod setup;
 
 use prompt::Choice;
