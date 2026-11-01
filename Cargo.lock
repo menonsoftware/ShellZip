@@ -4861,7 +4861,7 @@ dependencies = [
 
 [[package]]
 name = "shellzip-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anstream 0.6.21",
  "assert_cmd",
@@ -4883,7 +4883,7 @@ dependencies = [
 
 [[package]]
 name = "shellzip-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake2s_simd",
  "bzip2",
@@ -4911,7 +4911,7 @@ dependencies = [
 
 [[package]]
 name = "shellzip-gui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "directories",
  "eframe",
@@ -4934,7 +4934,7 @@ dependencies = [
 
 [[package]]
 name = "shellzip-sfx"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "image",
  "shellzip-core",
@@ -7125,7 +7125,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "sha2 0.11.1",
  "shellzip-core",

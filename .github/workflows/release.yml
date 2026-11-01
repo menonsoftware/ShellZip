@@ -33,21 +33,40 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y g++ pkg-config libgtk-3-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-      - name: Build
+      - name: Build CLI and GUI
         run: cargo build --release --locked --target ${{ matrix.target }} -p shellzip-cli -p shellzip-gui
       - name: Build SFX stub
         run: cargo build --profile minisize --locked --target ${{ matrix.target }} -p shellzip-sfx
       - name: Package
         shell: bash
         run: |
-          name=ShellZip-${GITHUB_REF_NAME}-${{ matrix.target }}
+          set -euo pipefail
+          target=${{ matrix.target }}
+          ext=${{ matrix.ext }}
+          name=ShellZip-${GITHUB_REF_NAME}-${target}
+          sfx_src=target/${target}/minisize/shellzip-sfx${ext}
+          sfx_asset=shellzip-sfx-${target}${ext}
+          test -f "target/${target}/release/szip${ext}"
+          test -f "target/${target}/release/shellzip${ext}"
+          test -f "$sfx_src"
           mkdir "$name"
-          cp target/${{ matrix.target }}/release/szip${{ matrix.ext }} "$name/"
-          cp target/${{ matrix.target }}/release/shellzip${{ matrix.ext }} "$name/"
-          cp target/${{ matrix.target }}/minisize/shellzip-sfx${{ matrix.ext }} "$name/"
+          cp "target/${target}/release/szip${ext}" "$name/"
+          cp "target/${target}/release/shellzip${ext}" "$name/"
+          cp "$sfx_src" "$name/shellzip-sfx${ext}"
           cp README.md "$name/"
-          if [ "$RUNNER_OS" = "Windows" ]; then 7z a "$name.zip" "$name"; else tar czf "$name.tar.gz" "$name"; fi
+          cp "$sfx_src" "$sfx_asset"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a "$name.zip" "$name"
+            7z l "$name.zip" | tee package-listing.txt
+          else
+            tar czf "$name.tar.gz" "$name"
+            tar tzf "$name.tar.gz" | tee package-listing.txt
+          fi
+          grep -F "shellzip-sfx${ext}" package-listing.txt
       - uses: softprops/action-gh-release@v2
         with:
-          files: ShellZip-*.*
+          files: |
+            ShellZip-*
+            shellzip-sfx-*
           generate_release_notes: true
+          fail_on_unmatched_files: true
