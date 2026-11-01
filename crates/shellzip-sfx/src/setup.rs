@@ -10,6 +10,8 @@ const ID_DEST: i32 = 103;
 const ID_BROWSE: i32 = 104;
 const ID_PROGRESS: i32 = 106;
 
+/// Shown in the intro edit. Compiled on Windows and for the text test.
+#[cfg(any(windows, test))]
 const INTRO: &str = "\
 \u{2022} Press Extract to start extraction.\r\n\
 \r\n\
@@ -259,6 +261,8 @@ fn push_wide(buf: &mut Vec<u8>, text: &str) {
     push_u16(buf, 0);
 }
 
+/// `DialogBoxIndirectParamW` reads the template as DWORD-aligned words.
+#[cfg(any(windows, test))]
 fn dword_words(bytes: &[u8]) -> Vec<u32> {
     let mut padded = bytes.to_vec();
     while !padded.len().is_multiple_of(4) {
@@ -268,7 +272,6 @@ fn dword_words(bytes: &[u8]) -> Vec<u32> {
     chunks.iter().copied().map(u32::from_le_bytes).collect()
 }
 
-#[cfg(windows)]
 #[cfg(windows)]
 #[allow(unsafe_code, unsafe_op_in_unsafe_fn)]
 mod win {
@@ -1121,6 +1124,25 @@ mod tests {
         assert!(utf16_contains(&bytes, "Extract"));
         assert!(utf16_contains(&bytes, "Destination folder"));
         assert!(utf16_contains(&bytes, "msctls_progress32"));
+    }
+
+    #[test]
+    fn intro_tells_how_to_extract() {
+        assert!(INTRO.contains("Press Extract"));
+        assert!(INTRO.contains("Browse"));
+        assert!(INTRO.contains("destination folder does not exist"));
+    }
+
+    #[test]
+    fn dword_words_keep_the_template_bytes() {
+        let bytes = setup_template();
+        let words = dword_words(&bytes);
+        let mut back = Vec::new();
+        for word in words {
+            back.extend_from_slice(&word.to_le_bytes());
+        }
+        assert_eq!(&back[..bytes.len()], bytes.as_slice());
+        assert!(back.len().is_multiple_of(4));
     }
 
     fn utf16_contains(bytes: &[u8], text: &str) -> bool {
