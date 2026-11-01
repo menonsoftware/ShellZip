@@ -60,19 +60,17 @@ pub fn create_symlink(target: &str, link_path: &Path) -> Result<(), Error> {
     }
 }
 
-fn mode_bits(meta: &std::fs::Metadata, kind: EntryKind) -> u32 {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        return meta.permissions().mode() & 0o777;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = meta;
-        match kind {
-            EntryKind::Dir => 0o755,
-            EntryKind::Symlink => 0o777,
-            _ => 0o644,
-        }
+#[cfg(unix)]
+fn mode_bits(meta: &std::fs::Metadata, _kind: EntryKind) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    meta.permissions().mode() & 0o777
+}
+
+#[cfg(not(unix))]
+fn mode_bits(_meta: &std::fs::Metadata, kind: EntryKind) -> u32 {
+    match kind {
+        EntryKind::Dir => 0o755,
+        EntryKind::Symlink => 0o777,
+        _ => 0o644,
     }
 }

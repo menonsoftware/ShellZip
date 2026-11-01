@@ -297,10 +297,10 @@ fn ensure_stub_can_extract(path: &Path) -> Result<(), Error> {
     #[cfg(not(feature = "sevenz"))]
     {
         let _ = path;
-        return Err(Error::Unsupported {
+        Err(Error::Unsupported {
             format: "7Z".to_string(),
             detail: "rebuild with the `sevenz` feature to wrap a 7z archive".to_string(),
-        });
+        })
     }
     #[cfg(feature = "sevenz")]
     {

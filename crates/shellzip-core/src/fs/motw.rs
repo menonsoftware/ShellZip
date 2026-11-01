@@ -5,10 +5,13 @@
 //! `file:Zone.Identifier`, so this stays in safe Rust. The workspace forbids
 //! `unsafe`, which a direct `windows-sys` call would need.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
 
 use crate::error::Error;
 
+#[cfg(windows)]
 const MAX_ZONE_BYTES: u64 = 64 * 1024;
 
 /// Copy `archive`'s zone stream onto `dest` when the archive has one.

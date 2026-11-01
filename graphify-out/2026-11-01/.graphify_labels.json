@@ -1,0 +1,9 @@
+{
+  "6": "stream.rs",
+  "10": "archiver/zip.rs",
+  "19": "extract.rs",
+  "22": "src/cli.rs",
+  "24": "Command",
+  "27": "shellzip-core",
+  "28": "shellzip-cli/src/main.rs"
+}

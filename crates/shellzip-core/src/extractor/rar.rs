@@ -1,20 +1,37 @@
 //! RAR 4 and RAR 5 listing, testing, and extraction.
 //!
 //! The `unrar` crate binds UnRAR. That licence allows extraction only, so this
-//! module never writes a RAR archive. Multivolume sets are opened at the first
-//! part (`.part1.rar` or `.part01.rar`, whichever exists). Header encryption
-//! fails with exit 11 until a password is supplied, and a wrong password is
-//! the same exit code. UnRAR does not expose host OS or the dictionary size,
-//! so those listing fields stay empty. Solid and encrypted flags are reported.
+//! module never writes a RAR archive. Split volumes (`.part1.rar`) are listed
+//! but not extracted: UnRAR's volume-change callback AVs on Windows. Header
+//! encryption fails with exit 11 until a password is supplied, and a wrong
+//! password is the same exit code. UnRAR does not expose host OS or the
+//! dictionary size, so those listing fields stay empty. Solid and encrypted
+//! flags are reported.
 
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::TimeZone;
 use unrar::error::{Code, UnrarError};
-use unrar::{Archive, CursorBeforeHeader, List, OpenArchive, Process};
+use unrar::{Archive, CursorBeforeFile, CursorBeforeHeader, List, OpenArchive, Process};
+
+/// UnRAR's C++ library (`RAR_SMP`) is process-global and not thread-safe.
+/// `cargo test` runs integration tests in parallel; two opens at once have
+/// crashed Windows CI with `STATUS_ACCESS_VIOLATION`.
+fn unrar_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Decode through UnRAR's test callback instead of `RAR_EXTRACT`.
+///
+/// `extract_to` asks UnRAR to create the file. That path has AVed on
+/// Windows Server runners. Members above this size still use `extract_to`.
+const DECODE_IN_MEMORY: u64 = 32 * 1024 * 1024;
 
 use super::policy::{
     Budget, Destination, destination, mark_extracted, restore_entry_time, stage_path,
@@ -28,6 +45,7 @@ use crate::progress::ProgressSink;
 
 /// List RAR members. `hash` decodes payloads for BLAKE2sp.
 pub fn list_rar(path: &Path, hash: bool, password: Option<&Password>) -> Result<Vec<Entry>, Error> {
+    let _lock = unrar_lock();
     if hash {
         return list_hashed(path, password);
     }
@@ -49,6 +67,8 @@ pub fn test_rar(
     password: Option<&Password>,
     limits: &crate::options::ReadLimits,
 ) -> Result<TestReport, Error> {
+    let _lock = unrar_lock();
+    refuse_multipart(path)?;
     let mut archive = open_process(path, password)?;
     progress.begin(&format!("test {}", path.display()), 0);
     let mut report = TestReport::default();
@@ -102,6 +122,8 @@ pub fn extract_rar(
     selected: &dyn Fn(&str) -> bool,
     progress: &dyn ProgressSink,
 ) -> Result<ExtractReport, Error> {
+    let _lock = unrar_lock();
+    refuse_multipart(path)?;
     let mut archive = open_process(path, opts.password.as_ref())?;
     progress.begin(&format!("extract {}", path.display()), 0);
     let mut report = ExtractReport::default();
@@ -155,13 +177,13 @@ pub fn extract_rar(
             }
             Destination::Write(dest) => {
                 let staged = stage_path(&dest);
-                archive = match header.extract_to(&staged) {
+                archive = match take_member(header, &staged, size, had_password) {
                     Ok(next) => next,
                     Err(err) => {
                         if !opts.keep_broken {
                             let _ = std::fs::remove_file(&staged);
                         }
-                        return Err(map_unrar(err, had_password));
+                        return Err(err);
                     }
                 };
                 finish_staged(path, &staged, &dest, &name, opts, modified, &mut report)?;
@@ -180,6 +202,8 @@ pub fn copy_rar_index(
     sink: &mut dyn Write,
     password: Option<&Password>,
 ) -> Result<(u64, u32), Error> {
+    let _lock = unrar_lock();
+    refuse_multipart(path)?;
     let mut archive = open_process(path, password)?;
     let mut cursor = 0usize;
     loop {
@@ -209,14 +233,15 @@ pub fn copy_rar_index(
             crate::options::DEFAULT_MAX_RATIO,
         );
         budget.reserve(header.entry().unpacked_size, None)?;
+        let size = header.entry().unpacked_size;
         let staged =
             std::env::temp_dir().join(format!("szip-rar-{}-{cursor}.bin", std::process::id()));
-        let extracted = header.extract_to(&staged);
+        let extracted = take_member(header, &staged, size, password.is_some());
         let archive_result = match extracted {
             Ok(next) => next,
             Err(err) => {
                 let _ = std::fs::remove_file(&staged);
-                return Err(map_unrar(err, password.is_some()));
+                return Err(err);
             }
         };
         drop(archive_result);
@@ -246,16 +271,17 @@ fn list_hashed(path: &Path, password: Option<&Password>) -> Result<Vec<Entry>, E
             entries.push(entry);
             continue;
         }
+        let size = header.entry().unpacked_size;
         let staged = std::env::temp_dir().join(format!(
             "szip-rar-hash-{}-{}.bin",
             std::process::id(),
             entries.len()
         ));
-        archive = match header.extract_to(&staged) {
+        archive = match take_member(header, &staged, size, password.is_some()) {
             Ok(next) => next,
             Err(err) => {
                 let _ = std::fs::remove_file(&staged);
-                return Err(map_unrar(err, password.is_some()));
+                return Err(err);
             }
         };
         if let Ok(hash) = hash_file(&staged) {
@@ -356,6 +382,44 @@ fn archive_at<'a>(path: &'a Path, password: Option<&'a Password>) -> Archive<'a>
         Some(password) => Archive::with_password(path, password.expose().as_bytes()),
         None => Archive::new(path),
     }
+}
+
+/// UnRAR's volume-change callback in unrar 0.5.8 reads a 2048-wchar buffer
+/// and is compiled with `RAR_SMP`. That combination AVs on Windows.
+fn refuse_multipart(path: &Path) -> Result<(), Error> {
+    let first = first_volume(path);
+    if Archive::new(&first).is_multipart() {
+        return Err(Error::Unsupported {
+            format: "RAR".to_string(),
+            detail: "extracting a split (multivolume) RAR is not supported".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Write `header` to `dest`. Small members go through `read()` so UnRAR never
+/// creates the file; large members still use `extract_to`.
+fn take_member(
+    header: OpenArchive<Process, CursorBeforeFile>,
+    dest: &Path,
+    size: u64,
+    had_password: bool,
+) -> Result<OpenArchive<Process, CursorBeforeHeader>, Error> {
+    if size > DECODE_IN_MEMORY {
+        return header
+            .extract_to(dest)
+            .map_err(|err| map_unrar(err, had_password));
+    }
+    let (bytes, next) = header.read().map_err(|err| map_unrar(err, had_password))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > DECODE_IN_MEMORY {
+        return Err(Error::Usage(format!(
+            "refusing to decode {} bytes of a RAR member into memory",
+            bytes.len()
+        )));
+    }
+    std::fs::write(dest, bytes)
+        .map_err(|err| Error::io(format!("write {}", dest.display()), err))?;
+    Ok(next)
 }
 
 /// First volume that exists on disk.

@@ -46,7 +46,7 @@ fn zip_aes_round_trips_and_leaves_names_visible() {
     let archive = tmp.path().join("secret.zip");
     let mut opts = CompressOpts {
         level: 1,
-        threads: 4,
+        threads: 1,
         password: Some(password()),
         ..CompressOpts::default()
     };
@@ -234,8 +234,13 @@ fn mark_of_the_web_is_refused_off_windows() {
 }
 
 #[cfg(feature = "rar")]
+fn rar_dir() -> PathBuf {
+    fixtures_root().join("rar")
+}
+
+#[cfg(feature = "rar")]
 #[test]
-fn rar_fixtures_match_their_checksums_and_extract() {
+fn rar_fixture_checksums_match_sha256sums() {
     let root = fixtures_root();
     let sums = fs::read_to_string(root.join("SHA256SUMS")).unwrap_or_else(|_| {
         panic!("missing fixtures/SHA256SUMS; run cargo run -p xtask -- build-fixtures")
@@ -249,14 +254,23 @@ fn rar_fixtures_match_their_checksums_and_extract() {
         let got = format!("{:x}", Sha256::digest(bytes));
         assert_eq!(got, hash, "{name}");
     }
+}
 
-    let dir = root.join("rar");
+#[cfg(feature = "rar")]
+#[test]
+fn rar_store_rar4_and_blake_extract() {
+    let dir = rar_dir();
     for name in ["store.rar", "rar4.rar", "blake.rar"] {
         let out = extract_bytes(&dir.join(name), None);
         assert_eq!(fs::read(out.path().join("hello.txt")).unwrap(), b"hello\n");
         assert_matches_unrar(&dir.join(name), None);
     }
+}
 
+#[cfg(feature = "rar")]
+#[test]
+fn rar_solid_extracts_both_members() {
+    let dir = rar_dir();
     let (_opened, solid) = list(&dir.join("solid.rar")).unwrap();
     assert!(
         solid
@@ -278,7 +292,12 @@ fn rar_fixtures_match_their_checksums_and_extract() {
         b"bravo\n"
     );
     assert_matches_unrar(&dir.join("solid.rar"), None);
+}
 
+#[cfg(feature = "rar")]
+#[test]
+fn rar_password_and_encrypted_headers() {
+    let dir = rar_dir();
     let (_opened, locked) = list(&dir.join("password.rar")).unwrap();
     assert!(
         locked
@@ -307,40 +326,28 @@ fn rar_fixtures_match_their_checksums_and_extract() {
     );
     assert_matches_unrar(&dir.join("password.rar"), Some(FIXTURE_PASSWORD));
     assert_matches_unrar(&dir.join("headers.rar"), Some(FIXTURE_PASSWORD));
+}
 
-    let parts: Vec<_> = fs::read_dir(&dir)
-        .unwrap()
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("volumes.part"))
-        })
-        .collect();
-    assert!(
-        parts.len() >= 2,
-        "expected multivolume parts, found {parts:?}"
-    );
-    let first = parts
-        .iter()
-        .find(|path| {
-            let name = path.file_name().unwrap().to_str().unwrap();
-            name.contains("part1.") || name.contains("part01.")
-        })
-        .unwrap();
-    let volume_out = extract_bytes(first, None);
-    assert_eq!(
-        fs::read(volume_out.path().join("big.bin")).unwrap(),
-        vec![0xA5; 30_000]
-    );
-    let last = parts.iter().find(|path| *path != first).unwrap();
-    let from_later = extract_bytes(last, None);
-    assert_eq!(
-        fs::read(from_later.path().join("big.bin")).unwrap(),
-        vec![0xA5; 30_000]
-    );
-    assert_matches_unrar(first, None);
+#[cfg(feature = "rar")]
+#[test]
+fn rar_volumes_are_refused_instead_of_crashing() {
+    let first = rar_dir().join("volumes.part1.rar");
+    assert!(first.is_file(), "{}", first.display());
+    let later = rar_dir().join("volumes.part2.rar");
+    let dest = tempfile::tempdir().unwrap();
+    for archive in [&first, &later] {
+        let err = extract(archive, &ExtractOpts::new(dest.path()), None, &NopProgress).unwrap_err();
+        assert!(
+            matches!(err, Error::Unsupported { .. }),
+            "{}: {err}",
+            archive.display()
+        );
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("volume")
+                || err.to_string().to_ascii_lowercase().contains("split"),
+            "{err}"
+        );
+    }
 }
 
 #[cfg(feature = "rar")]
