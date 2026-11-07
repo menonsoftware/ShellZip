@@ -403,9 +403,12 @@ pub extern "system" fn DllMain(
 }
 
 /// COM class object lookup.
+///
+/// Not `pub`: a `pub` `#[no_mangle]` would also emit `/EXPORT:` without
+/// `PRIVATE`, which fights `exports.def` and triggers LNK4104.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)] // COM export; the shell owns the pointers
-pub extern "system" fn DllGetClassObject(
+extern "system" fn DllGetClassObject(
     rclsid: *const GUID,
     riid: *const GUID,
     ppv: *mut *mut core::ffi::c_void,
@@ -419,7 +422,7 @@ pub extern "system" fn DllGetClassObject(
 
 /// True when no outstanding locks remain.
 #[unsafe(no_mangle)]
-pub extern "system" fn DllCanUnloadNow() -> HRESULT {
+extern "system" fn DllCanUnloadNow() -> HRESULT {
     if LOCKS.load(Ordering::SeqCst) == 0 {
         S_OK
     } else {

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="grx/ShellZip_Banner.jpg" alt="ShellZip" width="800">
+</p>
+
 # ShellZip
 
 ShellZip is a Rust archive manager: a desktop window (`shellzip`), a command-line tool (`szip`), and a small self-extracting stub (`shellzip-sfx`). One library crate, `shellzip-core`, does the archive work. The front ends stay thin.

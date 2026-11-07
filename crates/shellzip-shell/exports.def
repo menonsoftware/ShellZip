@@ -1,0 +1,5 @@
+; COM in-process server entry points. PRIVATE keeps them out of the
+; import library (avoids MSVC LNK4104).
+EXPORTS
+    DllCanUnloadNow PRIVATE
+    DllGetClassObject PRIVATE
