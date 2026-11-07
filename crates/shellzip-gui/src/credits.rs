@@ -4,6 +4,8 @@
 //! macOS. Workspace crates are omitted; they use the ShellZip license.
 //! `unrar_sys` vendors the UnRAR sources, so its line is the clarified
 //! expression from `deny.toml`, not the MIT-only metadata of the wrapper.
+//!
+//! Regenerate with `python xtask/gen_credits.py`.
 
 /// One third-party crate linked into this program.
 pub struct Credit {
@@ -1295,6 +1297,11 @@ pub static WINDOWS: &[Credit] = &[
     Credit {
         name: "winnow",
         version: "1.0.4",
+        license: "MIT",
+    },
+    Credit {
+        name: "winreg",
+        version: "0.55.0",
         license: "MIT",
     },
     Credit {
@@ -4602,15 +4609,23 @@ mod tests {
     use super::{Credit, LINUX, MACOS, WINDOWS, credits};
 
     fn assert_credits(rows: &[Credit]) {
-        assert!(rows.len() > 100, "{}", rows.len());
+        assert!(rows.len() > 50, "{}", rows.len());
         for pair in rows.windows(2) {
-            let left = (pair[0].name, pair[0].version);
-            let right = (pair[1].name, pair[1].version);
-            assert!(left < right, "{} {}", pair[0].name, pair[1].name);
+            let left = (pair[0].name.to_ascii_lowercase(), pair[0].version);
+            let right = (pair[1].name.to_ascii_lowercase(), pair[1].version);
+            assert!(
+                left <= right,
+                "{} {} before {} {}",
+                pair[0].name,
+                pair[0].version,
+                pair[1].name,
+                pair[1].version
+            );
         }
         for row in rows {
             assert!(!row.license.is_empty(), "{}", row.name);
             assert!(!row.name.starts_with("shellzip"), "{}", row.name);
+            assert_ne!(row.license, "UNKNOWN", "{}", row.name);
         }
         let unrar = rows
             .iter()

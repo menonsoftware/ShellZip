@@ -125,7 +125,7 @@ szip s archive.zip -o payload.exe
 szip s payload.exe -o archive.zip     # unwrap
 ```
 
-A ZIP is wrapped with `shellzip-sfx` and a 24-byte trailer. An SFX package is unwrapped back to a ZIP. `a --sfx` creates one in a single step.
+A ZIP is wrapped with `shellzip-sfx` and a 24-byte trailer. An SFX package is unwrapped back to a ZIP. `a --sfx` creates one in a single step. Packages of 4 GiB or larger are refused (Windows cannot start them).
 
 `--sfx-stub PATH` selects the stub when wrapping. Search order otherwise: `shellzip-sfx` beside `szip`, then `SZIP_SFX_STUB`.
 

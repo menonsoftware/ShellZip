@@ -61,6 +61,10 @@ OK starts a worker job. A progress dialog reports bytes and the current name unl
 
 **Save** writes extract defaults to settings without starting a job.
 
+## Self-extractor
+
+**SFX** opens a dialog when a ZIP, 7z, or ShellZip self-extractor is open. Choose the output path. Wrapping always uses the progress window; unwrapping may **Start in background** like Extract. The stub must sit next to the ShellZip executable, or `SZIP_SFX_STUB` must point at it. Windows cannot run a self-extractor of 4 GiB or larger; keep very large archives as ZIP or 7z.
+
 ## Other commands
 
 | Command | What it does |
@@ -69,7 +73,7 @@ OK starts a worker job. A progress dialog reports bytes and the current name unl
 | View | Preview one selected file in a window |
 | Delete | Remove selected ZIP or 7z members (confirm first) |
 | Rename | Rename one selected file or folder prefix inside a ZIP or 7z |
-| SFX | Wrap the open ZIP or 7z with `shellzip-sfx` |
+| SFX | Self-extractor dialog (see above) |
 | Info | Header summary without decoding payloads |
 | Generate report | HTML, Markdown, or text listing of the open archive |
 | Select all / none / invert | File-list selection |
@@ -81,19 +85,21 @@ RAR archives can be opened, listed, tested, extracted, viewed, and reported. The
 - **Theme** — light, dark, or follow the operating system
 - **Toolbar size** — normal (24 px), large (48 px), or extra large (64 px)
 
-Settings persist in `settings.toml` (see [FAQ.md](FAQ.md#where-does-the-gui-store-settings)). Pack level, methods, solid flag, extract overwrite/update, report format, recent paths, and theme are stored. Passwords are not.
+Settings persist in `settings.toml` (see [FAQ.md](FAQ.md#where-does-the-gui-store-settings)). Pack level, methods, solid flag, extract overwrite/update, SFX background, report format, recent paths, and theme are stored. Passwords are not.
 
 ## About
 
-**Help → About** shows the project licence, the UnRAR extraction notice, and a table of every third-party crate in the build.
+**Help → About** shows the project licence, the UnRAR extraction notice, and a table of every third-party crate linked into the GUI for this OS (regenerated from `cargo tree`; see `xtask/gen_credits.py`).
 
 ## File manager integration
 
-**Options → Integrate with the file manager** (or `shellzip --integrate` / `make install-shell`) registers ShellZip for the current user:
+**Options → Integrate with the file manager** asks for confirmation, then registers ShellZip for the current user (`shellzip --integrate` / `make install-shell` skip the dialog):
 
 - Default / Open With handlers for zip, zipx, 7z, rar, tar, gz, tgz, bz2, tbz2, xz, txz, zst, tzst
 - Per-format document icons from `grx/shellzip_file_icons`
 - Context menu: Open, Extract to…, Extract Here, Extract Here (archive folder name)
+
+**Options → Remove file manager integration** asks for confirmation before clearing those registrations.
 
 Shell verbs:
 
@@ -112,5 +118,6 @@ Extract Here uses the saved overwrite policy (Ask by default) and the password p
 
 - TAR and single-file streams are not edited in place
 - The SFX stub extracts ZIP and 7z LZMA2/AES only; extra 7z codecs need `szip` or `shellzip`
+- Self-extractors must stay under 4 GiB so Windows can start them
 - Preview is for a single selected file, not a hex editor
 - `.exe` self-extractors are never claimed as a document type

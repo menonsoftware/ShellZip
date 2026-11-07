@@ -502,12 +502,7 @@ pub fn status_bar(
     ui.horizontal(|ui| {
         if let Some(job) = running {
             icons::show_spinning(ui, colors.ink, icons::SIZE_STATUS);
-            ui.add(
-                egui::ProgressBar::new(job.fraction)
-                    .fill(theme::RUST)
-                    .animate(job.indeterminate)
-                    .desired_width(160.0),
-            );
+            crate::progress_bar::show(ui, job.fraction, job.indeterminate, 160.0);
             ui.label(egui::RichText::new(&job.text).color(colors.muted));
             if job.pause {
                 let label = if job.paused { "Continue" } else { "Pause" };
@@ -566,6 +561,79 @@ pub enum DeleteChoice {
     Cancel,
     /// The window is still open.
     Wait,
+}
+
+/// Install or remove file-manager integration.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ShellIntegrateKind {
+    /// Register handlers, icons, and context-menu verbs.
+    Install,
+    /// Remove those registrations for this user.
+    Remove,
+}
+
+/// How the shell-integration confirmation ended.
+pub enum ShellIntegrateChoice {
+    /// Run the integrate or unintegrate step.
+    Confirm,
+    /// Cancel or the window close button.
+    Cancel,
+    /// The window is still open.
+    Wait,
+}
+
+/// Confirm file-manager integrate or unintegrate.
+pub fn confirm_shell_integrate(
+    ctx: &egui::Context,
+    kind: ShellIntegrateKind,
+) -> ShellIntegrateChoice {
+    let mut choice = ShellIntegrateChoice::Wait;
+    let (id, title, body, action, tint) = match kind {
+        ShellIntegrateKind::Install => (
+            "shellzip-integrate",
+            "Integrate with the file manager",
+            "Register ShellZip as an archive handler for this user?\n\n\
+             This adds Open / Open With associations, document icons, and \
+             context-menu verbs (Open, Extract to…, Extract Here).",
+            "Integrate",
+            theme::palette(ctx).ok,
+        ),
+        ShellIntegrateKind::Remove => (
+            "shellzip-unintegrate",
+            "Remove file manager integration",
+            "Remove ShellZip archive associations for this user?\n\n\
+             Context-menu verbs, document icons, and Open / Open With \
+             registrations will be cleared.",
+            "Remove",
+            theme::palette(ctx).danger,
+        ),
+    };
+    let result = modal(ctx, id, title, |ui| {
+        ui.set_min_width(440.0);
+        ui.label(body);
+        ui.add_space(8.0);
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let colors = theme::palette(ui.ctx());
+                if labeled_button(ui, Icon::X, colors.ink, "Cancel").clicked() {
+                    choice = ShellIntegrateChoice::Cancel;
+                }
+                let icon = match kind {
+                    ShellIntegrateKind::Install => Icon::Check,
+                    ShellIntegrateKind::Remove => Icon::Trash,
+                };
+                if labeled_button(ui, icon, tint, action).clicked() {
+                    choice = ShellIntegrateChoice::Confirm;
+                }
+            });
+        });
+    });
+    if result.escape && matches!(choice, ShellIntegrateChoice::Wait) {
+        ShellIntegrateChoice::Cancel
+    } else {
+        choice
+    }
 }
 
 /// Confirm deletion of archive members. `names` are scrolled above the buttons.

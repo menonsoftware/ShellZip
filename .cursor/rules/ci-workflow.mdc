@@ -26,6 +26,9 @@ alwaysApply: false
 
 - CLI/GUI: `cargo build --release --locked`. SFX stub: `cargo build --profile minisize --locked`. Upload `szip`, `shellzip`, and `shellzip-sfx` per OS.
 - Never `--allow-dirty` or skip `--locked` in release jobs.
+- Every push to `master` runs `auto-release.yml`: bump the workspace patch in root `Cargo.toml`, commit `chore: release vX.Y.Z`, push tag `vX.Y.Z`, then call reusable `release.yml` (needed because `GITHUB_TOKEN` pushes do not re-trigger workflows).
+- Manual `v*` tag pushes still run `release.yml` directly.
+- Auto-release skips commits whose message starts with `chore: release ` so a retrigger cannot loop.
 
 ## Makefile
 

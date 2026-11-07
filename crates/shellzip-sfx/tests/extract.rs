@@ -27,7 +27,7 @@ fn stub_extracts_its_appended_zip() {
     .unwrap();
 
     let sfx = tmp.path().join("package.exe");
-    build(&sfx, &stub_bin(), &zip_path, SfxPayload::Zip).unwrap();
+    build(&sfx, &stub_bin(), &zip_path, SfxPayload::Zip, &NopProgress).unwrap();
 
     let dest = tmp.path().join("out");
     fs::create_dir(&dest).unwrap();
@@ -116,7 +116,7 @@ fn encrypted_sfx(dir: &std::path::Path) -> std::path::PathBuf {
     )
     .unwrap();
     let sfx = dir.join("package.exe");
-    build(&sfx, &stub_bin(), &zip_path, SfxPayload::Zip).unwrap();
+    build(&sfx, &stub_bin(), &zip_path, SfxPayload::Zip, &NopProgress).unwrap();
     sfx
 }
 
@@ -138,7 +138,14 @@ fn stub_extracts_its_appended_7z() {
     )
     .unwrap();
     let sfx = tmp.path().join("package.exe");
-    build(&sfx, &stub_bin(), &archive, SfxPayload::SevenZ).unwrap();
+    build(
+        &sfx,
+        &stub_bin(),
+        &archive,
+        SfxPayload::SevenZ,
+        &NopProgress,
+    )
+    .unwrap();
     let dest = tmp.path().join("out");
     fs::create_dir(&dest).unwrap();
     let output = run_stub(&sfx, &["-s", "-y", "-d", dest.to_str().unwrap()], &[]);
@@ -161,7 +168,14 @@ fn stub_extracts_a_header_encrypted_7z_with_the_password() {
     opts.sevenz.encrypt_headers = true;
     add(&archive, &[src], &opts, &NopProgress).unwrap();
     let sfx = tmp.path().join("package.exe");
-    build(&sfx, &stub_bin(), &archive, SfxPayload::SevenZ).unwrap();
+    build(
+        &sfx,
+        &stub_bin(),
+        &archive,
+        SfxPayload::SevenZ,
+        &NopProgress,
+    )
+    .unwrap();
     let dest = tmp.path().join("out");
     fs::create_dir(&dest).unwrap();
     let output = run_stub(

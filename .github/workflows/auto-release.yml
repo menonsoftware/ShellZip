@@ -1,0 +1,77 @@
+name: auto-release
+
+on:
+  push:
+    branches: [master]
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore: release ') }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Bump patch version, commit, and tag
+        id: bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path("Cargo.toml").read_text(encoding="utf-8")
+          match = re.search(r'(?m)^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"', text)
+          if not match:
+              raise SystemExit("workspace.package version not found in Cargo.toml")
+          major, minor, patch = map(int, match.groups())
+          print(f"{major}.{minor}.{patch + 1}")
+          PY
+          )
+          tag="v${version}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "Tag ${tag} already exists" >&2
+            exit 1
+          fi
+          NEW_VERSION="$version" python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          version = os.environ["NEW_VERSION"]
+          path = Path("Cargo.toml")
+          text = path.read_text(encoding="utf-8")
+          updated, count = re.subn(
+              r'(?m)^(version\s*=\s*")\d+\.\d+\.\d+(")',
+              rf'\g<1>{version}\2',
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit("failed to rewrite workspace.package version")
+          path.write_text(updated, encoding="utf-8")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml
+          git commit -m "chore: release ${tag}"
+          git tag -a "${tag}" -m "ShellZip ${tag}"
+          git push origin HEAD:master
+          git push origin "${tag}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: bump
+    if: ${{ needs.bump.outputs.tag != '' }}
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.bump.outputs.tag }}
+    secrets: inherit

@@ -99,7 +99,7 @@ fn pack_sfx(
             shared.sink.as_ref(),
         );
         let result = written.and_then(|report| {
-            let packed_bytes = build(&args.archive, stub, &scratch, payload)?;
+            let packed_bytes = build(&args.archive, stub, &scratch, payload, shared.sink.as_ref())?;
             Ok(shellzip_core::AddReport {
                 path: args.archive.clone(),
                 packed_bytes,

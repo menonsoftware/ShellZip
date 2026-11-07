@@ -91,7 +91,7 @@ pub fn add_sfx(
     }
     let result = (|| {
         let report = add_inner(&scratch, Some(dest), inputs, &opts, progress, None)?;
-        let packed_bytes = crate::sfx::build(dest, stub, &scratch, payload)?;
+        let packed_bytes = crate::sfx::build(dest, stub, &scratch, payload, progress)?;
         Ok(AddReport {
             path: dest.to_path_buf(),
             entries: report.entries,

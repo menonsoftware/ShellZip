@@ -8,6 +8,7 @@ use std::time::Duration;
 use crate::chrome;
 use crate::explorer::format_size;
 use crate::icons::Icon;
+use crate::progress_bar;
 use crate::theme;
 use crate::worker::ProgressSnapshot;
 
@@ -88,15 +89,9 @@ pub fn show(
     command
 }
 
-/// Current or total progress. A zero total animates.
+/// Current or total progress. A zero total marquee-animates.
 pub(crate) fn bar(ui: &mut egui::Ui, done: u64, total: u64) {
-    let (fraction, unknown) = fraction(done, total);
-    ui.add(
-        egui::ProgressBar::new(fraction)
-            .fill(theme::RUST)
-            .animate(unknown)
-            .desired_width(ui.available_width()),
-    );
+    progress_bar::bytes(ui, done, total);
 }
 
 fn fraction(done: u64, total: u64) -> (f32, bool) {

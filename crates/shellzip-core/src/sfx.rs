@@ -11,12 +11,19 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::error::Error;
+use crate::progress::{ProgressReader, ProgressSink, ensure_running};
 
 /// Trailer magic. The digits are the layout version.
 pub const MAGIC: &[u8; 7] = b"SZSFX01";
 
 /// On-disk trailer size, in bytes.
 pub const TRAILER_LEN: usize = 24;
+
+/// Exclusive upper bound on a finished SFX package.
+///
+/// Windows maps the file as a PE image; packages of 4 GiB or more fail to
+/// start with "This app can't run on your PC".
+pub const MAX_PACKAGE_LEN: u64 = 4 * 1024 * 1024 * 1024;
 
 /// Which archive is appended to a stub. Stored in bit 0 of [`SfxTrailer::flags`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,9 +174,16 @@ pub fn locate(path: &Path) -> Result<Option<SfxTrailer>, Error> {
 ///
 /// # Errors
 ///
-/// Returns [`Error::Usage`] when `stub` or `archive` is empty, and
+/// Returns [`Error::Usage`] when `stub` or `archive` is empty, when the
+/// finished package would be [`MAX_PACKAGE_LEN`] bytes or larger, and
 /// [`Error::Io`] when a copy or rename fails.
-pub fn build(dest: &Path, stub: &Path, archive: &Path, payload: SfxPayload) -> Result<u64, Error> {
+pub fn build(
+    dest: &Path,
+    stub: &Path,
+    archive: &Path,
+    payload: SfxPayload,
+    progress: &dyn ProgressSink,
+) -> Result<u64, Error> {
     let stub_len = file_len(stub)?;
     let archive_len = file_len(archive)?;
     if stub_len == 0 || archive_len == 0 {
@@ -182,13 +196,26 @@ pub fn build(dest: &Path, stub: &Path, archive: &Path, payload: SfxPayload) -> R
         archive_len,
         flags: payload.flags(),
     };
+    let total = stub_len
+        .checked_add(archive_len)
+        .and_then(|n| n.checked_add(TRAILER_LEN as u64))
+        .ok_or_else(|| Error::Archive("SFX package size overflow".to_string()))?;
+    ensure_package_fits(total)?;
+    progress.begin("SFX", total);
     let (tmp, mut writer) = crate::archiver::prepare_temp(dest)?;
     let result = (|| -> Result<(), Error> {
-        copy_exact(stub, &mut writer, stub_len)?;
-        copy_exact(archive, &mut writer, archive_len)?;
+        progress.begin_entry(&path_label(stub), stub_len);
+        copy_exact(stub, &mut writer, stub_len, progress)?;
+        progress.end_entry();
+        progress.begin_entry(&path_label(archive), archive_len);
+        copy_exact(archive, &mut writer, archive_len, progress)?;
+        progress.end_entry();
+        ensure_running(progress)?;
+        let encoded = trailer.encode();
         writer
-            .write_all(&trailer.encode())
+            .write_all(&encoded)
             .map_err(|err| Error::io(format!("write {}", tmp.display()), err))?;
+        progress.advance(encoded.len() as u64);
         writer
             .flush()
             .map_err(|err| Error::io(format!("flush {}", tmp.display()), err))?;
@@ -231,23 +258,31 @@ fn copy_stub_permissions(stub: &Path, dest: &Path) -> Result<(), Error> {
 /// # Errors
 ///
 /// Returns [`Error::Usage`] when `sfx` has no trailer.
-pub fn strip(sfx: &Path, dest: &Path) -> Result<u64, Error> {
+pub fn strip(sfx: &Path, dest: &Path, progress: &dyn ProgressSink) -> Result<u64, Error> {
     let trailer = locate(sfx)?.ok_or_else(|| {
         Error::Usage(format!(
             "`{}` is not a ShellZip self-extracting archive",
             sfx.display()
         ))
     })?;
+    progress.begin("SFX", trailer.archive_len);
     let (tmp, mut writer) = crate::archiver::prepare_temp(dest)?;
+    progress.begin_entry(&path_label(sfx), trailer.archive_len);
     let result = (|| -> Result<(), Error> {
         let mut file =
             File::open(sfx).map_err(|err| Error::io(format!("open {}", sfx.display()), err))?;
         file.seek(SeekFrom::Start(trailer.archive_offset))
             .map_err(|err| Error::io(format!("seek {}", sfx.display()), err))?;
-        let mut limited = file.take(trailer.archive_len);
+        let mut limited = ProgressReader::new(file.take(trailer.archive_len), progress);
         let mut buf = Vec::new();
-        let copied = crate::fs::copy_chunked(&mut limited, &mut writer, &mut buf)
-            .map_err(|err| Error::io(format!("write {}", tmp.display()), err))?;
+        let copied =
+            crate::fs::copy_chunked(&mut limited, &mut writer, &mut buf).map_err(|err| {
+                if err.kind() == std::io::ErrorKind::Interrupted {
+                    Error::Interrupted
+                } else {
+                    Error::io(format!("write {}", tmp.display()), err)
+                }
+            })?;
         if copied != trailer.archive_len {
             return Err(Error::Archive(format!(
                 "SFX payload in `{}` ended early",
@@ -259,6 +294,8 @@ pub fn strip(sfx: &Path, dest: &Path) -> Result<u64, Error> {
             .map_err(|err| Error::io(format!("flush {}", tmp.display()), err))?;
         Ok(())
     })();
+    // Always close the entry so CLI bars (and similar sinks) finish the current file.
+    progress.end_entry();
     drop(writer);
     if let Err(err) = result {
         let _ = std::fs::remove_file(&tmp);
@@ -282,14 +319,19 @@ pub enum SfxDirection {
 ///
 /// Returns [`Error::Usage`] when wrapping without a stub, when `source` is not
 /// a ZIP, or when `source` and `dest` are the same path.
-pub fn convert(source: &Path, dest: &Path, stub: Option<&Path>) -> Result<SfxDirection, Error> {
+pub fn convert(
+    source: &Path,
+    dest: &Path,
+    stub: Option<&Path>,
+    progress: &dyn ProgressSink,
+) -> Result<SfxDirection, Error> {
     if same_path(source, dest) {
         return Err(Error::Usage(
             "SFX conversion needs a different output path".to_string(),
         ));
     }
     if locate(source)?.is_some() {
-        strip(source, dest)?;
+        strip(source, dest, progress)?;
         return Ok(SfxDirection::Stripped);
     }
     let stub = stub.ok_or_else(|| {
@@ -298,11 +340,11 @@ pub fn convert(source: &Path, dest: &Path, stub: Option<&Path>) -> Result<SfxDir
     let format = crate::detect::detect_file(source)?;
     match format {
         crate::detect::Format::Zip => {
-            build(dest, stub, source, SfxPayload::Zip)?;
+            build(dest, stub, source, SfxPayload::Zip, progress)?;
         }
         crate::detect::Format::SevenZ => {
             ensure_stub_can_extract(source)?;
-            build(dest, stub, source, SfxPayload::SevenZ)?;
+            build(dest, stub, source, SfxPayload::SevenZ, progress)?;
         }
         _ => {
             return Err(Error::Usage(
@@ -489,12 +531,34 @@ fn file_len(path: &Path) -> Result<u64, Error> {
     Ok(meta.len())
 }
 
-fn copy_exact(path: &Path, writer: &mut dyn Write, expected: u64) -> Result<(), Error> {
-    let mut file =
+fn ensure_package_fits(total: u64) -> Result<(), Error> {
+    if total >= MAX_PACKAGE_LEN {
+        Err(Error::Usage(format!(
+            "self-extractor would be {total} bytes; Windows cannot run executables of 4 GiB or larger — keep the archive as a ZIP or 7z"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+fn copy_exact(
+    path: &Path,
+    writer: &mut dyn Write,
+    expected: u64,
+    progress: &dyn ProgressSink,
+) -> Result<(), Error> {
+    ensure_running(progress)?;
+    let file =
         File::open(path).map_err(|err| Error::io(format!("open {}", path.display()), err))?;
+    let mut reader = ProgressReader::new(file, progress);
     let mut buf = Vec::new();
-    let copied = crate::fs::copy_chunked(&mut file, writer, &mut buf)
-        .map_err(|err| Error::io(format!("copy {}", path.display()), err))?;
+    let copied = crate::fs::copy_chunked(&mut reader, writer, &mut buf).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::Interrupted {
+            Error::Interrupted
+        } else {
+            Error::io(format!("copy {}", path.display()), err)
+        }
+    })?;
     if copied != expected {
         return Err(Error::Archive(format!(
             "`{}` changed length while it was copied",
@@ -502,6 +566,13 @@ fn copy_exact(path: &Path, writer: &mut dyn Write, expected: u64) -> Result<(), 
         )));
     }
     Ok(())
+}
+
+fn path_label(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 fn same_path(left: &Path, right: &Path) -> bool {
@@ -551,6 +622,16 @@ mod tests {
     }
 
     #[test]
+    fn refuses_a_package_of_4_gib_or_more() {
+        assert!(ensure_package_fits(MAX_PACKAGE_LEN - 1).is_ok());
+        let err = ensure_package_fits(MAX_PACKAGE_LEN).unwrap_err();
+        assert!(err.to_string().contains("4 GiB"), "{err}");
+        assert_eq!(err.exit_code(), 7);
+        let err = ensure_package_fits(MAX_PACKAGE_LEN + 1).unwrap_err();
+        assert!(err.to_string().contains("4 GiB"), "{err}");
+    }
+
+    #[test]
     fn trailer_round_trip() {
         let trailer = SfxTrailer {
             archive_offset: 128,
@@ -576,7 +657,14 @@ mod tests {
         std::fs::write(&stub_path, b"MZ-stub-bytes").unwrap();
         std::fs::write(&zip_path, &zip).unwrap();
 
-        build(&sfx_path, &stub_path, &zip_path, SfxPayload::Zip).unwrap();
+        build(
+            &sfx_path,
+            &stub_path,
+            &zip_path,
+            SfxPayload::Zip,
+            &crate::NopProgress,
+        )
+        .unwrap();
         let trailer = locate(&sfx_path).unwrap().expect("trailer");
         assert_eq!(trailer.archive_offset, b"MZ-stub-bytes".len() as u64);
         assert_eq!(trailer.archive_len, zip.len() as u64);
@@ -588,19 +676,25 @@ mod tests {
         hello.read_to_string(&mut text).unwrap();
         assert_eq!(text, "hello");
 
-        strip(&sfx_path, &back).unwrap();
+        strip(&sfx_path, &back, &crate::NopProgress).unwrap();
         assert_eq!(std::fs::read(&back).unwrap(), zip);
 
         let wrapped = tmp.path().join("again.exe");
         assert_eq!(
-            convert(&back, &wrapped, Some(&stub_path)).unwrap(),
+            convert(&back, &wrapped, Some(&stub_path), &crate::NopProgress).unwrap(),
             SfxDirection::Wrapped
         );
         assert_eq!(
-            convert(&wrapped, &tmp.path().join("plain.zip"), None).unwrap(),
+            convert(
+                &wrapped,
+                &tmp.path().join("plain.zip"),
+                None,
+                &crate::NopProgress
+            )
+            .unwrap(),
             SfxDirection::Stripped
         );
-        assert!(convert(&back, &back, Some(&stub_path)).is_err());
+        assert!(convert(&back, &back, Some(&stub_path), &crate::NopProgress).is_err());
     }
 
     #[cfg(unix)]
@@ -616,7 +710,14 @@ mod tests {
         std::fs::set_permissions(&stub_path, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::write(&zip_path, tiny_zip()).unwrap();
 
-        build(&sfx_path, &stub_path, &zip_path, SfxPayload::Zip).unwrap();
+        build(
+            &sfx_path,
+            &stub_path,
+            &zip_path,
+            SfxPayload::Zip,
+            &crate::NopProgress,
+        )
+        .unwrap();
         let mode = std::fs::metadata(&sfx_path).unwrap().permissions().mode();
         assert_ne!(mode & 0o111, 0, "sfx mode {mode:#o}");
     }
@@ -642,7 +743,14 @@ mod tests {
         let stub = tmp.path().join("stub.bin");
         std::fs::write(&stub, b"MZ-stub").unwrap();
         let sfx = tmp.path().join("out.exe");
-        build(&sfx, &stub, &archive, SfxPayload::SevenZ).unwrap();
+        build(
+            &sfx,
+            &stub,
+            &archive,
+            SfxPayload::SevenZ,
+            &crate::NopProgress,
+        )
+        .unwrap();
         let trailer = locate(&sfx).unwrap().expect("trailer");
         assert_eq!(trailer.payload(), SfxPayload::SevenZ);
         match crate::detect_file(&sfx).unwrap() {
@@ -652,7 +760,10 @@ mod tests {
             other => panic!("expected 7z sfx, got {other:?}"),
         }
         let back = tmp.path().join("back.7z");
-        assert_eq!(convert(&sfx, &back, None).unwrap(), SfxDirection::Stripped);
+        assert_eq!(
+            convert(&sfx, &back, None, &crate::NopProgress).unwrap(),
+            SfxDirection::Stripped
+        );
         assert!(locate(&back).unwrap().is_none());
     }
 
@@ -673,7 +784,13 @@ mod tests {
         let _ = writer.finish().unwrap();
         let stub = tmp.path().join("stub.bin");
         std::fs::write(&stub, b"MZ-stub").unwrap();
-        let err = convert(&archive, &tmp.path().join("out.exe"), Some(&stub)).unwrap_err();
+        let err = convert(
+            &archive,
+            &tmp.path().join("out.exe"),
+            Some(&stub),
+            &crate::NopProgress,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("LZMA2"), "{err}");
         assert_eq!(err.exit_code(), 7);
     }

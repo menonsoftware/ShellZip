@@ -12,7 +12,8 @@ use shellzip_core::{
 use crate::about;
 use crate::add_dialog::{self, AddAction, AddRequest, AskPrompt, AskReply};
 use crate::chrome::{
-    self, AddressEvent, DeleteChoice, MenuCommand, PackSettings, ToolCommand, ToolbarState,
+    self, AddressEvent, DeleteChoice, MenuCommand, PackSettings, ShellIntegrateChoice,
+    ShellIntegrateKind, ToolCommand, ToolbarState,
 };
 use crate::explorer::{
     ArchiveIndex, Explorer, FolderTree, JumpTarget, Row, RowKind, Target, TreeFocus,
@@ -26,7 +27,10 @@ use crate::launch::{self, LaunchAction};
 use crate::progress_dialog::{self, ProgressCommand};
 use crate::rename_dialog::{self, RenameAction, RenameTarget};
 use crate::report_dialog::{self, ReportAction, ReportArchive, ReportRow};
-use crate::settings::{self, DeleteArchive, ExtractSettings, ReportSettings, ToolbarSize};
+use crate::settings::{
+    self, DeleteArchive, ExtractSettings, ReportSettings, SfxSettings, ToolbarSize,
+};
+use crate::sfx_dialog::{self, SfxAction, SfxRequest};
 use crate::shell_icons::IconCache;
 use crate::test_dialog::{self, TestCommand};
 use crate::theme::{self, Preference};
@@ -114,8 +118,10 @@ pub struct ShellZipApp {
     report_dialog: Option<report_dialog::ReportDialog>,
     report_job: Option<u64>,
     pending_delete: Option<Vec<String>>,
+    pending_shell: Option<ShellIntegrateKind>,
     add_dialog: Option<add_dialog::AddDialog>,
     extract_dialog: Option<extract_dialog::ExtractDialog>,
+    sfx_dialog: Option<sfx_dialog::SfxDialog>,
     pending_archive_delete: Option<PendingArchiveDelete>,
     ask: Option<AskPrompt>,
     password_ask: Option<PasswordAsk>,
@@ -124,6 +130,7 @@ pub struct ShellZipApp {
     options: PackSettings,
     saved: PackSettings,
     extract: ExtractSettings,
+    sfx: SfxSettings,
     recent: Vec<String>,
     /// Recently opened archives, newest first.
     opened: Vec<String>,
@@ -203,8 +210,10 @@ impl ShellZipApp {
             report_dialog: None,
             report_job: None,
             pending_delete: None,
+            pending_shell: None,
             add_dialog: None,
             extract_dialog: None,
+            sfx_dialog: None,
             pending_archive_delete: None,
             ask: None,
             password_ask: None,
@@ -212,6 +221,7 @@ impl ShellZipApp {
             options,
             saved: options,
             extract: stored.extract,
+            sfx: stored.sfx,
             recent: stored.recent,
             opened: stored.opened,
             theme: stored.theme,
@@ -599,41 +609,76 @@ impl ShellZipApp {
     }
 
     fn create_sfx(&mut self) {
-        if self.refuse_operation() {
+        if self.refuse_operation() || self.sfx_dialog.is_some() {
             return;
         }
-        let Some(source) = self.updatable_archive() else {
-            self.error = Some("Open a ZIP or 7z archive to create a self-extractor.".to_string());
+        let Some(source) = self.sfx_source() else {
+            self.error = Some(
+                "Open a ZIP, 7z, or ShellZip self-extractor to create or unwrap one.".to_string(),
+            );
             return;
         };
-        let stub = match find_stub() {
-            Ok(path) => path,
-            Err(message) => {
-                self.error = Some(message);
-                return;
+        let stripping = shellzip_core::locate(&source).ok().flatten().is_some();
+        if !stripping && let Err(message) = find_stub() {
+            self.error = Some(message);
+            return;
+        }
+        let suggested = suggested_sfx_path(&source);
+        self.sfx_dialog = Some(sfx_dialog::SfxDialog::prepare(
+            &source, &suggested, self.sfx, stripping,
+        ));
+    }
+
+    fn start_sfx(&mut self, request: SfxRequest) {
+        // Wrapping builds a new package beside the open archive — keep the
+        // progress window like other archive-mutating jobs. Stripping may run
+        // in the background when the dialog asks for it.
+        let stripping = shellzip_core::locate(&request.source)
+            .ok()
+            .flatten()
+            .is_some();
+        let stub = if stripping {
+            None
+        } else {
+            match find_stub() {
+                Ok(path) => Some(path),
+                Err(message) => {
+                    self.error = Some(message);
+                    return;
+                }
             }
         };
-        let suggested = suggested_sfx_path(&source);
-        let mut picker = rfd::FileDialog::new().set_title("Save self-extractor");
-        if let Some(parent) = suggested.parent().filter(|parent| parent.is_dir()) {
-            picker = picker.set_directory(parent);
+        let background = stripping && request.background;
+        if stripping && self.sfx.background != request.background {
+            self.sfx.background = request.background;
+            self.persist_settings();
         }
-        if let Some(name) = suggested.file_name().and_then(|name| name.to_str()) {
-            picker = picker.set_file_name(name);
-        }
-        let Some(dest) = picker.save_file() else {
-            return;
-        };
-        let token = self.begin_operation(OpKind::Sfx, dest.clone(), true);
+        let source = request.source;
+        let dest = request.dest;
+        let foreground = !background;
+        let token = self.begin_operation(OpKind::Sfx, dest.clone(), foreground);
+        let progress = Arc::clone(&self.progress);
         let tx = self.tx.clone();
         worker::spawn(tx, token, move || {
-            let direction = convert(&source, &dest, Some(&stub))?;
+            let direction = convert(&source, &dest, stub.as_deref(), progress.as_ref())?;
             let summary = match direction {
                 SfxDirection::Wrapped => format!("created {}", dest.display()),
                 SfxDirection::Stripped => format!("wrote {}", dest.display()),
             };
             Ok(Outcome::Finished { token, summary })
         });
+    }
+
+    /// ZIP / 7z to wrap, or an open ShellZip SFX to unwrap.
+    fn sfx_source(&self) -> Option<PathBuf> {
+        match &self.place {
+            Place::Archive { format, path, .. }
+                if format == "ZIP" || format == "7Z" || format.starts_with("SFX") =>
+            {
+                Some(path.clone())
+            }
+            _ => None,
+        }
     }
 
     /// Open ZIP or 7z the file pane is inside. Other formats stay create-new.
@@ -1192,8 +1237,8 @@ impl ShellZipApp {
 
     fn begin_operation(&mut self, kind: OpKind, path: PathBuf, foreground: bool) -> JobToken {
         let foreground = match kind {
-            OpKind::Test | OpKind::Delete | OpKind::Rename | OpKind::Sfx => true,
-            OpKind::Extract | OpKind::Add => foreground,
+            OpKind::Test | OpKind::Delete | OpKind::Rename => true,
+            OpKind::Extract | OpKind::Add | OpKind::Sfx => foreground,
         };
         let id = self.alloc_id();
         let generation = self.generation;
@@ -1242,12 +1287,15 @@ impl ShellZipApp {
         self.about
             || self.add_dialog.is_some()
             || self.extract_dialog.is_some()
+            || self.sfx_dialog.is_some()
             || self.info_dialog.is_some()
             || self.view_dialog.is_some()
             || self.rename_dialog.is_some()
             || self.test_dialog.is_some()
             || self.report_dialog.is_some()
             || self.pending_delete.is_some()
+            || self.pending_shell.is_some()
+            || self.pending_archive_delete.is_some()
             || self.password_ask.is_some()
             || self.ask.as_ref().is_some_and(|ask| ask.pending.is_some())
             || self.operation.as_ref().is_some_and(|op| op.foreground)
@@ -1258,7 +1306,7 @@ impl ShellZipApp {
             let snapshot = self.progress.snapshot();
             let (fraction, indeterminate) =
                 crate::progress_dialog::job_fraction(snapshot.done, snapshot.total);
-            let interactive = matches!(op.kind, OpKind::Extract | OpKind::Add);
+            let interactive = matches!(op.kind, OpKind::Extract | OpKind::Add | OpKind::Sfx);
             let background = interactive && !op.foreground;
             return Some(chrome::RunningStatus {
                 text: crate::progress_dialog::status_text(&snapshot),
@@ -1297,7 +1345,8 @@ impl ShellZipApp {
         let title = match op.kind {
             OpKind::Extract => "Extracting",
             OpKind::Add => "Adding",
-            OpKind::Test | OpKind::Delete | OpKind::Rename | OpKind::Sfx => return,
+            OpKind::Sfx => "Creating self-extractor",
+            OpKind::Test | OpKind::Delete | OpKind::Rename => return,
         };
         let path = op.path.display().to_string();
         let snapshot = self.progress.snapshot();
@@ -2135,11 +2184,26 @@ impl ShellZipApp {
                 self.toolbar = size;
                 self.persist_settings();
             }
-            MenuCommand::Integrate => match launch::run_integrate() {
+            MenuCommand::Integrate => {
+                if !self.dialog_blocks_shell() {
+                    self.pending_shell = Some(ShellIntegrateKind::Install);
+                }
+            }
+            MenuCommand::Unintegrate => {
+                if !self.dialog_blocks_shell() {
+                    self.pending_shell = Some(ShellIntegrateKind::Remove);
+                }
+            }
+        }
+    }
+
+    fn finish_shell_integrate(&mut self, kind: ShellIntegrateKind) {
+        match kind {
+            ShellIntegrateKind::Install => match launch::run_integrate() {
                 Ok(()) => self.status = "File manager integration installed.".to_string(),
                 Err(err) => self.error = Some(err),
             },
-            MenuCommand::Unintegrate => match launch::run_unintegrate() {
+            ShellIntegrateKind::Remove => match launch::run_unintegrate() {
                 Ok(()) => self.status = "File manager integration removed.".to_string(),
                 Err(err) => self.error = Some(err),
             },
@@ -2268,15 +2332,18 @@ impl ShellZipApp {
     }
 
     fn persist_settings(&mut self) {
-        if let Err(err) = settings::save(
-            &self.options,
-            &self.extract,
-            &self.recent,
-            &self.opened,
-            self.theme,
-            self.toolbar,
-            &self.report,
-        ) && self.error.is_none()
+        let stored = settings::StoredSettings {
+            pack: self.options,
+            extract: self.extract,
+            sfx: self.sfx,
+            recent: self.recent.clone(),
+            opened: self.opened.clone(),
+            theme: self.theme,
+            toolbar: self.toolbar,
+            report: self.report,
+        };
+        if let Err(err) = settings::save(&stored)
+            && self.error.is_none()
         {
             self.error = Some(err);
         }
@@ -2646,6 +2713,22 @@ impl eframe::App for ShellZipApp {
             }
             None => {}
         }
+        let sfx_action = self
+            .sfx_dialog
+            .as_mut()
+            .and_then(|dialog| sfx_dialog::show(ctx, dialog));
+        match sfx_action {
+            Some(SfxAction::Submit(request)) => {
+                self.sfx_dialog = None;
+                self.start_sfx(request);
+            }
+            Some(SfxAction::Save(settings)) => {
+                self.sfx = settings;
+                self.persist_settings();
+            }
+            Some(SfxAction::Close) => self.sfx_dialog = None,
+            None => {}
+        }
         self.pump_shell_queue();
         let delete_choice = self.pending_archive_delete.as_mut().map(|pending| {
             let path = pending.path.clone();
@@ -2690,6 +2773,19 @@ impl eframe::App for ShellZipApp {
             Some(DeleteChoice::Delete) => self.run_delete(),
             Some(DeleteChoice::Cancel) => self.pending_delete = None,
             Some(DeleteChoice::Wait) | None => {}
+        }
+        let shell_choice = self
+            .pending_shell
+            .map(|kind| (kind, chrome::confirm_shell_integrate(ctx, kind)));
+        if let Some((kind, choice)) = shell_choice {
+            match choice {
+                ShellIntegrateChoice::Confirm => {
+                    self.pending_shell = None;
+                    self.finish_shell_integrate(kind);
+                }
+                ShellIntegrateChoice::Cancel => self.pending_shell = None,
+                ShellIntegrateChoice::Wait => {}
+            }
         }
         if self.options != self.saved {
             self.persist_settings();

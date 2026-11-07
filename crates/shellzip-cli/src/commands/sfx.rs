@@ -18,7 +18,7 @@ pub fn sfx(args: &SfxArgs, shared: &Shared) -> Result<i32, Error> {
     } else {
         None
     };
-    let direction = convert(&args.archive, &dest, stub.as_deref())?;
+    let direction = convert(&args.archive, &dest, stub.as_deref(), shared.sink.as_ref())?;
     if shared.quiet < 2 {
         match direction {
             SfxDirection::Wrapped => println!("created {}", dest.display()),

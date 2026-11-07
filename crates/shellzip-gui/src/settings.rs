@@ -170,6 +170,13 @@ pub enum DeleteArchive {
     Always,
 }
 
+/// Self-extractor dialog choices, except the output path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SfxSettings {
+    /// Start with the progress window hidden so the file list stays usable.
+    pub background: bool,
+}
+
 /// Extract dialog choices, except the destination path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExtractSettings {
@@ -221,6 +228,8 @@ pub struct StoredSettings {
     pub pack: PackSettings,
     /// Extract dialog choices.
     pub extract: ExtractSettings,
+    /// Self-extractor dialog choices.
+    pub sfx: SfxSettings,
     /// Recent destination paths, newest first.
     pub recent: Vec<String>,
     /// Recently opened archives, newest first.
@@ -245,15 +254,7 @@ pub fn load() -> StoredSettings {
 }
 
 /// Write pack options, extract options, report options, the theme, and recent paths.
-pub fn save(
-    pack: &PackSettings,
-    extract: &ExtractSettings,
-    recent: &[String],
-    opened: &[String],
-    theme: Preference,
-    toolbar: ToolbarSize,
-    report: &ReportSettings,
-) -> Result<(), String> {
+pub fn save(settings: &StoredSettings) -> Result<(), String> {
     let Some(path) = settings_path() else {
         return Ok(());
     };
@@ -261,7 +262,7 @@ pub fn save(
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("create {}: {err}", parent.display()))?;
     }
-    let body = serialize(pack, extract, recent, opened, theme, toolbar, report)?;
+    let body = serialize(settings)?;
     let tmp = path.with_extension("toml.tmp");
     std::fs::write(&tmp, body).map_err(|err| format!("write {}: {err}", tmp.display()))?;
     std::fs::rename(&tmp, &path).map_err(|err| format!("rename {}: {err}", path.display()))?;
@@ -278,6 +279,7 @@ fn defaults() -> StoredSettings {
             background: false,
         },
         extract: ExtractSettings::default(),
+        sfx: SfxSettings::default(),
         recent: Vec::new(),
         opened: Vec::new(),
         theme: Preference::System,
@@ -291,15 +293,11 @@ fn settings_path() -> Option<std::path::PathBuf> {
         .map(|dirs| dirs.config_dir().join("settings.toml"))
 }
 
-fn serialize(
-    pack: &PackSettings,
-    extract: &ExtractSettings,
-    recent: &[String],
-    opened: &[String],
-    theme: Preference,
-    toolbar: ToolbarSize,
-    report: &ReportSettings,
-) -> Result<String, String> {
+fn serialize(settings: &StoredSettings) -> Result<String, String> {
+    let pack = &settings.pack;
+    let extract = &settings.extract;
+    let sfx = &settings.sfx;
+    let report = &settings.report;
     let mut table = toml::Table::new();
     table.insert(
         "level".to_string(),
@@ -364,20 +362,38 @@ fn serialize(
         toml::Value::Boolean(extract.background),
     );
     table.insert(
+        "sfx_background".to_string(),
+        toml::Value::Boolean(sfx.background),
+    );
+    table.insert(
         "recent".to_string(),
-        toml::Value::Array(recent.iter().cloned().map(toml::Value::String).collect()),
+        toml::Value::Array(
+            settings
+                .recent
+                .iter()
+                .cloned()
+                .map(toml::Value::String)
+                .collect(),
+        ),
     );
     table.insert(
         "opened".to_string(),
-        toml::Value::Array(opened.iter().cloned().map(toml::Value::String).collect()),
+        toml::Value::Array(
+            settings
+                .opened
+                .iter()
+                .cloned()
+                .map(toml::Value::String)
+                .collect(),
+        ),
     );
     table.insert(
         "theme".to_string(),
-        toml::Value::String(theme.as_str().to_string()),
+        toml::Value::String(settings.theme.as_str().to_string()),
     );
     table.insert(
         "toolbar".to_string(),
-        toml::Value::String(toolbar.as_str().to_string()),
+        toml::Value::String(settings.toolbar.as_str().to_string()),
     );
     table.insert(
         "report_format".to_string(),
@@ -550,6 +566,9 @@ fn parse(text: &str) -> Option<StoredSettings> {
             recycle: bool_or("recycle", false),
             background: bool_or("extract_background", false),
         },
+        sfx: SfxSettings {
+            background: bool_or("sfx_background", false),
+        },
         recent,
         opened,
         theme: table
@@ -662,6 +681,7 @@ mod tests {
             recycle: true,
             background: true,
         };
+        let sfx = SfxSettings { background: true };
         let recent = vec![r"C:\work\out".to_string()];
         let opened = vec![r"C:\work\docs.zip".to_string()];
         let report = ReportSettings {
@@ -678,26 +698,25 @@ mod tests {
             file_date: false,
             file_checksum: true,
         };
-        let parsed = parse(
-            &serialize(
-                &pack,
-                &extract,
-                &recent,
-                &opened,
-                Preference::Dark,
-                ToolbarSize::ExtraLarge,
-                &report,
-            )
-            .expect("toml"),
-        )
-        .expect("settings");
-        assert_eq!(parsed.pack, pack);
-        assert_eq!(parsed.extract, extract);
+        let stored = StoredSettings {
+            pack,
+            extract,
+            sfx,
+            recent: recent.clone(),
+            opened: opened.clone(),
+            theme: Preference::Dark,
+            toolbar: ToolbarSize::ExtraLarge,
+            report,
+        };
+        let parsed = parse(&serialize(&stored).expect("toml")).expect("settings");
+        assert_eq!(parsed.pack, stored.pack);
+        assert_eq!(parsed.extract, stored.extract);
+        assert_eq!(parsed.sfx, stored.sfx);
         assert_eq!(parsed.recent, recent);
         assert_eq!(parsed.opened, opened);
         assert_eq!(parsed.theme, Preference::Dark);
         assert_eq!(parsed.toolbar, ToolbarSize::ExtraLarge);
-        assert_eq!(parsed.report, report);
+        assert_eq!(parsed.report, stored.report);
     }
 
     #[test]
@@ -747,6 +766,7 @@ flat = true
         assert_eq!(parsed.pack.level, 3);
         assert!(!parsed.pack.background);
         assert!(!parsed.extract.background);
+        assert!(!parsed.sfx.background);
         assert_eq!(parsed.theme, Preference::System);
         assert_eq!(parsed.report, ReportSettings::default());
     }

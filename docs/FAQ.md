@@ -44,6 +44,8 @@ szip s archive.zip -o payload.exe             # wrap an existing ZIP
 
 The stub is `shellzip-sfx` next to `szip`, or the path in `SZIP_SFX_STUB` / `--sfx-stub`. On Windows, opening the result shows a folder picker. `-s` is silent, `-y` replaces existing files, `-d DIR` sets the destination.
 
+The finished `.exe` must be **smaller than 4 GiB**. Windows cannot start a PE image that large (it shows “This app can't run on your PC”). ShellZip refuses to wrap archives that would exceed the limit; ship those as ZIP or 7z instead.
+
 `make release` copies the size-optimized stub into `target/release`.
 
 ## Can I update or delete files inside an existing archive?

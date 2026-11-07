@@ -150,25 +150,11 @@ fn info_rows(summary: &ArchiveSummary) -> [(&'static str, String); 10] {
 
 fn ratio_column(ui: &mut egui::Ui, percent: u64) {
     ui.vertical(|ui| {
-        let colors = theme::palette(ui.ctx());
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(32.0, 200.0), egui::Sense::hover());
-        let painter = ui.painter();
-        painter.rect_filled(rect, 2.0, colors.field);
-        painter.rect_stroke(
-            rect,
-            2.0,
-            egui::Stroke::new(1.0_f32, colors.line),
-            egui::StrokeKind::Inside,
+        crate::progress_bar::vertical(
+            ui,
+            (percent as f32 / 100.0).clamp(0.0, 1.0),
+            egui::vec2(32.0, 200.0),
         );
-        let fraction = (percent as f32 / 100.0).clamp(0.0, 1.0);
-        let fill_height = rect.height() * fraction;
-        if fill_height > 0.0 {
-            let fill = egui::Rect::from_min_max(
-                egui::pos2(rect.left(), rect.bottom() - fill_height),
-                rect.right_bottom(),
-            );
-            painter.rect_filled(fill, 2.0, colors.rust);
-        }
         ui.add_space(4.0);
         ui.label(format!("{percent}%"));
     });
