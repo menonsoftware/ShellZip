@@ -60,8 +60,16 @@ jobs:
               raise SystemExit("failed to rewrite workspace.package version")
           path.write_text(updated, encoding="utf-8")
           PY
-          # Keep Cargo.lock package versions aligned so --locked release builds work.
-          cargo generate-lockfile
+          # Refresh only workspace package versions in the lockfile (do not
+          # regenerate / mass-upgrade transitive crates).
+          cargo update \
+            -p shellzip-cli \
+            -p shellzip-core \
+            -p shellzip-gui \
+            -p shellzip-sfx \
+            -p shellzip-integrate \
+            -p shellzip-shell \
+            -p xtask
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Cargo.toml Cargo.lock
