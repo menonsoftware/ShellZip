@@ -182,19 +182,12 @@ pub fn show(
     if dialog.tree.is_loading() {
         ctx.request_repaint();
     }
-    let mut open = true;
     let mut action = None;
-    egui::Window::new("Extraction path and options")
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(DIALOG_WIDTH)
-        .min_width(DIALOG_WIDTH)
-        .max_width(DIALOG_WIDTH)
-        .min_height(480.0)
-        .default_height(480.0)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
+    let result = chrome::modal(
+        ctx,
+        "shellzip-extract",
+        "Extraction path and options",
+        |ui| {
             ui.set_width(DIALOG_WIDTH);
             ui.set_min_height(480.0);
             tabs(ui, dialog);
@@ -241,10 +234,11 @@ pub fn show(
                     }
                 });
             });
-        });
+        },
+    );
     help_window(ctx, dialog);
     new_folder_window(ctx, dialog);
-    if !open {
+    if action.is_none() && result.escape {
         return Some(ExtractAction::Close);
     }
     action
@@ -252,29 +246,26 @@ pub fn show(
 
 /// Ask before deleting an unpacked archive. `true` means delete.
 pub fn confirm_delete_archive(ctx: &egui::Context, path: &Path, open: &mut bool) -> bool {
+    if !*open {
+        return false;
+    }
     let mut confirmed = false;
     let mut dismiss = false;
-    egui::Window::new("Delete archive")
-        .open(open)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.set_min_width(420.0);
-            ui.label("The archive was extracted. Delete it?");
-            ui.label(egui::RichText::new(path.display().to_string()).strong());
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if chrome::icon_button(ui, Icon::Trash, colors(ui).danger, "Delete", true).clicked()
-                {
-                    confirmed = true;
-                }
-                if chrome::icon_button(ui, Icon::X, colors(ui).ink, "Cancel", true).clicked() {
-                    dismiss = true;
-                }
-            });
+    let result = chrome::modal(ctx, "shellzip-delete-archive", "Delete archive", |ui| {
+        ui.set_min_width(420.0);
+        ui.label("The archive was extracted. Delete it?");
+        ui.label(egui::RichText::new(path.display().to_string()).strong());
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if chrome::icon_button(ui, Icon::Trash, colors(ui).danger, "Delete", true).clicked() {
+                confirmed = true;
+            }
+            if chrome::icon_button(ui, Icon::X, colors(ui).ink, "Cancel", true).clicked() {
+                dismiss = true;
+            }
         });
-    if confirmed || dismiss {
+    });
+    if confirmed || dismiss || result.escape {
         *open = false;
     }
     confirmed
@@ -514,48 +505,42 @@ fn new_folder_window(ctx: &egui::Context, dialog: &mut ExtractDialog) {
     let Some(prompt) = dialog.new_folder.as_mut() else {
         return;
     };
-    let mut open = true;
     let mut confirmed = false;
     let mut dismiss = false;
     let parent_label = prompt.parent.display().to_string();
-    egui::Window::new("New folder")
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.set_min_width(360.0);
-            ui.label("Folder name");
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut prompt.name)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("Name"),
-            );
-            if response.changed() {
-                prompt.error = None;
-            }
-            if ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+    let result = chrome::modal(ctx, "shellzip-new-folder", "New folder", |ui| {
+        ui.set_min_width(360.0);
+        ui.label("Folder name");
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut prompt.name)
+                .desired_width(f32::INFINITY)
+                .hint_text("Name"),
+        );
+        if response.changed() {
+            prompt.error = None;
+        }
+        if ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+            confirmed = true;
+        }
+        ui.label(
+            egui::RichText::new(format!("Create in {parent_label}"))
+                .color(colors(ui).muted)
+                .small(),
+        );
+        if let Some(error) = &prompt.error {
+            ui.colored_label(colors(ui).danger, error);
+        }
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if chrome::icon_button(ui, Icon::Check, colors(ui).ok, "Create", true).clicked() {
                 confirmed = true;
             }
-            ui.label(
-                egui::RichText::new(format!("Create in {parent_label}"))
-                    .color(colors(ui).muted)
-                    .small(),
-            );
-            if let Some(error) = &prompt.error {
-                ui.colored_label(colors(ui).danger, error);
+            if chrome::icon_button(ui, Icon::X, colors(ui).ink, "Cancel", true).clicked() {
+                dismiss = true;
             }
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if chrome::icon_button(ui, Icon::Check, colors(ui).ok, "Create", true).clicked() {
-                    confirmed = true;
-                }
-                if chrome::icon_button(ui, Icon::X, colors(ui).ink, "Cancel", true).clicked() {
-                    dismiss = true;
-                }
-            });
         });
-    if dismiss || !open {
+    });
+    if dismiss || result.escape {
         dialog.new_folder = None;
         return;
     }
@@ -706,13 +691,11 @@ fn help_window(ctx: &egui::Context, dialog: &mut ExtractDialog) {
     if !dialog.help {
         return;
     }
-    let mut open = true;
-    egui::Window::new("Extraction path and options help")
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
+    let result = chrome::modal(
+        ctx,
+        "shellzip-extract-help",
+        "Extraction path and options help",
+        |ui| {
             ui.set_min_width(460.0);
             ui.label(egui::RichText::new("General").strong());
             ui.label("The destination is created if it does not exist. Display finds that folder in the tree. New folder asks for a name, creates it under the folder you selected or typed last, and switches the destination to it.");
@@ -726,8 +709,22 @@ fn help_window(ctx: &egui::Context, dialog: &mut ExtractDialog) {
             ui.label("Delete archive runs only after every member extracts with no warnings. Move to Recycle Bin sends it there instead of removing it permanently.");
             ui.label("Save settings remembers these choices, except the destination path, for the next time.");
             ui.label("Start in background leaves the file list usable and keeps progress on the status bar.");
-        });
-    dialog.help = open;
+            ui.add_space(8.0);
+            ui.separator();
+            let mut close = false;
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if chrome::labeled_button(ui, Icon::X, colors(ui).ink, "Close").clicked() {
+                        close = true;
+                    }
+                });
+            });
+            close
+        },
+    );
+    if result.inner || result.escape {
+        dialog.help = false;
+    }
 }
 
 #[cfg(test)]

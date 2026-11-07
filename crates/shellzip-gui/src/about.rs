@@ -48,16 +48,14 @@ const DIALOG_WIDTH: f32 = 520.0;
 
 /// About dialog. Modal, centered, and not resizable.
 ///
-/// `open` is cleared by Close, Escape, or a click on the backdrop.
+/// `open` is cleared by Close or Escape. A click on the backdrop is ignored.
 pub fn show(ctx: &egui::Context, open: &mut bool) {
     if !*open {
         return;
     }
-    let response = egui::Modal::new(egui::Id::new("shellzip-about")).show(ctx, |ui| {
+    let result = chrome::modal(ctx, "shellzip-about", "About ShellZip", |ui| {
         ui.set_min_width(DIALOG_WIDTH);
         ui.set_max_width(DIALOG_WIDTH);
-        ui.label(egui::RichText::new("About ShellZip").strong());
-        ui.separator();
         let max_height = (ui.ctx().screen_rect().height() - 96.0).clamp(280.0, 560.0);
         egui::ScrollArea::vertical()
             .max_height(max_height)
@@ -94,7 +92,7 @@ pub fn show(ctx: &egui::Context, open: &mut bool) {
         });
         close
     });
-    if response.inner || response.should_close() {
+    if result.inner || result.escape {
         *open = false;
     }
 }

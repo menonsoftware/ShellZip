@@ -3,3 +3,6 @@
 .DS_Store
 *.szip-tmp-*
 
+# Local graphify knowledge graph (regenerate with `graphify update .`)
+/graphify-out/
+

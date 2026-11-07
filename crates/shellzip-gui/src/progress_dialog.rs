@@ -30,70 +30,59 @@ pub fn show(
     path: &str,
     snapshot: &ProgressSnapshot,
 ) -> Option<ProgressCommand> {
-    let mut open = true;
     let mut command = None;
-    egui::Window::new(title)
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.set_min_width(440.0);
-            ui.label(path);
-            ui.add_space(8.0);
-            ui.label("Current file");
-            let entry = if snapshot.entry.is_empty() {
-                "Working..."
+    let result = chrome::modal(ctx, "shellzip-progress", title, |ui| {
+        ui.set_min_width(440.0);
+        ui.label(path);
+        ui.add_space(8.0);
+        ui.label("Current file");
+        let entry = if snapshot.entry.is_empty() {
+            "Working..."
+        } else {
+            snapshot.entry.as_str()
+        };
+        ui.label(entry);
+        bar(ui, snapshot.entry_done, snapshot.entry_total);
+        ui.add_space(8.0);
+        ui.label("Total");
+        bar(ui, snapshot.done, snapshot.total);
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            let elapsed = if snapshot.paused {
+                format!("Elapsed {} (paused)", format_clock(snapshot.elapsed))
             } else {
-                snapshot.entry.as_str()
+                format!("Elapsed {}", format_clock(snapshot.elapsed))
             };
-            ui.label(entry);
-            bar(ui, snapshot.entry_done, snapshot.entry_total);
-            ui.add_space(8.0);
-            ui.label("Total");
-            bar(ui, snapshot.done, snapshot.total);
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                let elapsed = if snapshot.paused {
-                    format!("Elapsed {} (paused)", format_clock(snapshot.elapsed))
+            ui.label(elapsed);
+            if let Some(left) = remaining(snapshot.done, snapshot.total, snapshot.elapsed) {
+                ui.label(format!("Remaining {}", format_clock(left)));
+            }
+        });
+        ui.label(bytes_line(snapshot));
+        ui.add_space(8.0);
+        ui.separator();
+        ui.horizontal(|ui| {
+            let pause = if snapshot.paused { "Continue" } else { "Pause" };
+            if ui.button(pause).clicked() {
+                command = Some(if snapshot.paused {
+                    ProgressCommand::Resume
                 } else {
-                    format!("Elapsed {}", format_clock(snapshot.elapsed))
-                };
-                ui.label(elapsed);
-                if let Some(left) = remaining(snapshot.done, snapshot.total, snapshot.elapsed) {
-                    ui.label(format!("Remaining {}", format_clock(left)));
-                }
-            });
-            ui.label(bytes_line(snapshot));
-            ui.add_space(8.0);
-            ui.separator();
-            ui.horizontal(|ui| {
-                let pause = if snapshot.paused { "Continue" } else { "Pause" };
-                if ui.button(pause).clicked() {
-                    command = Some(if snapshot.paused {
-                        ProgressCommand::Resume
-                    } else {
-                        ProgressCommand::Pause
-                    });
-                }
-                if ui.button("Background").clicked() {
-                    command = Some(ProgressCommand::Background);
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if chrome::labeled_button(
-                        ui,
-                        Icon::X,
-                        theme::palette(ui.ctx()).danger,
-                        "Cancel",
-                    )
-                    .clicked()
-                    {
-                        command = Some(ProgressCommand::Cancel);
-                    }
+                    ProgressCommand::Pause
                 });
+            }
+            if ui.button("Background").clicked() {
+                command = Some(ProgressCommand::Background);
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if chrome::labeled_button(ui, Icon::X, theme::palette(ui.ctx()).danger, "Cancel")
+                    .clicked()
+                {
+                    command = Some(ProgressCommand::Cancel);
+                }
             });
         });
-    if command.is_none() && !open {
+    });
+    if command.is_none() && result.escape {
         return Some(ProgressCommand::Background);
     }
     command

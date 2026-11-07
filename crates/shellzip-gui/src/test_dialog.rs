@@ -50,98 +50,92 @@ impl TestDialog {
         ctx: &egui::Context,
         snapshot: Option<&ProgressSnapshot>,
     ) -> Option<TestCommand> {
-        let mut open = true;
         let mut command = None;
         let finished = self.results.is_some();
         let title = if finished { "Test results" } else { "Testing" };
-        egui::Window::new(title)
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_min_width(440.0);
-                ui.label(&self.path);
-                ui.add_space(8.0);
-                if let Some(results) = &self.results {
-                    ui.label(egui::RichText::new(&results.summary).strong());
-                    if !results.bad.is_empty() {
-                        ui.add_space(6.0);
-                        egui::ScrollArea::vertical()
-                            .id_salt("shellzip-test-names")
-                            .max_height(220.0)
-                            .show(ui, |ui| {
-                                for name in &results.bad {
-                                    ui.label(name);
-                                }
-                            });
-                    }
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if chrome::labeled_button(
-                                ui,
-                                Icon::X,
-                                theme::palette(ui.ctx()).ink,
-                                "Close",
-                            )
-                            .clicked()
-                            {
-                                command = Some(TestCommand::Close);
+        let result = chrome::modal(ctx, "shellzip-test", title, |ui| {
+            ui.set_min_width(440.0);
+            ui.label(&self.path);
+            ui.add_space(8.0);
+            if let Some(results) = &self.results {
+                ui.label(egui::RichText::new(&results.summary).strong());
+                if !results.bad.is_empty() {
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("shellzip-test-names")
+                        .max_height(220.0)
+                        .show(ui, |ui| {
+                            for name in &results.bad {
+                                ui.label(name);
                             }
                         });
-                    });
-                } else {
-                    ui.label("Current file");
-                    let entry = snapshot
-                        .map(|snapshot| snapshot.entry.as_str())
-                        .filter(|entry| !entry.is_empty())
-                        .unwrap_or(if snapshot.is_some() {
-                            "Working..."
-                        } else {
-                            "Waiting for a password."
-                        });
-                    ui.label(entry);
-                    let (entry_done, entry_total, done, total, elapsed) = snapshot
-                        .map(|snapshot| {
-                            (
-                                snapshot.entry_done,
-                                snapshot.entry_total,
-                                snapshot.done,
-                                snapshot.total,
-                                snapshot.elapsed,
-                            )
-                        })
-                        .unwrap_or((0, 0, 0, 0, std::time::Duration::ZERO));
-                    progress_dialog::bar(ui, entry_done, entry_total);
-                    ui.add_space(8.0);
-                    ui.label("Total");
-                    progress_dialog::bar(ui, done, total);
-                    ui.add_space(8.0);
-                    ui.label(format!(
-                        "Elapsed {}",
-                        progress_dialog::format_clock(elapsed)
-                    ));
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if chrome::labeled_button(
-                                ui,
-                                Icon::X,
-                                theme::palette(ui.ctx()).danger,
-                                "Cancel",
-                            )
-                            .clicked()
-                            {
-                                command = Some(TestCommand::Cancel);
-                            }
-                        });
-                    });
                 }
-            });
-        if command.is_none() && !open {
+                ui.add_space(8.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if chrome::labeled_button(
+                            ui,
+                            Icon::X,
+                            theme::palette(ui.ctx()).ink,
+                            "Close",
+                        )
+                        .clicked()
+                        {
+                            command = Some(TestCommand::Close);
+                        }
+                    });
+                });
+            } else {
+                ui.label("Current file");
+                let entry = snapshot
+                    .map(|snapshot| snapshot.entry.as_str())
+                    .filter(|entry| !entry.is_empty())
+                    .unwrap_or(if snapshot.is_some() {
+                        "Working..."
+                    } else {
+                        "Waiting for a password."
+                    });
+                ui.label(entry);
+                let (entry_done, entry_total, done, total, elapsed) = snapshot
+                    .map(|snapshot| {
+                        (
+                            snapshot.entry_done,
+                            snapshot.entry_total,
+                            snapshot.done,
+                            snapshot.total,
+                            snapshot.elapsed,
+                        )
+                    })
+                    .unwrap_or((0, 0, 0, 0, std::time::Duration::ZERO));
+                progress_dialog::bar(ui, entry_done, entry_total);
+                ui.add_space(8.0);
+                ui.label("Total");
+                progress_dialog::bar(ui, done, total);
+                ui.add_space(8.0);
+                ui.label(format!(
+                    "Elapsed {}",
+                    progress_dialog::format_clock(elapsed)
+                ));
+                ui.add_space(8.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if chrome::labeled_button(
+                            ui,
+                            Icon::X,
+                            theme::palette(ui.ctx()).danger,
+                            "Cancel",
+                        )
+                        .clicked()
+                        {
+                            command = Some(TestCommand::Cancel);
+                        }
+                    });
+                });
+            }
+        });
+        if command.is_none() && result.escape {
             return Some(if finished {
                 TestCommand::Close
             } else {

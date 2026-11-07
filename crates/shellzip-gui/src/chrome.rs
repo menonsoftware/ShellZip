@@ -18,6 +18,41 @@ use shellzip_core::{SevenZMethod, ZipMethod};
 /// Height of the address field and the well buttons beside it.
 pub(crate) const WELL_SIZE: f32 = 26.0;
 
+/// Result of [`modal`]. Backdrop clicks do not close the dialog.
+pub struct ModalResult<T> {
+    /// Value returned from the content closure.
+    pub inner: T,
+    /// Escape on the topmost modal while no popup is open.
+    pub escape: bool,
+}
+
+/// Centered modal with a dimmed backdrop that blocks the shell.
+///
+/// Escape closes when this is the topmost modal and no popup is open. A click
+/// on the backdrop is ignored so the user must use a button or Escape.
+pub fn modal<R>(
+    ctx: &egui::Context,
+    id: impl Into<egui::Id>,
+    title: &str,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> ModalResult<R> {
+    let response = egui::Modal::new(id.into()).show(ctx, |ui| {
+        ui.label(egui::RichText::new(title).strong());
+        ui.separator();
+        add_contents(ui)
+    });
+    let escape = response.is_top_modal
+        && !response.any_popup_open
+        && response
+            .response
+            .ctx
+            .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    ModalResult {
+        inner: response.inner,
+        escape,
+    }
+}
+
 /// Pack choices remembered for the add dialog, and extract choices from the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PackSettings {
@@ -225,6 +260,7 @@ pub fn menu_bar(
             ui.separator();
             ui.menu_button("Toolbar icons", |ui| {
                 for (choice, label) in [
+                    (ToolbarSize::Normal, "Normal"),
                     (ToolbarSize::Large, "Large"),
                     (ToolbarSize::ExtraLarge, "Extra large"),
                 ] {
@@ -523,46 +559,38 @@ pub enum DeleteChoice {
 
 /// Confirm deletion of archive members. `names` are scrolled above the buttons.
 pub fn confirm_delete(ctx: &egui::Context, names: &[String]) -> DeleteChoice {
-    let mut open = true;
     let mut choice = DeleteChoice::Wait;
     let count = names.len();
-    egui::Window::new("Delete")
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .min_width(440.0)
-        .min_height(320.0)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.set_min_width(440.0);
-            ui.set_min_height(320.0);
-            ui.label(format!(
-                "Delete {count} selected members from this archive?"
-            ));
-            ui.add_space(6.0);
-            egui::ScrollArea::vertical()
-                .id_salt("shellzip-delete-names")
-                .max_height(180.0)
-                .show(ui, |ui| {
-                    for name in names {
-                        ui.label(name);
-                    }
-                });
-            ui.add_space(8.0);
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let colors = theme::palette(ui.ctx());
-                    if labeled_button(ui, Icon::X, colors.ink, "Cancel").clicked() {
-                        choice = DeleteChoice::Cancel;
-                    }
-                    if labeled_button(ui, Icon::Trash, colors.danger, "Delete").clicked() {
-                        choice = DeleteChoice::Delete;
-                    }
-                });
+    let result = modal(ctx, "shellzip-delete", "Delete", |ui| {
+        ui.set_min_width(440.0);
+        ui.set_min_height(320.0);
+        ui.label(format!(
+            "Delete {count} selected members from this archive?"
+        ));
+        ui.add_space(6.0);
+        egui::ScrollArea::vertical()
+            .id_salt("shellzip-delete-names")
+            .max_height(180.0)
+            .show(ui, |ui| {
+                for name in names {
+                    ui.label(name);
+                }
+            });
+        ui.add_space(8.0);
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let colors = theme::palette(ui.ctx());
+                if labeled_button(ui, Icon::X, colors.ink, "Cancel").clicked() {
+                    choice = DeleteChoice::Cancel;
+                }
+                if labeled_button(ui, Icon::Trash, colors.danger, "Delete").clicked() {
+                    choice = DeleteChoice::Delete;
+                }
             });
         });
-    if !open && matches!(choice, DeleteChoice::Wait) {
+    });
+    if result.escape && matches!(choice, DeleteChoice::Wait) {
         DeleteChoice::Cancel
     } else {
         choice
@@ -694,7 +722,7 @@ fn tool_icon_button(ui: &mut egui::Ui, icon: ToolIcon, tip: &str, enabled: bool)
     if enabled && response.hovered() {
         ui.painter().rect_filled(rect, 2.0, colors.hover);
     }
-    let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(icons::SIZE_ROW));
+    let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(icons::SIZE_TOOL_WELL));
     icons::paint_tool(ui, icon, enabled, icon_rect);
     response.on_hover_text(tip)
 }
@@ -903,7 +931,7 @@ fn well_tool_button(ui: &mut egui::Ui, icon: ToolIcon, tip: &str, enabled: bool)
         egui::Stroke::new(1.0_f32, colors.line),
         egui::StrokeKind::Inside,
     );
-    let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(14.0));
+    let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(icons::SIZE_TOOL_WELL));
     icons::paint_tool(ui, icon, enabled, icon_rect);
     response.on_hover_text(tip)
 }

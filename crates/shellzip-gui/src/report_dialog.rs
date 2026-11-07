@@ -101,150 +101,134 @@ impl ReportDialog {
 
     /// Paint the dialog. Writing the file happens here so a failure can stay open.
     pub(crate) fn show(&mut self, ctx: &egui::Context) -> Option<ReportAction> {
-        let mut open = true;
         let mut action = None;
         let previous_format = self.settings.format;
-        egui::Window::new("Generate report")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_width(DIALOG_WIDTH)
-            .min_width(DIALOG_WIDTH)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_min_width(DIALOG_WIDTH);
-                ui.label("Format");
-                ui.horizontal(|ui| {
-                    ui.radio_value(&mut self.settings.format, ReportFormat::Html, "HTML");
-                    ui.radio_value(
-                        &mut self.settings.format,
-                        ReportFormat::Markdown,
-                        "Markdown",
-                    );
-                    ui.radio_value(
-                        &mut self.settings.format,
-                        ReportFormat::Text,
-                        "Text (UTF-8)",
-                    );
-                });
-                if self.settings.format != previous_format {
-                    self.path = swap_extension(&self.path, self.settings.format);
-                }
-                ui.add_space(6.0);
-                ui.label("Report path");
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    let reserved = chrome::WELL_SIZE + ui.spacing().item_spacing.x;
-                    let width = (ui.available_width() - reserved).max(48.0);
-                    chrome::path_field(
-                        ui,
-                        &mut self.path,
-                        width,
-                        "Report file",
-                        "shellzip-report-path",
-                    );
-                    if chrome::well_button(ui, Icon::FolderSearch, "Browse", true).clicked()
-                        && let Some(path) = browse_report(&self.path, self.settings.format)
-                    {
-                        self.path = path.display().to_string();
-                    }
-                });
-                ui.checkbox(&mut self.settings.clipboard, "Copy report to clipboard");
-                ui.add_space(6.0);
-                ui.label("Sort by");
-                egui::Grid::new("shellzip-report-sort")
-                    .num_columns(3)
-                    .spacing(egui::vec2(12.0, 2.0))
-                    .show(ui, |ui| {
-                        ui.radio_value(
-                            &mut self.settings.sort,
-                            ReportSort::Original,
-                            "Original order",
-                        );
-                        ui.radio_value(&mut self.settings.sort, ReportSort::Name, "Name");
-                        ui.radio_value(&mut self.settings.sort, ReportSort::Size, "Size");
-                        ui.end_row();
-                        ui.radio_value(&mut self.settings.sort, ReportSort::Packed, "Packed size");
-                        ui.radio_value(&mut self.settings.sort, ReportSort::Modified, "Modified");
-                        ui.radio_value(&mut self.settings.sort, ReportSort::Crc, "CRC");
-                        ui.end_row();
-                    });
-                ui.checkbox(
-                    &mut self.settings.sort_archives_separately,
-                    "Sort archives separately",
+        let result = chrome::modal(ctx, "shellzip-report", "Generate report", |ui| {
+            ui.set_min_width(DIALOG_WIDTH);
+            ui.label("Format");
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut self.settings.format, ReportFormat::Html, "HTML");
+                ui.radio_value(
+                    &mut self.settings.format,
+                    ReportFormat::Markdown,
+                    "Markdown",
                 );
-                ui.add_space(6.0);
-                ui.label("Include");
-                egui::Grid::new("shellzip-report-include")
-                    .num_columns(2)
-                    .spacing(egui::vec2(16.0, 2.0))
-                    .show(ui, |ui| {
-                        ui.checkbox(&mut self.settings.archives, "Archives");
-                        ui.checkbox(&mut self.settings.usual_files, "Usual files");
-                        ui.end_row();
-                        ui.checkbox(&mut self.settings.archive_name, "Archive name");
-                        ui.checkbox(&mut self.settings.headers, "Headers and totals");
-                        ui.end_row();
-                        ui.checkbox(&mut self.settings.file_size, "File size");
-                        ui.checkbox(&mut self.settings.packed_size, "Packed size");
-                        ui.end_row();
-                        ui.checkbox(&mut self.settings.file_date, "File date");
-                        ui.checkbox(&mut self.settings.file_checksum, "File checksum");
-                        ui.end_row();
-                    });
-                if self.pending {
-                    ui.add_space(4.0);
-                    ui.label("Reading archives...");
+                ui.radio_value(
+                    &mut self.settings.format,
+                    ReportFormat::Text,
+                    "Text (UTF-8)",
+                );
+            });
+            if self.settings.format != previous_format {
+                self.path = swap_extension(&self.path, self.settings.format);
+            }
+            ui.add_space(6.0);
+            ui.label("Report path");
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                let reserved = chrome::WELL_SIZE + ui.spacing().item_spacing.x;
+                let width = (ui.available_width() - reserved).max(48.0);
+                chrome::path_field(
+                    ui,
+                    &mut self.path,
+                    width,
+                    "Report file",
+                    "shellzip-report-path",
+                );
+                if chrome::well_button(ui, Icon::FolderSearch, "Browse", true).clicked()
+                    && let Some(path) = browse_report(&self.path, self.settings.format)
+                {
+                    self.path = path.display().to_string();
                 }
-                if let Some(notice) = &self.notice {
-                    ui.add_space(4.0);
-                    ui.colored_label(theme::palette(ui.ctx()).danger, notice);
+            });
+            ui.checkbox(&mut self.settings.clipboard, "Copy report to clipboard");
+            ui.add_space(6.0);
+            ui.label("Sort by");
+            egui::Grid::new("shellzip-report-sort")
+                .num_columns(3)
+                .spacing(egui::vec2(12.0, 2.0))
+                .show(ui, |ui| {
+                    ui.radio_value(
+                        &mut self.settings.sort,
+                        ReportSort::Original,
+                        "Original order",
+                    );
+                    ui.radio_value(&mut self.settings.sort, ReportSort::Name, "Name");
+                    ui.radio_value(&mut self.settings.sort, ReportSort::Size, "Size");
+                    ui.end_row();
+                    ui.radio_value(&mut self.settings.sort, ReportSort::Packed, "Packed size");
+                    ui.radio_value(&mut self.settings.sort, ReportSort::Modified, "Modified");
+                    ui.radio_value(&mut self.settings.sort, ReportSort::Crc, "CRC");
+                    ui.end_row();
+                });
+            ui.checkbox(
+                &mut self.settings.sort_archives_separately,
+                "Sort archives separately",
+            );
+            ui.add_space(6.0);
+            ui.label("Include");
+            egui::Grid::new("shellzip-report-include")
+                .num_columns(2)
+                .spacing(egui::vec2(16.0, 2.0))
+                .show(ui, |ui| {
+                    ui.checkbox(&mut self.settings.archives, "Archives");
+                    ui.checkbox(&mut self.settings.usual_files, "Usual files");
+                    ui.end_row();
+                    ui.checkbox(&mut self.settings.archive_name, "Archive name");
+                    ui.checkbox(&mut self.settings.headers, "Headers and totals");
+                    ui.end_row();
+                    ui.checkbox(&mut self.settings.file_size, "File size");
+                    ui.checkbox(&mut self.settings.packed_size, "Packed size");
+                    ui.end_row();
+                    ui.checkbox(&mut self.settings.file_date, "File date");
+                    ui.checkbox(&mut self.settings.file_checksum, "File checksum");
+                    ui.end_row();
+                });
+            if self.pending {
+                ui.add_space(4.0);
+                ui.label("Reading archives...");
+            }
+            if let Some(notice) = &self.notice {
+                ui.add_space(4.0);
+                ui.colored_label(theme::palette(ui.ctx()).danger, notice);
+            }
+            ui.add_space(8.0);
+            ui.separator();
+            ui.horizontal(|ui| {
+                let colors = theme::palette(ui.ctx());
+                let dirty = self.settings != self.saved;
+                if chrome::icon_button(ui, Icon::Save, colors.ink, "Save settings", dirty).clicked()
+                {
+                    self.saved = self.settings;
+                    action = Some(ReportAction::Save(self.settings));
                 }
-                ui.add_space(8.0);
-                ui.separator();
-                ui.horizontal(|ui| {
-                    let colors = theme::palette(ui.ctx());
-                    let dirty = self.settings != self.saved;
-                    if chrome::icon_button(ui, Icon::Save, colors.ink, "Save settings", dirty)
-                        .clicked()
-                    {
-                        self.saved = self.settings;
-                        action = Some(ReportAction::Save(self.settings));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if chrome::labeled_button(ui, Icon::CircleHelp, colors.open, "Help").clicked() {
+                        self.help = true;
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if chrome::labeled_button(ui, Icon::CircleHelp, colors.open, "Help")
-                            .clicked()
+                    if chrome::labeled_button(ui, Icon::X, colors.ink, "Cancel").clicked() {
+                        action = Some(ReportAction::Close);
+                    }
+                    let can_write = !self.pending && !self.failed;
+                    if chrome::labeled_button(ui, Icon::Check, colors.ok, "OK").clicked()
+                        && can_write
+                    {
+                        match write_report(&self.path, &self.loose, &self.archives, &self.settings)
                         {
-                            self.help = true;
-                        }
-                        if chrome::labeled_button(ui, Icon::X, colors.ink, "Cancel").clicked() {
-                            action = Some(ReportAction::Close);
-                        }
-                        let can_write = !self.pending && !self.failed;
-                        if chrome::labeled_button(ui, Icon::Check, colors.ok, "OK").clicked()
-                            && can_write
-                        {
-                            match write_report(
-                                &self.path,
-                                &self.loose,
-                                &self.archives,
-                                &self.settings,
-                            ) {
-                                Ok(text) => {
-                                    if self.settings.clipboard {
-                                        ui.ctx().copy_text(text);
-                                    }
-                                    action =
-                                        Some(ReportAction::Wrote(PathBuf::from(self.path.trim())));
+                            Ok(text) => {
+                                if self.settings.clipboard {
+                                    ui.ctx().copy_text(text);
                                 }
-                                Err(message) => self.notice = Some(message),
+                                action = Some(ReportAction::Wrote(PathBuf::from(self.path.trim())));
                             }
+                            Err(message) => self.notice = Some(message),
                         }
-                    });
+                    }
                 });
             });
+        });
         help_window(ctx, self);
-        if action.is_none() && !open {
+        if action.is_none() && result.escape {
             return Some(ReportAction::Close);
         }
         action
@@ -255,19 +239,28 @@ fn help_window(ctx: &egui::Context, dialog: &mut ReportDialog) {
     if !dialog.help {
         return;
     }
-    let mut open = true;
-    egui::Window::new("Generate report help")
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.set_min_width(420.0);
-            ui.label(
-                "Include flags choose which archive blocks, loose files, headings, totals, and columns are written.",
-            );
+    let result = chrome::modal(ctx, "shellzip-report-help", "Generate report help", |ui| {
+        ui.set_min_width(420.0);
+        ui.label(
+            "Include flags choose which archive blocks, loose files, headings, totals, and columns are written.",
+        );
+        ui.add_space(8.0);
+        ui.separator();
+        let mut close = false;
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if chrome::labeled_button(ui, Icon::X, theme::palette(ui.ctx()).ink, "Close")
+                    .clicked()
+                {
+                    close = true;
+                }
+            });
         });
-    dialog.help = open;
+        close
+    });
+    if result.inner || result.escape {
+        dialog.help = false;
+    }
 }
 
 fn browse_report(current: &str, format: ReportFormat) -> Option<PathBuf> {

@@ -64,64 +64,49 @@ impl ViewDialog {
 
     /// Paint the viewer. `true` means Close.
     pub(crate) fn show(&mut self, ctx: &egui::Context) -> bool {
-        let mut open = true;
         let mut close = false;
         let title = format!("View {}", self.name);
-        egui::Window::new(title)
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(VIEW_WIDTH)
-            .min_width(VIEW_WIDTH)
-            .max_width(VIEW_WIDTH)
-            .constrain(true)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_width(VIEW_WIDTH);
-                ui.set_max_width(VIEW_WIDTH);
-                match &self.body {
-                    PreviewBody::Text(text) => {
-                        egui::ScrollArea::both()
-                            .id_salt("shellzip-view-text")
-                            .auto_shrink([false, false])
-                            .max_width(VIEW_WIDTH)
-                            .max_height(VIEW_TEXT_HEIGHT)
-                            .show(ui, |ui| {
-                                ui.set_max_width(VIEW_WIDTH - 16.0);
-                                ui.add(
-                                    egui::Label::new(egui::RichText::new(text).monospace())
-                                        .wrap()
-                                        .selectable(true),
-                                );
-                            });
-                    }
-                    PreviewBody::Binary => {
-                        ui.label(format!("Size: {}", chrome::format_grouped(self.size)));
-                        ui.label("This file is not text.");
-                    }
+        let result = chrome::modal(ctx, "shellzip-view", &title, |ui| {
+            ui.set_width(VIEW_WIDTH);
+            ui.set_max_width(VIEW_WIDTH);
+            match &self.body {
+                PreviewBody::Text(text) => {
+                    egui::ScrollArea::both()
+                        .id_salt("shellzip-view-text")
+                        .auto_shrink([false, false])
+                        .max_width(VIEW_WIDTH)
+                        .max_height(VIEW_TEXT_HEIGHT)
+                        .show(ui, |ui| {
+                            ui.set_max_width(VIEW_WIDTH - 16.0);
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(text).monospace())
+                                    .wrap()
+                                    .selectable(true),
+                            );
+                        });
                 }
-                if self.truncated {
-                    ui.add_space(6.0);
-                    ui.label("The preview was truncated.");
+                PreviewBody::Binary => {
+                    ui.label(format!("Size: {}", chrome::format_grouped(self.size)));
+                    ui.label("This file is not text.");
                 }
-                ui.add_space(8.0);
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if chrome::labeled_button(
-                            ui,
-                            Icon::X,
-                            theme::palette(ui.ctx()).ink,
-                            "Close",
-                        )
+            }
+            if self.truncated {
+                ui.add_space(6.0);
+                ui.label("The preview was truncated.");
+            }
+            ui.add_space(8.0);
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if chrome::labeled_button(ui, Icon::X, theme::palette(ui.ctx()).ink, "Close")
                         .clicked()
-                        {
-                            close = true;
-                        }
-                    });
+                    {
+                        close = true;
+                    }
                 });
             });
-        close || !open
+        });
+        close || result.escape
     }
 }
 

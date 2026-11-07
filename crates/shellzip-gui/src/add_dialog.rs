@@ -150,47 +150,40 @@ impl AddDialog {
 
 /// Paint the dialog. `Some` means it should close.
 pub fn show(ctx: &egui::Context, dialog: &mut AddDialog) -> Option<AddAction> {
-    let mut open = true;
     let mut action = None;
-    egui::Window::new("Archive name and parameters")
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(560.0)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.set_min_size(egui::vec2(520.0, 380.0));
-            tabs(ui, dialog);
-            ui.separator();
-            match dialog.tab {
-                Tab::General => general_tab(ui, dialog),
-                Tab::Comment => comment_tab(ui, dialog),
-            }
-            if let Some(notice) = &dialog.notice {
-                ui.add_space(4.0);
-                ui.colored_label(theme::palette(ui.ctx()).danger, notice);
-            }
-            ui.add_space(8.0);
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let colors = theme::palette(ui.ctx());
-                    if chrome::labeled_button(ui, Icon::CircleHelp, colors.open, "Help").clicked() {
-                        dialog.help = true;
-                    }
-                    if chrome::labeled_button(ui, Icon::X, colors.danger, "Cancel").clicked() {
-                        action = Some(AddAction::Close);
-                    }
-                    if chrome::labeled_button(ui, Icon::Check, colors.ok, "OK").clicked()
-                        && let Some(request) = dialog.request()
-                    {
-                        action = Some(AddAction::Submit(request));
-                    }
-                });
+    let result = chrome::modal(ctx, "shellzip-add", "Archive name and parameters", |ui| {
+        ui.set_min_size(egui::vec2(520.0, 380.0));
+        tabs(ui, dialog);
+        ui.separator();
+        match dialog.tab {
+            Tab::General => general_tab(ui, dialog),
+            Tab::Comment => comment_tab(ui, dialog),
+        }
+        if let Some(notice) = &dialog.notice {
+            ui.add_space(4.0);
+            ui.colored_label(theme::palette(ui.ctx()).danger, notice);
+        }
+        ui.add_space(8.0);
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let colors = theme::palette(ui.ctx());
+                if chrome::labeled_button(ui, Icon::CircleHelp, colors.open, "Help").clicked() {
+                    dialog.help = true;
+                }
+                if chrome::labeled_button(ui, Icon::X, colors.danger, "Cancel").clicked() {
+                    action = Some(AddAction::Close);
+                }
+                if chrome::labeled_button(ui, Icon::Check, colors.ok, "OK").clicked()
+                    && let Some(request) = dialog.request()
+                {
+                    action = Some(AddAction::Submit(request));
+                }
             });
         });
+    });
     help_window(ctx, dialog);
-    if !open {
+    if action.is_none() && result.escape {
         return Some(AddAction::Close);
     }
     action
@@ -225,16 +218,14 @@ pub struct AskPrompt {
     pub detail: &'static str,
 }
 
-/// Ask about one existing name. Closing the window cancels the job.
+/// Ask about one existing name. Escape cancels the job.
 pub fn ask_overwrite(ctx: &egui::Context, name: &str, detail: &str) -> Option<AskReply> {
-    let mut open = true;
     let mut reply = None;
-    egui::Window::new("Confirm file replace")
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
+    let result = chrome::modal(
+        ctx,
+        "shellzip-ask-overwrite",
+        "Confirm file replace",
+        |ui| {
             ui.set_min_width(420.0);
             ui.label(egui::RichText::new(name).strong());
             ui.label(detail);
@@ -265,8 +256,13 @@ pub fn ask_overwrite(ctx: &egui::Context, name: &str, detail: &str) -> Option<As
                     }
                 });
             });
-        });
-    if !open { Some(AskReply::Cancel) } else { reply }
+        },
+    );
+    if reply.is_none() && result.escape {
+        Some(AskReply::Cancel)
+    } else {
+        reply
+    }
 }
 
 fn tabs(ui: &mut egui::Ui, dialog: &mut AddDialog) {
@@ -412,22 +408,31 @@ fn help_window(ctx: &egui::Context, dialog: &mut AddDialog) {
     if !dialog.help {
         return;
     }
-    let mut open = true;
-    egui::Window::new("Add to archive")
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.set_min_width(420.0);
-            for mode in UpdateMode::ALL {
-                ui.label(egui::RichText::new(mode.label()).strong());
-                ui.label(mode_help(mode));
-                ui.add_space(4.0);
-            }
-            ui.label("The comment is stored in a ZIP or 7z archive, including an SFX package.");
+    let result = chrome::modal(ctx, "shellzip-add-help", "Add to archive", |ui| {
+        ui.set_min_width(420.0);
+        for mode in UpdateMode::ALL {
+            ui.label(egui::RichText::new(mode.label()).strong());
+            ui.label(mode_help(mode));
+            ui.add_space(4.0);
+        }
+        ui.label("The comment is stored in a ZIP or 7z archive, including an SFX package.");
+        ui.add_space(8.0);
+        ui.separator();
+        let mut close = false;
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if chrome::labeled_button(ui, Icon::X, theme::palette(ui.ctx()).ink, "Close")
+                    .clicked()
+                {
+                    close = true;
+                }
+            });
         });
-    dialog.help = open;
+        close
+    });
+    if result.inner || result.escape {
+        dialog.help = false;
+    }
 }
 
 fn update_combo(ui: &mut egui::Ui, dialog: &mut AddDialog) {

@@ -9,7 +9,7 @@ shellzip                      # empty window, folder explorer
 shellzip D:\archives\app.zip  # open that archive
 ```
 
-On Windows the binary is a GUI subsystem program (no console). Minimum window size is 760×480; the default is 1080×720.
+On Windows the binary is a GUI subsystem program (no console). Minimum window size is 820×480; the default is 1080×720.
 
 ## Window layout
 
@@ -79,7 +79,7 @@ RAR archives can be opened, listed, tested, extracted, viewed, and reported. The
 ## Options
 
 - **Theme** — light, dark, or follow the operating system
-- **Toolbar size** — large (32 px) or extra large (48 px)
+- **Toolbar size** — normal (24 px), large (48 px), or extra large (64 px)
 
 Settings persist in `settings.toml` (see [FAQ.md](FAQ.md#where-does-the-gui-store-settings)). Pack level, methods, solid flag, extract overwrite/update, report format, recent paths, and theme are stored. Passwords are not.
 

@@ -1134,6 +1134,22 @@ impl ShellZipApp {
         self.listing || self.operation.as_ref().is_some_and(|op| op.foreground)
     }
 
+    /// A modal or foreground progress window owns the shell.
+    fn dialog_blocks_shell(&self) -> bool {
+        self.about
+            || self.add_dialog.is_some()
+            || self.extract_dialog.is_some()
+            || self.info_dialog.is_some()
+            || self.view_dialog.is_some()
+            || self.rename_dialog.is_some()
+            || self.test_dialog.is_some()
+            || self.report_dialog.is_some()
+            || self.pending_delete.is_some()
+            || self.password_ask.is_some()
+            || self.ask.as_ref().is_some_and(|ask| ask.pending.is_some())
+            || self.operation.as_ref().is_some_and(|op| op.foreground)
+    }
+
     fn running_status(&self) -> Option<chrome::RunningStatus> {
         if let Some(op) = &self.operation {
             let snapshot = self.progress.snapshot();
@@ -1472,7 +1488,6 @@ impl ShellZipApp {
         let Some(ask) = self.password_ask.as_mut() else {
             return;
         };
-        let mut open = true;
         let mut submit = false;
         let mut cancel = false;
         let prompt = if ask.request.again {
@@ -1480,37 +1495,32 @@ impl ShellZipApp {
         } else {
             "Enter the password to open this archive."
         };
-        egui::Window::new("Password")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_min_width(360.0);
-                ui.label(prompt);
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut ask.text)
-                        .password(true)
-                        .desired_width(f32::INFINITY)
-                        .id_salt("shellzip-open-password"),
-                );
-                field.request_focus();
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let colors = theme::palette(ui.ctx());
-                        if chrome::labeled_button(ui, Icon::X, colors.ink, "Cancel").clicked() {
-                            cancel = true;
-                        }
-                        if chrome::labeled_button(ui, Icon::Check, colors.ok, "OK").clicked()
-                            || ui.input(|input| input.key_pressed(egui::Key::Enter))
-                        {
-                            submit = true;
-                        }
-                    });
+        let result = chrome::modal(ctx, "shellzip-password", "Password", |ui| {
+            ui.set_min_width(360.0);
+            ui.label(prompt);
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut ask.text)
+                    .password(true)
+                    .desired_width(f32::INFINITY)
+                    .id_salt("shellzip-open-password"),
+            );
+            field.request_focus();
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let colors = theme::palette(ui.ctx());
+                    if chrome::labeled_button(ui, Icon::X, colors.ink, "Cancel").clicked() {
+                        cancel = true;
+                    }
+                    if chrome::labeled_button(ui, Icon::Check, colors.ok, "OK").clicked()
+                        || ui.input(|input| input.key_pressed(egui::Key::Enter))
+                    {
+                        submit = true;
+                    }
                 });
             });
-        if !open || cancel {
+        });
+        if cancel || result.escape {
             let job = self.password_ask.take().map(|ask| ask.request.job);
             if matches!(job, Some(PasswordJob::Test)) {
                 self.test_dialog = None;
@@ -2071,7 +2081,7 @@ impl ShellZipApp {
     }
 
     fn take_drop(&mut self, ctx: &egui::Context) {
-        if self.shell_locked() {
+        if self.shell_locked() || self.dialog_blocks_shell() {
             return;
         }
         let dropped: Vec<PathBuf> = ctx.input(|input| {
@@ -2300,15 +2310,18 @@ impl eframe::App for ShellZipApp {
                 menu_command =
                     chrome::menu_bar(ui, self.theme, self.toolbar, into_archive, &self.opened);
             });
-        if matches!(menu_command, Some(MenuCommand::Exit)) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        } else if let Some(command) = menu_command {
-            self.on_menu(command);
+        let blocked = self.dialog_blocks_shell();
+        if !blocked {
+            if matches!(menu_command, Some(MenuCommand::Exit)) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            } else if let Some(command) = menu_command {
+                self.on_menu(command);
+            }
         }
 
         let tool_state = ToolbarState {
             operation: self.operation.is_some(),
-            locked: self.shell_locked(),
+            locked: self.shell_locked() || blocked,
             archive_ready: self.archive_ready(),
             can_delete: self.can_delete(),
             can_view: self.can_view(),
@@ -2320,12 +2333,12 @@ impl eframe::App for ShellZipApp {
             .show(ctx, |ui| {
                 tool_command = chrome::toolbar(ui, &tool_state, self.toolbar);
             });
-        if let Some(command) = tool_command {
+        if !blocked && let Some(command) = tool_command {
             self.on_tool(command);
         }
 
-        let can_up = self.can_go_up() && !self.shell_locked();
-        let can_refresh = !self.shell_locked();
+        let can_up = self.can_go_up() && !self.shell_locked() && !blocked;
+        let can_refresh = !self.shell_locked() && !blocked;
         let focus = self.tree_focus();
         let mut address_event = None;
         egui::TopBottomPanel::top("address")
@@ -2342,7 +2355,7 @@ impl eframe::App for ShellZipApp {
                 );
             });
         let submitted = matches!(address_event, Some(AddressEvent::Submit));
-        if let Some(event) = address_event {
+        if !blocked && let Some(event) = address_event {
             self.on_address(event);
         }
 
@@ -2353,7 +2366,7 @@ impl eframe::App for ShellZipApp {
             .show_animated(ctx, self.inside_archive(), |ui| {
                 crumb = chrome::breadcrumbs(ui, &jump_list);
             });
-        if let Some(event) = crumb {
+        if !blocked && let Some(event) = crumb {
             self.on_address(event);
         }
 
@@ -2556,17 +2569,7 @@ impl eframe::App for ShellZipApp {
             self.persist_settings();
             self.saved = self.options;
         }
-        if !submitted
-            && self.add_dialog.is_none()
-            && self.extract_dialog.is_none()
-            && self.ask.is_none()
-            && self.rename_dialog.is_none()
-            && self.view_dialog.is_none()
-            && self.info_dialog.is_none()
-            && self.test_dialog.is_none()
-            && self.report_dialog.is_none()
-            && self.pending_delete.is_none()
-        {
+        if !submitted && !self.dialog_blocks_shell() {
             self.shortcuts(ctx);
         }
     }

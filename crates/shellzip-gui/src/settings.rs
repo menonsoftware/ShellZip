@@ -9,13 +9,15 @@ use shellzip_core::{ExtractUpdate, Overwrite, SevenZMethod, ZipMethod};
 use crate::chrome::PackSettings;
 use crate::theme::Preference;
 
-/// Toolbar glyph size. Large is 32 px; Extra large is 48 px.
+/// Toolbar glyph size. Normal is 24 px; Large is 48 px; Extra large is 64 px.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToolbarSize {
-    /// 32 px glyphs. The default.
+    /// 24 px glyphs.
+    Normal,
+    /// 48 px glyphs. The default.
     #[default]
     Large,
-    /// 48 px glyphs.
+    /// 64 px glyphs.
     ExtraLarge,
 }
 
@@ -23,6 +25,7 @@ impl ToolbarSize {
     /// Token stored in `settings.toml`.
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Normal => "normal",
             Self::Large => "large",
             Self::ExtraLarge => "extra_large",
         }
@@ -31,6 +34,7 @@ impl ToolbarSize {
     /// Parse a settings token. Anything unrecognized is [`Self::Large`].
     pub fn from_token(token: &str) -> Self {
         match token {
+            "normal" => Self::Normal,
             "extra_large" => Self::ExtraLarge,
             _ => Self::Large,
         }
@@ -39,24 +43,27 @@ impl ToolbarSize {
     /// Painted glyph size in points.
     pub fn icon_points(self) -> f32 {
         match self {
-            Self::Large => 32.0,
-            Self::ExtraLarge => 48.0,
+            Self::Normal => 24.0,
+            Self::Large => 48.0,
+            Self::ExtraLarge => 64.0,
         }
     }
 
     /// Clickable toolbar cell. Tight to the glyph so the strip stays compact.
     pub fn button_size(self) -> egui::Vec2 {
         match self {
-            Self::Large => egui::vec2(64.0, 52.0),
-            Self::ExtraLarge => egui::vec2(76.0, 68.0),
+            Self::Normal => egui::vec2(72.0, 48.0),
+            Self::Large => egui::vec2(80.0, 74.0),
+            Self::ExtraLarge => egui::vec2(84.0, 90.0),
         }
     }
 
     /// Caption under the glyph.
     pub fn label_size(self) -> f32 {
         match self {
-            Self::Large => 11.0,
-            Self::ExtraLarge => 12.0,
+            Self::Normal => 11.0,
+            Self::Large => 12.0,
+            Self::ExtraLarge => 13.0,
         }
     }
 }
@@ -695,19 +702,23 @@ mod tests {
 
     #[test]
     fn toolbar_size_tokens_round_trip() {
+        assert_eq!(ToolbarSize::from_token("normal"), ToolbarSize::Normal);
         assert_eq!(ToolbarSize::from_token("large"), ToolbarSize::Large);
         assert_eq!(
             ToolbarSize::from_token("extra_large"),
             ToolbarSize::ExtraLarge
         );
         assert_eq!(ToolbarSize::from_token("nope"), ToolbarSize::Large);
+        assert_eq!(ToolbarSize::Normal.as_str(), "normal");
         assert_eq!(ToolbarSize::Large.as_str(), "large");
-        assert_eq!(ToolbarSize::Large.icon_points(), 32.0);
-        assert_eq!(ToolbarSize::ExtraLarge.icon_points(), 48.0);
-        assert_eq!(ToolbarSize::Large.button_size(), egui::vec2(64.0, 52.0));
+        assert_eq!(ToolbarSize::Normal.icon_points(), 24.0);
+        assert_eq!(ToolbarSize::Large.icon_points(), 48.0);
+        assert_eq!(ToolbarSize::ExtraLarge.icon_points(), 64.0);
+        assert_eq!(ToolbarSize::Normal.button_size(), egui::vec2(72.0, 48.0));
+        assert_eq!(ToolbarSize::Large.button_size(), egui::vec2(80.0, 74.0));
         assert_eq!(
             ToolbarSize::ExtraLarge.button_size(),
-            egui::vec2(76.0, 68.0)
+            egui::vec2(84.0, 90.0)
         );
     }
 

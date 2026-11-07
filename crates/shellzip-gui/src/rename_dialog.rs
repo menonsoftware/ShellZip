@@ -45,54 +45,47 @@ impl RenameDialog {
 
     /// Paint the prompt.
     pub(crate) fn show(&mut self, ctx: &egui::Context) -> Option<RenameAction> {
-        let mut open = true;
         let mut action = None;
-        egui::Window::new("Rename")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_min_width(380.0);
-                ui.label(format!("Rename {}", self.current));
-                ui.add_space(6.0);
-                ui.label("New name");
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut self.next)
-                        .desired_width(f32::INFINITY)
-                        .id_salt("shellzip-rename"),
-                );
-                field.request_focus();
-                if let Some(notice) = &self.notice {
-                    ui.add_space(4.0);
-                    ui.colored_label(theme::palette(ui.ctx()).danger, notice);
-                }
-                ui.add_space(8.0);
-                ui.separator();
-                let submit = ui.input(|input| input.key_pressed(egui::Key::Enter));
-                ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let colors = theme::palette(ui.ctx());
-                        if chrome::labeled_button(ui, Icon::X, colors.ink, "Cancel").clicked() {
-                            action = Some(RenameAction::Cancel);
-                        }
-                        if chrome::labeled_button(ui, Icon::Check, colors.ok, "OK").clicked()
-                            || submit
-                        {
-                            match reject_new_name(self.next.trim()) {
-                                Some(message) => self.notice = Some(message.to_string()),
-                                None => {
-                                    action = Some(RenameAction::Submit {
-                                        target: self.target.clone(),
-                                        leaf: self.next.trim().to_string(),
-                                    });
-                                }
+        let result = chrome::modal(ctx, "shellzip-rename", "Rename", |ui| {
+            ui.set_min_width(380.0);
+            ui.label(format!("Rename {}", self.current));
+            ui.add_space(6.0);
+            ui.label("New name");
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut self.next)
+                    .desired_width(f32::INFINITY)
+                    .id_salt("shellzip-rename"),
+            );
+            field.request_focus();
+            if let Some(notice) = &self.notice {
+                ui.add_space(4.0);
+                ui.colored_label(theme::palette(ui.ctx()).danger, notice);
+            }
+            ui.add_space(8.0);
+            ui.separator();
+            let submit = ui.input(|input| input.key_pressed(egui::Key::Enter));
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let colors = theme::palette(ui.ctx());
+                    if chrome::labeled_button(ui, Icon::X, colors.ink, "Cancel").clicked() {
+                        action = Some(RenameAction::Cancel);
+                    }
+                    if chrome::labeled_button(ui, Icon::Check, colors.ok, "OK").clicked() || submit
+                    {
+                        match reject_new_name(self.next.trim()) {
+                            Some(message) => self.notice = Some(message.to_string()),
+                            None => {
+                                action = Some(RenameAction::Submit {
+                                    target: self.target.clone(),
+                                    leaf: self.next.trim().to_string(),
+                                });
                             }
                         }
-                    });
+                    }
                 });
             });
-        if action.is_none() && !open {
+        });
+        if action.is_none() && result.escape {
             return Some(RenameAction::Cancel);
         }
         action

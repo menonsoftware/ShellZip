@@ -51,55 +51,44 @@ impl InfoDialog {
 
     /// Paint the dialog.
     pub(crate) fn show(&mut self, ctx: &egui::Context) -> Option<InfoAction> {
-        let mut open = true;
         let mut action = None;
         let title = format!("Archive {}", self.filename);
-        egui::Window::new(title)
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(DIALOG_WIDTH)
-            .min_width(DIALOG_WIDTH)
-            .max_width(DIALOG_WIDTH)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_width(DIALOG_WIDTH);
-                tabs(ui, self);
-                ui.separator();
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), TAB_BODY_HEIGHT),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        ui.set_min_height(TAB_BODY_HEIGHT);
-                        ui.set_width(ui.available_width());
-                        match self.tab {
-                            Tab::Info => info_tab(ui, &self.summary),
-                            Tab::Comment => comment_tab(ui, &self.summary),
-                            Tab::Sfx => sfx_tab(ui, &self.summary),
-                        }
-                    },
-                );
-                ui.add_space(8.0);
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let colors = theme::palette(ui.ctx());
-                        if chrome::labeled_button(ui, Icon::CircleHelp, colors.open, "Help")
-                            .clicked()
-                        {
-                            self.help = true;
-                        }
-                        if chrome::labeled_button(ui, Icon::X, colors.ink, "Cancel").clicked() {
-                            action = Some(InfoAction::Close);
-                        }
-                        if chrome::labeled_button(ui, Icon::Check, colors.ok, "OK").clicked() {
-                            action = Some(InfoAction::Close);
-                        }
-                    });
+        let result = chrome::modal(ctx, "shellzip-info", &title, |ui| {
+            ui.set_width(DIALOG_WIDTH);
+            tabs(ui, self);
+            ui.separator();
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), TAB_BODY_HEIGHT),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_min_height(TAB_BODY_HEIGHT);
+                    ui.set_width(ui.available_width());
+                    match self.tab {
+                        Tab::Info => info_tab(ui, &self.summary),
+                        Tab::Comment => comment_tab(ui, &self.summary),
+                        Tab::Sfx => sfx_tab(ui, &self.summary),
+                    }
+                },
+            );
+            ui.add_space(8.0);
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let colors = theme::palette(ui.ctx());
+                    if chrome::labeled_button(ui, Icon::CircleHelp, colors.open, "Help").clicked() {
+                        self.help = true;
+                    }
+                    if chrome::labeled_button(ui, Icon::X, colors.ink, "Cancel").clicked() {
+                        action = Some(InfoAction::Close);
+                    }
+                    if chrome::labeled_button(ui, Icon::Check, colors.ok, "OK").clicked() {
+                        action = Some(InfoAction::Close);
+                    }
                 });
             });
+        });
         help_window(ctx, self);
-        if action.is_none() && !open {
+        if action.is_none() && result.escape {
             return Some(InfoAction::Close);
         }
         action
@@ -217,7 +206,6 @@ fn help_window(ctx: &egui::Context, dialog: &mut InfoDialog) {
     if !dialog.help {
         return;
     }
-    let mut open = true;
     let sentence = match dialog.tab {
         Tab::Info => "Packed size over total size, read from the archive headers.",
         Tab::Comment => "The archive comment, or Absent when the format stores none.",
@@ -225,16 +213,31 @@ fn help_window(ctx: &egui::Context, dialog: &mut InfoDialog) {
             "The self-extractor stub size, or a note that this file is not a self-extractor."
         }
     };
-    egui::Window::new("Archive information help")
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
+    let result = chrome::modal(
+        ctx,
+        "shellzip-info-help",
+        "Archive information help",
+        |ui| {
             ui.set_min_width(420.0);
             ui.label(sentence);
-        });
-    dialog.help = open;
+            ui.add_space(8.0);
+            ui.separator();
+            let mut close = false;
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if chrome::labeled_button(ui, Icon::X, theme::palette(ui.ctx()).ink, "Close")
+                        .clicked()
+                    {
+                        close = true;
+                    }
+                });
+            });
+            close
+        },
+    );
+    if result.inner || result.escape {
+        dialog.help = false;
+    }
 }
 
 fn presence(present: bool) -> &'static str {

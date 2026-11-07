@@ -1,22 +1,16 @@
 //! Lucide icons and the pre-colored toolbar glyphs.
 //!
-//! Lucide strokes are white so [`paint`] can tint them. Toolbar art from
-//! `assets/toolbar/` already has brand colors; [`paint_tool`] draws it as-is
-//! and only recolors dark-theme strokes so the marks stay visible.
+//! Lucide strokes are white so [`paint`] can tint them. Toolbar art comes from
+//! `grx/toolbar_icons/png/` as fixed-size PNGs; [`paint_tool`] draws them as-is.
 //!
 //! Source: <https://lucide.dev/icons/>. The SVG files and their ISC license
 //! live in `assets/lucide/`.
 //!
-//! Each icon is rasterized once at [`MASTER_POINTS`] and then scaled. A table
+//! Lucide icons are rasterized once at [`MASTER_POINTS`] and then scaled. A table
 //! sizing pass otherwise asks for a new SVG size every frame and the loader
 //! draws its failure mark above the file list.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
-
 use egui::{Color32, Rect, Sense, Vec2};
-
-type DarkSvgCache = Mutex<HashMap<&'static str, Arc<[u8]>>>;
 
 /// File-list row glyph.
 pub const SIZE_ROW: f32 = 16.0;
@@ -24,9 +18,14 @@ pub const SIZE_ROW: f32 = 16.0;
 pub const SIZE_STATUS: f32 = 14.0;
 /// Sort and address-bar caret.
 pub const SIZE_CARET: Vec2 = Vec2::new(9.0, 8.0);
+/// Address-bar Up / Refresh glyph.
+pub const SIZE_TOOL_WELL: f32 = 16.0;
 
-/// One raster size for every icon. Painting scales this texture.
+/// One raster size for every Lucide icon. Painting scales this texture.
 const MASTER_POINTS: f32 = 32.0;
+
+/// Available toolbar PNG edge lengths, ascending.
+const TOOL_PNG_SIZES: [u32; 5] = [16, 24, 32, 48, 64];
 
 /// Icons used by the window.
 #[derive(Clone, Copy)]
@@ -86,7 +85,7 @@ pub enum Caret {
     Down,
 }
 
-/// Pre-colored toolbar and address-bar glyphs from `assets/toolbar/`.
+/// Pre-colored toolbar and address-bar glyphs from `grx/toolbar_icons/png/`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ToolIcon {
     /// Open an archive.
@@ -186,31 +185,318 @@ impl ToolIcon {
         }
     }
 
-    fn has_disabled_art(self) -> bool {
-        matches!(
-            self,
-            Self::Extract | Self::Test | Self::Delete | Self::Sfx | Self::View
-        )
-    }
+    fn png_bytes(self, enabled: bool, px: u32) -> &'static [u8] {
+        match (self, enabled, px) {
+            (Self::Open, true, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/open_16.png")
+            }
+            (Self::Open, false, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/open_disabled_16.png")
+            }
+            (Self::Open, true, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/open_24.png")
+            }
+            (Self::Open, false, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/open_disabled_24.png")
+            }
+            (Self::Open, true, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/open_32.png")
+            }
+            (Self::Open, false, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/open_disabled_32.png")
+            }
+            (Self::Open, true, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/open_48.png")
+            }
+            (Self::Open, false, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/open_disabled_48.png")
+            }
+            (Self::Open, true, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/open_64.png")
+            }
+            (Self::Open, false, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/open_disabled_64.png")
+            }
 
-    fn bytes(self, enabled: bool) -> &'static [u8] {
-        match (self, enabled) {
-            (Self::Extract, false) => include_bytes!("../assets/toolbar/extract_disabled.svg"),
-            (Self::Test, false) => include_bytes!("../assets/toolbar/test_disabled.svg"),
-            (Self::Delete, false) => include_bytes!("../assets/toolbar/delete_disabled.svg"),
-            (Self::Open, _) => include_bytes!("../assets/toolbar/open.svg"),
-            (Self::Add, _) => include_bytes!("../assets/toolbar/add.svg"),
-            (Self::Extract, true) => include_bytes!("../assets/toolbar/extract.svg"),
-            (Self::Test, true) => include_bytes!("../assets/toolbar/test.svg"),
-            (Self::Delete, true) => include_bytes!("../assets/toolbar/delete.svg"),
-            (Self::Info, _) => include_bytes!("../assets/toolbar/info.svg"),
-            (Self::About, _) => include_bytes!("../assets/toolbar/about.svg"),
-            (Self::Up, _) => include_bytes!("../assets/toolbar/up.svg"),
-            (Self::Refresh, _) => include_bytes!("../assets/toolbar/refresh.svg"),
-            (Self::Sfx, false) => include_bytes!("../assets/toolbar/sfx_disabled.svg"),
-            (Self::Sfx, true) => include_bytes!("../assets/toolbar/sfx.svg"),
-            (Self::View, false) => include_bytes!("../assets/toolbar/view_disabled.svg"),
-            (Self::View, true) => include_bytes!("../assets/toolbar/view.svg"),
+            (Self::Add, true, 16) => include_bytes!("../../../grx/toolbar_icons/png/add_16.png"),
+            (Self::Add, false, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/add_disabled_16.png")
+            }
+            (Self::Add, true, 24) => include_bytes!("../../../grx/toolbar_icons/png/add_24.png"),
+            (Self::Add, false, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/add_disabled_24.png")
+            }
+            (Self::Add, true, 32) => include_bytes!("../../../grx/toolbar_icons/png/add_32.png"),
+            (Self::Add, false, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/add_disabled_32.png")
+            }
+            (Self::Add, true, 48) => include_bytes!("../../../grx/toolbar_icons/png/add_48.png"),
+            (Self::Add, false, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/add_disabled_48.png")
+            }
+            (Self::Add, true, _) => include_bytes!("../../../grx/toolbar_icons/png/add_64.png"),
+            (Self::Add, false, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/add_disabled_64.png")
+            }
+
+            (Self::Extract, true, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/extract_16.png")
+            }
+            (Self::Extract, false, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/extract_disabled_16.png")
+            }
+            (Self::Extract, true, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/extract_24.png")
+            }
+            (Self::Extract, false, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/extract_disabled_24.png")
+            }
+            (Self::Extract, true, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/extract_32.png")
+            }
+            (Self::Extract, false, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/extract_disabled_32.png")
+            }
+            (Self::Extract, true, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/extract_48.png")
+            }
+            (Self::Extract, false, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/extract_disabled_48.png")
+            }
+            (Self::Extract, true, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/extract_64.png")
+            }
+            (Self::Extract, false, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/extract_disabled_64.png")
+            }
+
+            (Self::Test, true, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/test_16.png")
+            }
+            (Self::Test, false, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/test_disabled_16.png")
+            }
+            (Self::Test, true, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/test_24.png")
+            }
+            (Self::Test, false, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/test_disabled_24.png")
+            }
+            (Self::Test, true, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/test_32.png")
+            }
+            (Self::Test, false, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/test_disabled_32.png")
+            }
+            (Self::Test, true, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/test_48.png")
+            }
+            (Self::Test, false, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/test_disabled_48.png")
+            }
+            (Self::Test, true, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/test_64.png")
+            }
+            (Self::Test, false, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/test_disabled_64.png")
+            }
+
+            (Self::Delete, true, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/delete_16.png")
+            }
+            (Self::Delete, false, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/delete_disabled_16.png")
+            }
+            (Self::Delete, true, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/delete_24.png")
+            }
+            (Self::Delete, false, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/delete_disabled_24.png")
+            }
+            (Self::Delete, true, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/delete_32.png")
+            }
+            (Self::Delete, false, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/delete_disabled_32.png")
+            }
+            (Self::Delete, true, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/delete_48.png")
+            }
+            (Self::Delete, false, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/delete_disabled_48.png")
+            }
+            (Self::Delete, true, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/delete_64.png")
+            }
+            (Self::Delete, false, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/delete_disabled_64.png")
+            }
+
+            (Self::Info, true, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/info_16.png")
+            }
+            (Self::Info, false, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/info_disabled_16.png")
+            }
+            (Self::Info, true, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/info_24.png")
+            }
+            (Self::Info, false, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/info_disabled_24.png")
+            }
+            (Self::Info, true, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/info_32.png")
+            }
+            (Self::Info, false, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/info_disabled_32.png")
+            }
+            (Self::Info, true, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/info_48.png")
+            }
+            (Self::Info, false, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/info_disabled_48.png")
+            }
+            (Self::Info, true, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/info_64.png")
+            }
+            (Self::Info, false, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/info_disabled_64.png")
+            }
+
+            (Self::About, true, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/about_16.png")
+            }
+            (Self::About, false, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/about_disabled_16.png")
+            }
+            (Self::About, true, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/about_24.png")
+            }
+            (Self::About, false, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/about_disabled_24.png")
+            }
+            (Self::About, true, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/about_32.png")
+            }
+            (Self::About, false, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/about_disabled_32.png")
+            }
+            (Self::About, true, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/about_48.png")
+            }
+            (Self::About, false, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/about_disabled_48.png")
+            }
+            (Self::About, true, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/about_64.png")
+            }
+            (Self::About, false, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/about_disabled_64.png")
+            }
+
+            (Self::Up, true, 16) => include_bytes!("../../../grx/toolbar_icons/png/up_16.png"),
+            (Self::Up, false, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/up_disabled_16.png")
+            }
+            (Self::Up, true, 24) => include_bytes!("../../../grx/toolbar_icons/png/up_24.png"),
+            (Self::Up, false, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/up_disabled_24.png")
+            }
+            (Self::Up, true, 32) => include_bytes!("../../../grx/toolbar_icons/png/up_32.png"),
+            (Self::Up, false, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/up_disabled_32.png")
+            }
+            (Self::Up, true, 48) => include_bytes!("../../../grx/toolbar_icons/png/up_48.png"),
+            (Self::Up, false, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/up_disabled_48.png")
+            }
+            (Self::Up, true, _) => include_bytes!("../../../grx/toolbar_icons/png/up_64.png"),
+            (Self::Up, false, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/up_disabled_64.png")
+            }
+
+            (Self::Refresh, true, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/refresh_16.png")
+            }
+            (Self::Refresh, false, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/refresh_disabled_16.png")
+            }
+            (Self::Refresh, true, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/refresh_24.png")
+            }
+            (Self::Refresh, false, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/refresh_disabled_24.png")
+            }
+            (Self::Refresh, true, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/refresh_32.png")
+            }
+            (Self::Refresh, false, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/refresh_disabled_32.png")
+            }
+            (Self::Refresh, true, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/refresh_48.png")
+            }
+            (Self::Refresh, false, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/refresh_disabled_48.png")
+            }
+            (Self::Refresh, true, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/refresh_64.png")
+            }
+            (Self::Refresh, false, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/refresh_disabled_64.png")
+            }
+
+            (Self::Sfx, true, 16) => include_bytes!("../../../grx/toolbar_icons/png/sfx_16.png"),
+            (Self::Sfx, false, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/sfx_disabled_16.png")
+            }
+            (Self::Sfx, true, 24) => include_bytes!("../../../grx/toolbar_icons/png/sfx_24.png"),
+            (Self::Sfx, false, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/sfx_disabled_24.png")
+            }
+            (Self::Sfx, true, 32) => include_bytes!("../../../grx/toolbar_icons/png/sfx_32.png"),
+            (Self::Sfx, false, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/sfx_disabled_32.png")
+            }
+            (Self::Sfx, true, 48) => include_bytes!("../../../grx/toolbar_icons/png/sfx_48.png"),
+            (Self::Sfx, false, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/sfx_disabled_48.png")
+            }
+            (Self::Sfx, true, _) => include_bytes!("../../../grx/toolbar_icons/png/sfx_64.png"),
+            (Self::Sfx, false, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/sfx_disabled_64.png")
+            }
+
+            (Self::View, true, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/view_16.png")
+            }
+            (Self::View, false, 16) => {
+                include_bytes!("../../../grx/toolbar_icons/png/view_disabled_16.png")
+            }
+            (Self::View, true, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/view_24.png")
+            }
+            (Self::View, false, 24) => {
+                include_bytes!("../../../grx/toolbar_icons/png/view_disabled_24.png")
+            }
+            (Self::View, true, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/view_32.png")
+            }
+            (Self::View, false, 32) => {
+                include_bytes!("../../../grx/toolbar_icons/png/view_disabled_32.png")
+            }
+            (Self::View, true, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/view_48.png")
+            }
+            (Self::View, false, 48) => {
+                include_bytes!("../../../grx/toolbar_icons/png/view_disabled_48.png")
+            }
+            (Self::View, true, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/view_64.png")
+            }
+            (Self::View, false, _) => {
+                include_bytes!("../../../grx/toolbar_icons/png/view_disabled_64.png")
+            }
         }
     }
 }
@@ -265,10 +551,13 @@ pub fn warm(ctx: &egui::Context) {
     for icon in ALL {
         pending |= sized_texture(ctx, icon).is_none();
     }
-    let dark = matches!(ctx.theme(), egui::Theme::Dark);
+    let need = (ctx.pixels_per_point() * 64.0).round().max(1.0) as u32;
+    let px = pick_tool_png_size(need);
     for icon in TOOL_ALL {
-        pending |= tool_texture(ctx, icon, true, dark).is_none();
-        pending |= tool_texture(ctx, icon, false, dark).is_none();
+        pending |= tool_texture(ctx, icon, true, px).is_none();
+        pending |= tool_texture(ctx, icon, false, px).is_none();
+        pending |= tool_texture(ctx, icon, true, 16).is_none();
+        pending |= tool_texture(ctx, icon, false, 16).is_none();
     }
     if pending {
         ctx.request_repaint();
@@ -299,11 +588,9 @@ pub fn paint(ui: &mut egui::Ui, icon: Icon, tint: Color32, rect: Rect) {
     image.paint_at(ui, rect);
 }
 
-/// Draw a pre-colored toolbar glyph. Disabled extract, test, and delete use
-/// their own art; the others fade.
+/// Draw a pre-colored toolbar glyph. Disabled buttons use their gray PNG.
 pub fn paint_tool(ui: &mut egui::Ui, icon: ToolIcon, enabled: bool, rect: Rect) {
-    let dark = matches!(ui.ctx().theme(), egui::Theme::Dark);
-    let Some(image) = tool_image(ui.ctx(), icon, enabled, dark, rect.size()) else {
+    let Some(image) = tool_image(ui.ctx(), icon, enabled, rect.size()) else {
         return;
     };
     image.paint_at(ui, rect);
@@ -384,25 +671,22 @@ fn tinted(
 }
 
 fn sized_texture(ctx: &egui::Context, icon: Icon) -> Option<egui::load::SizedTexture> {
-    load_bytes(ctx, icon.uri(), icon.bytes())
+    load_bytes(ctx, icon.uri(), icon.bytes(), MASTER_POINTS)
 }
 
 fn tool_image(
     ctx: &egui::Context,
     icon: ToolIcon,
     enabled: bool,
-    dark: bool,
     size: Vec2,
 ) -> Option<egui::Image<'static>> {
-    let texture = tool_texture(ctx, icon, enabled, dark)?;
-    let tint = if enabled || icon.has_disabled_art() {
-        Color32::WHITE
-    } else {
-        Color32::from_white_alpha(97)
-    };
+    let need = (ctx.pixels_per_point() * size.x.max(size.y))
+        .round()
+        .max(1.0) as u32;
+    let px = pick_tool_png_size(need);
+    let texture = tool_texture(ctx, icon, enabled, px)?;
     Some(
         egui::Image::from_texture(texture)
-            .tint(tint)
             .fit_to_exact_size(size)
             .sense(Sense::empty())
             .show_loading_spinner(false),
@@ -413,79 +697,34 @@ fn tool_texture(
     ctx: &egui::Context,
     icon: ToolIcon,
     enabled: bool,
-    dark: bool,
+    px: u32,
 ) -> Option<egui::load::SizedTexture> {
     let uri = format!(
-        "bytes://toolbar/{}/{}/{}.svg",
+        "bytes://toolbar/{}/{}/{}.png",
         icon.key(),
         if enabled { "on" } else { "off" },
-        if dark { "dark" } else { "light" },
+        px,
     );
-    load_bytes(ctx, uri, tool_bytes(icon, enabled, dark))
+    load_bytes(ctx, uri, icon.png_bytes(enabled, px), px as f32)
 }
 
-fn tool_bytes(icon: ToolIcon, enabled: bool, dark: bool) -> egui::load::Bytes {
-    let raw = icon.bytes(enabled);
-    if !dark {
-        return egui::load::Bytes::Static(raw);
+/// Smallest shipped PNG edge that covers `need` pixels, capped at 64.
+fn pick_tool_png_size(need: u32) -> u32 {
+    for size in TOOL_PNG_SIZES {
+        if size >= need {
+            return size;
+        }
     }
-    static CACHE: OnceLock<DarkSvgCache> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut map = cache
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let key = tool_cache_key(icon, enabled);
-    if let Some(bytes) = map.get(key) {
-        return egui::load::Bytes::Shared(Arc::clone(bytes));
-    }
-    let bytes = Arc::<[u8]>::from(recolor_dark(raw));
-    map.insert(key, Arc::clone(&bytes));
-    egui::load::Bytes::Shared(bytes)
-}
-
-fn tool_cache_key(icon: ToolIcon, enabled: bool) -> &'static str {
-    match (icon, enabled) {
-        (ToolIcon::Open, true) => "open-on",
-        (ToolIcon::Open, false) => "open-off",
-        (ToolIcon::Add, true) => "add-on",
-        (ToolIcon::Add, false) => "add-off",
-        (ToolIcon::Extract, true) => "extract-on",
-        (ToolIcon::Extract, false) => "extract-off",
-        (ToolIcon::Test, true) => "test-on",
-        (ToolIcon::Test, false) => "test-off",
-        (ToolIcon::Delete, true) => "delete-on",
-        (ToolIcon::Delete, false) => "delete-off",
-        (ToolIcon::Info, true) => "info-on",
-        (ToolIcon::Info, false) => "info-off",
-        (ToolIcon::About, true) => "about-on",
-        (ToolIcon::About, false) => "about-off",
-        (ToolIcon::Up, true) => "up-on",
-        (ToolIcon::Up, false) => "up-off",
-        (ToolIcon::Refresh, true) => "refresh-on",
-        (ToolIcon::Refresh, false) => "refresh-off",
-        (ToolIcon::Sfx, true) => "sfx-on",
-        (ToolIcon::Sfx, false) => "sfx-off",
-        (ToolIcon::View, true) => "view-on",
-        (ToolIcon::View, false) => "view-off",
-    }
-}
-
-/// Lighten the dark ink so the marks read on a dark toolbar.
-fn recolor_dark(svg: &[u8]) -> Vec<u8> {
-    let Ok(text) = std::str::from_utf8(svg) else {
-        return svg.to_vec();
-    };
-    text.replace("#2B2F36", "#E8ECF0")
-        .replace("#8A8F98", "#B4B8C0")
-        .into_bytes()
+    64
 }
 
 fn load_bytes(
     ctx: &egui::Context,
     uri: impl Into<std::borrow::Cow<'static, str>>,
     bytes: impl Into<egui::load::Bytes>,
+    points: f32,
 ) -> Option<egui::load::SizedTexture> {
-    let pixels = (ctx.pixels_per_point() * MASTER_POINTS).round().max(1.0) as u32;
+    let pixels = (ctx.pixels_per_point() * points).round().max(1.0) as u32;
     match egui::Image::from_bytes(uri, bytes)
         .sense(Sense::empty())
         .show_loading_spinner(false)
@@ -506,7 +745,7 @@ fn load_bytes(
 
 #[cfg(test)]
 mod tests {
-    use super::{ALL, TOOL_ALL, recolor_dark};
+    use super::{ALL, TOOL_ALL, TOOL_PNG_SIZES, pick_tool_png_size};
 
     #[test]
     fn lucide_strokes_are_white_so_tints_show() {
@@ -526,31 +765,37 @@ mod tests {
     }
 
     #[test]
-    fn toolbar_svgs_carry_the_brand_colors() {
+    fn toolbar_pngs_are_valid_for_each_size() {
         for icon in TOOL_ALL {
-            let svg = std::str::from_utf8(icon.bytes(true)).expect("svg is utf-8");
-            assert!(
-                svg.contains("#2B2F36") || svg.contains("#C8642A"),
-                "{} is missing the toolbar palette",
-                icon.key()
-            );
-            if icon.has_disabled_art() {
-                let off = std::str::from_utf8(icon.bytes(false)).expect("svg is utf-8");
-                assert!(
-                    off.contains("#8A8F98"),
-                    "{} disabled art is not the gray variant",
-                    icon.key()
-                );
+            for &px in &TOOL_PNG_SIZES {
+                for enabled in [true, false] {
+                    let bytes = icon.png_bytes(enabled, px);
+                    assert!(
+                        bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+                        "{} {} {} is not a PNG",
+                        icon.key(),
+                        if enabled { "on" } else { "off" },
+                        px
+                    );
+                    assert!(
+                        bytes.len() > 32,
+                        "{} {} {} is too small",
+                        icon.key(),
+                        if enabled { "on" } else { "off" },
+                        px
+                    );
+                }
             }
         }
     }
 
     #[test]
-    fn dark_toolbar_strokes_are_light() {
-        let out = String::from_utf8(recolor_dark(b"stroke=\"#2B2F36\" #8A8F98")).expect("utf-8");
-        assert!(out.contains("#E8ECF0"));
-        assert!(out.contains("#B4B8C0"));
-        assert!(!out.contains("#2B2F36"));
-        assert!(!out.contains("#8A8F98"));
+    fn pick_tool_png_size_covers_need() {
+        assert_eq!(pick_tool_png_size(1), 16);
+        assert_eq!(pick_tool_png_size(16), 16);
+        assert_eq!(pick_tool_png_size(17), 24);
+        assert_eq!(pick_tool_png_size(48), 48);
+        assert_eq!(pick_tool_png_size(49), 64);
+        assert_eq!(pick_tool_png_size(200), 64);
     }
 }
