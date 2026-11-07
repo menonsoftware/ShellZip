@@ -133,7 +133,7 @@ Times ZIP creation at `-m5` with 1 and 8 threads against a 32 MiB text corpus, a
 
 ## File icons
 
-Master SVGs live in `grx/shellzip_file_icons/svg/`. Rasterize committed `.ico` / `.icns` / PNG trees with:
+Master SVGs live in `grx/shellzip_file_icons/svg/`. Rasterize committed multi-size packs with:
 
 ```bash
 make gen-file-icons
@@ -141,7 +141,7 @@ make gen-file-icons
 cargo run -p xtask -- gen-file-icons
 ```
 
-Linux freedesktop MIME icons are already under `grx/shellzip_file_icons/linux/hicolor/`.
+That writes Vista-compatible `.ico` (BMP ≤64 + PNG 256 for Explorer Medium/Large/Extra Large), full Retina `.icns` under `icns/` and `macos/`, and freedesktop MIME PNGs under `linux/hicolor/{16..512}/`.
 
 ## Shell integration
 

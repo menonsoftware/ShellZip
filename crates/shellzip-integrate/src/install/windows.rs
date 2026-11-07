@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use winreg::RegKey;
 use winreg::enums::*;
@@ -26,8 +27,10 @@ pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
     for kind in EXTENSIONS {
         let icon_name = format!("{}.ico", kind.icon);
         let icon_path = icons_dir.join(&icon_name);
+        // `,0` selects the first image; Explorer still picks the matching
+        // BMP/PNG size from the multi-resolution .ico for each view mode.
         let icon_value = if icon_path.is_file() {
-            icon_path.to_string_lossy().into_owned()
+            format!("{},0", icon_path.to_string_lossy())
         } else {
             format!("{exe_str},0")
         };
@@ -177,7 +180,9 @@ fn copy_icons(source: &Path, dest: &Path) -> Result<(), IntegrateError> {
 }
 
 fn notify_assoc_changed() -> Result<(), IntegrateError> {
-    // SHChangeNotify is optional; skipping keeps this crate free of `unsafe`.
+    // Refresh Explorer's icon cache without `unsafe` FFI. `ie4uinit -show`
+    // is the supported user-mode equivalent of SHChangeNotify(ASSOCCHANGED).
+    let _ = Command::new("ie4uinit.exe").arg("-show").status();
     Ok(())
 }
 

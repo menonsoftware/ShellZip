@@ -80,27 +80,38 @@ fn install_hicolor(source: &Path, dest: &Path) -> Result<(), IntegrateError> {
     Ok(())
 }
 
+const MIME_ICON_STEMS: &[&str] = &[
+    "application-zip",
+    "application-x-7z-compressed",
+    "application-vnd.rar",
+    "application-x-rar-compressed",
+    "application-gzip",
+    "application-x-bzip2",
+    "application-x-xz",
+    "application-zstd",
+    "application-x-tar",
+    "application-x-compressed-tar",
+    "application-x-bzip-compressed-tar",
+    "application-x-xz-compressed-tar",
+    "application-x-zstd-compressed-tar",
+];
+
+/// Pixel sizes under `linux/hicolor` plus the scalable SVG tree.
+const HICOLOR_SIZES: &[&str] = &[
+    "16x16", "22x22", "24x24", "32x32", "48x48", "64x64", "128x128", "256x256", "512x512",
+    "scalable",
+];
+
 fn remove_shellzip_mime_icons(hicolor: &Path) -> Result<(), IntegrateError> {
-    let mime_dir = hicolor.join("scalable/mimetypes");
-    if !mime_dir.is_dir() {
-        return Ok(());
-    }
-    for name in [
-        "application-zip.svg",
-        "application-x-7z-compressed.svg",
-        "application-vnd.rar.svg",
-        "application-x-rar-compressed.svg",
-        "application-gzip.svg",
-        "application-x-bzip2.svg",
-        "application-x-xz.svg",
-        "application-zstd.svg",
-        "application-x-tar.svg",
-        "application-x-compressed-tar.svg",
-        "application-x-bzip-compressed-tar.svg",
-        "application-x-xz-compressed-tar.svg",
-        "application-x-zstd-compressed-tar.svg",
-    ] {
-        let _ = fs::remove_file(mime_dir.join(name));
+    for size in HICOLOR_SIZES {
+        let mime_dir = hicolor.join(size).join("mimetypes");
+        if !mime_dir.is_dir() {
+            continue;
+        }
+        let ext = if *size == "scalable" { "svg" } else { "png" };
+        for stem in MIME_ICON_STEMS {
+            let _ = fs::remove_file(mime_dir.join(format!("{stem}.{ext}")));
+        }
     }
     Ok(())
 }

@@ -6,7 +6,7 @@
 2. Create `ShellZip.app` with `cargo bundle` (from `cargo-bundle`) or a hand-rolled layout:
    - `Contents/MacOS/shellzip`
    - `Contents/Resources/shellzip.icns` (application icon)
-   - `Contents/Resources/*.icns` from `grx/shellzip_file_icons/icns/` (document icons)
+   - `Contents/Resources/*.icns` from `grx/shellzip_file_icons/macos/` (document icons; multi-size / Retina)
 3. Merge [Info.plist.document-types.fragment.xml](Info.plist.document-types.fragment.xml) into `CFBundleDocumentTypes`.
 4. Set `CFBundleIdentifier` to `com.shellzip.ShellZip` (see `crates/shellzip-gui/Cargo.toml` metadata).
 

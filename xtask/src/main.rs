@@ -578,49 +578,122 @@ fn render(rows: &[Row], bytes: u64, speedup: f64) -> String {
     out
 }
 
-/// Rasterize `grx/shellzip_file_icons/svg` into `png/`, `ico/`, and `icns/`.
+/// Drawing stems under `grx/shellzip_file_icons/svg/`.
+const FILE_ICON_NAMES: &[&str] = &[
+    "zip", "7z", "rar", "tar", "gz", "bz2", "xz", "zst", "tar.gz", "tar.bz2", "tar.xz", "tar.zst",
+];
+
+/// Shell-standard ICO sizes. Explorer Medium/Large/Extra Large need these;
+/// Vista+ wants BMP/DIB below 256 and PNG only for the 256 entry.
+const ICO_SIZES: &[u32] = &[16, 24, 32, 48, 64, 256];
+
+/// Freedesktop hicolor raster sizes used by GNOME/KDE/Nautilus zoom levels.
+const LINUX_SIZES: &[u32] = &[16, 22, 24, 32, 48, 64, 128, 256, 512];
+
+/// All PNG edges we rasterize once and reuse for ICO / ICNS / hicolor.
+const RASTER_SIZES: &[u32] = &[16, 20, 22, 24, 32, 40, 48, 64, 96, 128, 256, 512, 1024];
+
+/// ICNS OSType → pixel edge. Includes 1x and @2x slots so Finder scales cleanly.
+const ICNS_SLOTS: &[([u8; 4], u32)] = &[
+    (*b"icp4", 16),
+    (*b"icp5", 32),
+    (*b"icp6", 64),
+    (*b"ic07", 128),
+    (*b"ic08", 256),
+    (*b"ic09", 512),
+    (*b"ic10", 1024),
+    (*b"ic11", 32),  // 16@2x
+    (*b"ic12", 64),  // 32@2x
+    (*b"ic13", 256), // 128@2x
+    (*b"ic14", 512), // 256@2x
+];
+
+/// Drawing stem → freedesktop MIME icon basename (no extension).
+fn linux_mime_basenames(stem: &str) -> &'static [&'static str] {
+    match stem {
+        "zip" => &["application-zip"],
+        "7z" => &["application-x-7z-compressed"],
+        "rar" => &["application-vnd.rar", "application-x-rar-compressed"],
+        "tar" => &["application-x-tar"],
+        "gz" => &["application-gzip"],
+        "bz2" => &["application-x-bzip2"],
+        "xz" => &["application-x-xz"],
+        "zst" => &["application-zstd"],
+        "tar.gz" => &["application-x-compressed-tar"],
+        "tar.bz2" => &["application-x-bzip-compressed-tar"],
+        "tar.xz" => &["application-x-xz-compressed-tar"],
+        "tar.zst" => &["application-x-zstd-compressed-tar"],
+        _ => &[],
+    }
+}
+
+/// Rasterize `grx/shellzip_file_icons/svg` into multi-size platform icon packs.
+///
+/// - Windows `.ico`: BMP/DIB for ≤64, PNG for 256 (Explorer Medium/Large/XL).
+/// - macOS `.icns`: classic + retina slots through 1024.
+/// - Linux `hicolor`: PNG trees for every common zoom size.
 fn gen_file_icons() -> Result<(), Box<dyn std::error::Error>> {
     let root = PathBuf::from("grx").join("shellzip_file_icons");
     let svg_dir = root.join("svg");
     let png_dir = root.join("png");
     let ico_dir = root.join("ico");
     let icns_dir = root.join("icns");
+    let macos_dir = root.join("macos");
+    let hicolor = root.join("linux").join("hicolor");
     fs::create_dir_all(&png_dir)?;
     fs::create_dir_all(&ico_dir)?;
     fs::create_dir_all(&icns_dir)?;
+    fs::create_dir_all(&macos_dir)?;
 
-    let names = [
-        "zip", "7z", "rar", "tar", "gz", "bz2", "xz", "zst", "tar.gz", "tar.bz2", "tar.xz",
-        "tar.zst",
-    ];
-    let sizes: &[u32] = &[16, 20, 24, 32, 40, 48, 64, 96, 128, 256];
-
-    for name in names {
-        let mut ico_dir_entry = ico::IconDir::new(ico::ResourceType::Icon);
-        let mut icns_pngs: Vec<(u32, Vec<u8>)> = Vec::new();
-        for &size in sizes {
+    for name in FILE_ICON_NAMES {
+        let mut rasters: std::collections::BTreeMap<u32, Vec<u8>> =
+            std::collections::BTreeMap::new();
+        for &size in RASTER_SIZES {
             let svg_name = if size <= 24 {
                 format!("{name}_small.svg")
             } else {
                 format!("{name}.svg")
             };
-            let svg_path = svg_dir.join(&svg_name);
-            let png_bytes = raster_svg(&svg_path, size)?;
+            let png_bytes = raster_svg(&svg_dir.join(&svg_name), size)?;
             fs::write(png_dir.join(format!("{name}_{size}.png")), &png_bytes)?;
+            rasters.insert(size, png_bytes);
+        }
 
-            let image = image::load_from_memory(&png_bytes)?.into_rgba8();
+        let mut ico_dir_entry = ico::IconDir::new(ico::ResourceType::Icon);
+        for &size in ICO_SIZES {
+            let png_bytes = rasters.get(&size).ok_or("missing ico raster")?;
+            let image = image::load_from_memory(png_bytes)?.into_rgba8();
             let icon_image = ico::IconImage::from_rgba_data(size, size, image.into_raw());
-            ico_dir_entry.add_entry(ico::IconDirEntry::encode(&icon_image)?);
-
-            if matches!(size, 16 | 32 | 64 | 128 | 256) {
-                icns_pngs.push((size, png_bytes));
-            }
+            // Soft SVG shadows make `encode()` pick PNG for every size; Explorer's
+            // Medium/Large/Extra Large paths expect classic DIB below 256.
+            let entry = if size >= 256 {
+                ico::IconDirEntry::encode_as_png(&icon_image)?
+            } else {
+                ico::IconDirEntry::encode_as_bmp(&icon_image)?
+            };
+            ico_dir_entry.add_entry(entry);
         }
         let ico_path = ico_dir.join(format!("{name}.ico"));
         let mut ico_file = fs::File::create(&ico_path)?;
         ico_dir_entry.write(&mut ico_file)?;
-        write_icns(&icns_dir.join(format!("{name}.icns")), &icns_pngs)?;
-        println!("wrote {name}.ico / {name}.icns");
+
+        let mut icns_entries: Vec<([u8; 4], Vec<u8>)> = Vec::new();
+        for &(ostype, size) in ICNS_SLOTS {
+            let png_bytes = rasters.get(&size).ok_or("missing icns raster")?.clone();
+            icns_entries.push((ostype, png_bytes));
+        }
+        write_icns(&icns_dir.join(format!("{name}.icns")), &icns_entries)?;
+        write_icns(&macos_dir.join(format!("{name}.icns")), &icns_entries)?;
+
+        for &size in LINUX_SIZES {
+            let png_bytes = rasters.get(&size).ok_or("missing linux raster")?;
+            let dir = hicolor.join(format!("{size}x{size}")).join("mimetypes");
+            fs::create_dir_all(&dir)?;
+            for mime in linux_mime_basenames(name) {
+                fs::write(dir.join(format!("{mime}.png")), png_bytes)?;
+            }
+        }
+        println!("wrote {name}.ico / {name}.icns + hicolor");
     }
     Ok(())
 }
@@ -637,27 +710,12 @@ fn raster_svg(path: &Path, size: u32) -> Result<Vec<u8>, Box<dyn std::error::Err
     Ok(pixmap.encode_png()?)
 }
 
-fn write_icns(path: &Path, pngs: &[(u32, Vec<u8>)]) -> Result<(), Box<dyn std::error::Error>> {
-    // Modern ICNS stores PNG payloads under typed OSTypes.
-    let type_for = |size: u32| -> Option<[u8; 4]> {
-        match size {
-            16 => Some(*b"icp4"),
-            32 => Some(*b"icp5"),
-            64 => Some(*b"icp6"),
-            128 => Some(*b"ic07"),
-            256 => Some(*b"ic08"),
-            _ => None,
-        }
-    };
-    let mut entries = Vec::new();
-    for &(size, ref png) in pngs {
-        let Some(ostype) = type_for(size) else {
-            continue;
-        };
-        entries.push((ostype, png.clone()));
-    }
+fn write_icns(
+    path: &Path,
+    entries: &[([u8; 4], Vec<u8>)],
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut body = Vec::new();
-    for (ostype, png) in &entries {
+    for (ostype, png) in entries {
         body.extend_from_slice(ostype);
         let len = u32::try_from(png.len() + 8)?;
         body.extend_from_slice(&len.to_be_bytes());

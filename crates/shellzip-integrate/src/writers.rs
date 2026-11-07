@@ -220,13 +220,7 @@ pub fn macos_document_types() -> String {
 pub fn windows_registry_plan(exe: &str, icons_dir: &str) -> String {
     let mut out = String::from("# ShellZip Windows association plan (HKCU)\n");
     for kind in EXTENSIONS {
-        let icon_file = format!("{icons_dir}\\{}.ico", kind.icon.replace('.', "_"));
-        // Prefer dotted icon names for tar.gz as tar.gz.ico when present.
-        let icon_file = if kind.icon.contains('.') {
-            format!("{icons_dir}\\{}.ico", kind.icon)
-        } else {
-            icon_file
-        };
+        let icon_file = format!("{icons_dir}\\{}.ico,0", kind.icon);
         out.push_str(&format!(
             "\
 ProgID {prog}
@@ -268,8 +262,8 @@ mod tests {
     fn registry_plan_mentions_progids() {
         let plan = windows_registry_plan(r"C:\ShellZip\shellzip.exe", r"C:\icons");
         assert!(plan.contains("ShellZip.zip"));
-        assert!(plan.contains("zip.ico"));
-        assert!(plan.contains("tar.gz.ico"));
+        assert!(plan.contains(r"C:\icons\zip.ico,0"));
+        assert!(plan.contains(r"C:\icons\tar.gz.ico,0"));
     }
 
     #[test]

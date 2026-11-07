@@ -67,10 +67,14 @@ fn app_resources(exe: &std::path::Path) -> Result<PathBuf, IntegrateError> {
 }
 
 fn copy_icns(source: &std::path::Path, dest: &std::path::Path) -> Result<(), IntegrateError> {
-    let icns = source.join("icns");
-    if !icns.is_dir() {
+    // Prefer `macos/` (full retina ICNS); fall back to the shared `icns/` pack.
+    let icns = ["macos", "icns"]
+        .iter()
+        .map(|name| source.join(name))
+        .find(|dir| dir.is_dir());
+    let Some(icns) = icns else {
         return Ok(());
-    }
+    };
     for entry in fs::read_dir(icns)? {
         let entry = entry?;
         let path = entry.path();

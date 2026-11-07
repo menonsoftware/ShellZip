@@ -42,6 +42,8 @@ for n,(l,c1,c2,t) in T.items():
         src=sm if s<=24 else big
         im=Image.open(io.BytesIO(cairosvg.svg2png(bytestring=src.encode(),output_width=s,output_height=s))).convert("RGBA")
         im.save(f"png/{n}_{s}.png"); imgs.append(im)
+    # Prefer `cargo run -p xtask -- gen-file-icons`: it writes Vista-compatible
+    # ICOs (BMP for ≤64, PNG for 256) that Explorer Medium/Large/XL can scale.
     imgs[-1].save(f"ico/{n}.ico",sizes=[(s,s) for s in sizes],append_images=imgs[:-1])
 names=list(T)
 W=Image.new("RGBA",(len(names)*84,170),"#FFFFFF")
