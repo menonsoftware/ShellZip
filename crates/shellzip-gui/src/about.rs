@@ -56,27 +56,35 @@ pub fn show(ctx: &egui::Context, open: &mut bool) {
     let result = chrome::modal(ctx, "shellzip-about", "About ShellZip", |ui| {
         ui.set_min_width(DIALOG_WIDTH);
         ui.set_max_width(DIALOG_WIDTH);
-        let max_height = (ui.ctx().screen_rect().height() - 96.0).clamp(280.0, 560.0);
-        egui::ScrollArea::vertical()
-            .max_height(max_height)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                ui.set_min_width(DIALOG_WIDTH);
-                identity(ui);
-                ui.add_space(8.0);
-                license(ui);
-                ui.add_space(8.0);
-                notices(ui);
-                ui.add_space(8.0);
-                ui.separator();
-                let rows = credits::credits();
-                ui.label(format!(
-                    "Third-party packages in this build ({})",
-                    rows.len()
-                ));
-                ui.add_space(4.0);
-                package_table(ui, rows);
-            });
+        // Fixed body. A scroll area that fills "whatever height is left" plus a
+        // footer under it makes the window taller on every frame.
+        let body_height = (ui.ctx().screen_rect().height() - 160.0).clamp(280.0, 520.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(DIALOG_WIDTH, body_height),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(body_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_min_width(DIALOG_WIDTH);
+                        identity(ui);
+                        ui.add_space(8.0);
+                        license(ui);
+                        ui.add_space(8.0);
+                        notices(ui);
+                        ui.add_space(8.0);
+                        ui.separator();
+                        let rows = credits::credits();
+                        ui.label(format!(
+                            "Third-party packages in this build ({})",
+                            rows.len()
+                        ));
+                        ui.add_space(4.0);
+                        package_table(ui, rows);
+                    });
+            },
+        );
         ui.add_space(8.0);
         ui.separator();
         let mut close = false;

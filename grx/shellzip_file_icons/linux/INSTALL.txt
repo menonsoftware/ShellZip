@@ -1,0 +1,3 @@
+Copy the hicolor folder into /usr/share/icons/ (or ~/.local/share/icons/), then run:
+  gtk-update-icon-cache -f /usr/share/icons/hicolor
+Icons are named after freedesktop MIME types, so file managers pick them up automatically.

@@ -61,14 +61,23 @@ impl TestDialog {
                 ui.label(egui::RichText::new(&results.summary).strong());
                 if !results.bad.is_empty() {
                     ui.add_space(6.0);
-                    egui::ScrollArea::vertical()
-                        .id_salt("shellzip-test-names")
-                        .max_height(220.0)
-                        .show(ui, |ui| {
-                            for name in &results.bad {
-                                ui.label(name);
-                            }
-                        });
+                    // Fixed list. Filling leftover height and then painting Close
+                    // makes this window taller on every frame when the list is long.
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), 220.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt("shellzip-test-names")
+                                .auto_shrink([false, false])
+                                .max_height(220.0)
+                                .show(ui, |ui| {
+                                    for name in &results.bad {
+                                        ui.label(name);
+                                    }
+                                });
+                        },
+                    );
                 }
                 ui.add_space(8.0);
                 ui.separator();

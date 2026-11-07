@@ -71,19 +71,27 @@ impl ViewDialog {
             ui.set_max_width(VIEW_WIDTH);
             match &self.body {
                 PreviewBody::Text(text) => {
-                    egui::ScrollArea::both()
-                        .id_salt("shellzip-view-text")
-                        .auto_shrink([false, false])
-                        .max_width(VIEW_WIDTH)
-                        .max_height(VIEW_TEXT_HEIGHT)
-                        .show(ui, |ui| {
-                            ui.set_max_width(VIEW_WIDTH - 16.0);
-                            ui.add(
-                                egui::Label::new(egui::RichText::new(text).monospace())
-                                    .wrap()
-                                    .selectable(true),
-                            );
-                        });
+                    // Fixed viewport. Filling the previous window height and then
+                    // painting the footer makes the viewer taller every frame.
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(VIEW_WIDTH, VIEW_TEXT_HEIGHT),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            egui::ScrollArea::both()
+                                .id_salt("shellzip-view-text")
+                                .auto_shrink([false, false])
+                                .max_width(VIEW_WIDTH)
+                                .max_height(VIEW_TEXT_HEIGHT)
+                                .show(ui, |ui| {
+                                    ui.set_max_width(VIEW_WIDTH - 16.0);
+                                    ui.add(
+                                        egui::Label::new(egui::RichText::new(text).monospace())
+                                            .wrap()
+                                            .selectable(true),
+                                    );
+                                });
+                        },
+                    );
                 }
                 PreviewBody::Binary => {
                     ui.label(format!("Size: {}", chrome::format_grouped(self.size)));

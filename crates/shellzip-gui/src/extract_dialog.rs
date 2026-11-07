@@ -289,7 +289,10 @@ fn general_tab(ui: &mut egui::Ui, dialog: &mut ExtractDialog, cache: &mut IconCa
     ui.label("Destination path (will be created if does not exist)");
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        let reserved = chrome::WELL_SIZE * 3.0 + ui.spacing().item_spacing.x * 2.0;
+        // Path field plus Display, New folder, and Refresh: four controls, three gaps.
+        // One missing gap makes the row wider than this dialog, and that extra
+        // width is added again on every frame.
+        let reserved = chrome::WELL_SIZE * 3.0 + ui.spacing().item_spacing.x * 3.0;
         let width = (ui.available_width() - reserved).max(48.0);
         let response = chrome::path_field(
             ui,

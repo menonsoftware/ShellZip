@@ -940,6 +940,179 @@ fn well_tool_button(ui: &mut egui::Ui, icon: ToolIcon, tip: &str, enabled: bool)
 mod tests {
     use super::{dropdown_height, format_grouped};
 
+    /// Sizes of area `id` over successive frames.
+    fn area_sizes(
+        id: &str,
+        frames: usize,
+        mut paint: impl FnMut(&egui::Context),
+    ) -> Vec<egui::Vec2> {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 900.0));
+        let mut sizes = Vec::with_capacity(frames);
+        for _ in 0..frames {
+            let mut size = egui::Vec2::ZERO;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint(ctx);
+                    size = ctx
+                        .memory(|mem| mem.area_rect(egui::Id::new(id)))
+                        .unwrap_or(egui::Rect::NOTHING)
+                        .size();
+                },
+            );
+            sizes.push(size);
+        }
+        sizes
+    }
+
+    /// The first frame can be the sizing pass. After that the window must hold still.
+    fn assert_settled(name: &str, sizes: &[egui::Vec2]) {
+        assert!(sizes.len() >= 4, "{name}");
+        let settled = sizes[2];
+        assert!(
+            sizes[2..].iter().all(|size| *size == settled),
+            "{name} kept changing: {sizes:?}"
+        );
+        assert!(
+            settled.x.is_finite() && settled.y.is_finite() && settled.x > 1.0 && settled.y > 1.0,
+            "{name} has no size: {sizes:?}"
+        );
+    }
+
+    #[test]
+    fn modals_keep_their_size_after_opening() {
+        let mut report = crate::report_dialog::ReportDialog::open(
+            crate::settings::ReportSettings::default(),
+            std::path::PathBuf::from(r"C:\Users\Administrator\Downloads\Programs\App.html"),
+            Vec::new(),
+            false,
+        );
+        assert_settled(
+            "report",
+            &area_sizes("shellzip-report", 6, |ctx| {
+                let _ = report.show(ctx);
+            }),
+        );
+
+        let mut about_open = true;
+        assert_settled(
+            "about",
+            &area_sizes("shellzip-about", 6, |ctx| {
+                crate::about::show(ctx, &mut about_open);
+            }),
+        );
+
+        let mut extract = crate::extract_dialog::ExtractDialog::prepare(
+            std::path::Path::new(r"C:\Users\Administrator\Downloads\Programs\App.rar"),
+            None,
+            "",
+            crate::settings::ExtractSettings::default(),
+        );
+        let mut cache = crate::shell_icons::IconCache::new();
+        assert_settled(
+            "extract",
+            &area_sizes("shellzip-extract", 8, |ctx| {
+                let _ = crate::extract_dialog::show(ctx, &mut extract, &mut cache);
+            }),
+        );
+
+        let mut viewer = crate::view_dialog::ViewDialog::from_parts(
+            "notes.txt",
+            crate::view_dialog::PreviewBody::Text("line\n".repeat(80)),
+            false,
+            400,
+        );
+        assert_settled(
+            "view",
+            &area_sizes("shellzip-view", 6, |ctx| {
+                let _ = viewer.show(ctx);
+            }),
+        );
+
+        let mut tested = crate::test_dialog::TestDialog::running(r"C:\archives\App.zip");
+        tested.finish(&shellzip_core::TestReport {
+            entries: 40,
+            checksums: (0..40)
+                .map(|index| format!("folder/file-{index}.txt"))
+                .collect(),
+            ..shellzip_core::TestReport::default()
+        });
+        assert_settled(
+            "test",
+            &area_sizes("shellzip-test", 6, |ctx| {
+                let _ = tested.show(ctx, None);
+            }),
+        );
+
+        let names: Vec<String> = (0..40)
+            .map(|index| format!("folder/member-{index}.txt"))
+            .collect();
+        assert_settled(
+            "delete",
+            &area_sizes("shellzip-delete", 6, |ctx| {
+                let _ = super::confirm_delete(ctx, &names);
+            }),
+        );
+
+        let mut add = crate::add_dialog::AddDialog::prepare(
+            std::path::Path::new(r"C:\Users\Administrator\Downloads\Programs"),
+            vec![std::path::PathBuf::from("notes.txt")],
+            &super::PackSettings {
+                level: 3,
+                method: shellzip_core::ZipMethod::Deflate,
+                sevenz_method: shellzip_core::SevenZMethod::Lzma2,
+                solid: true,
+                background: false,
+            },
+        );
+        assert_settled(
+            "add",
+            &area_sizes("shellzip-add", 6, |ctx| {
+                let _ = crate::add_dialog::show(ctx, &mut add);
+            }),
+        );
+
+        let mut info = crate::info_dialog::InfoDialog::new(
+            std::path::Path::new(r"C:\archives\App.zip"),
+            shellzip_core::ArchiveSummary {
+                kind: "ZIP archive".to_string(),
+                version: "2.0 / Deflate".to_string(),
+                host_os: "Windows".to_string(),
+                folders: 4,
+                files: 12,
+                total_size: 4096,
+                packed_size: 2048,
+                ratio_percent: 50,
+                sfx_bytes: 0,
+                comment: Some("A comment line.\n".repeat(40)),
+                encrypted: false,
+            },
+        );
+        assert_settled(
+            "info",
+            &area_sizes("shellzip-info", 6, |ctx| {
+                let _ = info.show(ctx);
+            }),
+        );
+
+        let mut rename = crate::rename_dialog::RenameDialog::new(
+            "notes.txt",
+            crate::rename_dialog::RenameTarget::Disk(std::path::PathBuf::from(
+                r"C:\Users\Administrator\Downloads\notes.txt",
+            )),
+        );
+        assert_settled(
+            "rename",
+            &area_sizes("shellzip-rename", 6, |ctx| {
+                let _ = rename.show(ctx);
+            }),
+        );
+    }
+
     #[test]
     fn dropdown_keeps_the_sevenzip_height_until_the_window_runs_out() {
         assert_eq!(dropdown_height(2000.0), 620.0);
