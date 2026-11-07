@@ -15,11 +15,7 @@ const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Shell Extensi
 
 /// Install associations and copy format icons into LocalAppData.
 pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
-    let exe = paths
-        .exe
-        .canonicalize()
-        .unwrap_or_else(|_| paths.exe.clone());
-    let exe_str = exe.to_string_lossy();
+    let exe_str = registry_fs_path(&paths.exe);
     let icons_dir = icons_install_dir()?;
     fs::create_dir_all(&icons_dir)?;
     copy_icons(&paths.icons_source, &icons_dir)?;
@@ -76,12 +72,12 @@ pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
     if let Some(dll) = &paths.shell_dll
         && dll.is_file()
     {
-        let dll = dll.canonicalize().unwrap_or_else(|_| dll.clone());
+        let dll = registry_fs_path(dll);
         let clsid_path = format!(r"Software\Classes\CLSID\{SHELL_CLSID}");
         let clsid = hkcu.create_subkey(&clsid_path)?.0;
         clsid.set_value("", &"ShellZip Context Menu")?;
         let inproc = clsid.create_subkey("InprocServer32")?.0;
-        inproc.set_value("", &dll.to_string_lossy().as_ref())?;
+        inproc.set_value("", &dll)?;
         inproc.set_value("ThreadingModel", &"Apartment")?;
         hkcu.create_subkey(APPROVED)?
             .0
@@ -142,6 +138,27 @@ fn icons_install_dir() -> Result<PathBuf, IntegrateError> {
     Ok(base.join("ShellZip").join("icons"))
 }
 
+/// Absolute path suitable for ProgID / InprocServer32 values.
+///
+/// `Path::canonicalize` on Windows yields a verbatim `\\?\…` form that
+/// Explorer's `shell\open\command` and `ShellExecute` reject with
+/// "Windows cannot access the specified device, path, or file."
+fn registry_fs_path(path: &Path) -> String {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    strip_verbatim_prefix(&path).to_string_lossy().into_owned()
+}
+
+fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        path.to_path_buf()
+    }
+}
+
 fn copy_icons(source: &Path, dest: &Path) -> Result<(), IntegrateError> {
     let ico_dir = source.join("ico");
     if ico_dir.is_dir() {
@@ -174,5 +191,35 @@ mod tests {
             let dir = icons_install_dir().expect("dir");
             assert!(dir.ends_with(Path::new("ShellZip\\icons")) || dir.ends_with("ShellZip/icons"));
         }
+    }
+
+    #[test]
+    fn strips_verbatim_drive_and_unc_prefixes() {
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\C:\ShellZip\shellzip.exe")),
+            PathBuf::from(r"C:\ShellZip\shellzip.exe")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\UNC\server\share\shellzip.exe")),
+            PathBuf::from(r"\\server\share\shellzip.exe")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"C:\ShellZip\shellzip.exe")),
+            PathBuf::from(r"C:\ShellZip\shellzip.exe")
+        );
+    }
+
+    #[test]
+    fn registry_path_drops_canonicalize_prefix() {
+        let exe = std::env::current_exe().expect("current_exe");
+        let registered = registry_fs_path(&exe);
+        assert!(
+            !registered.starts_with(r"\\?\"),
+            "Explorer rejects verbatim paths in open commands: {registered}"
+        );
+        assert!(
+            registered.contains("shellzip") || registered.contains("deps"),
+            "unexpected path: {registered}"
+        );
     }
 }

@@ -4,7 +4,12 @@ use std::path::Path;
 
 /// Stem used by **Extract Here (name)**. Compound archive suffixes are stripped.
 pub fn folder_stem(path: &Path) -> String {
-    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+    // Split on both separators so a Windows path still yields a basename when
+    // this crate is built and tested on Unix (CI).
+    let Some(name) = path
+        .to_str()
+        .and_then(|s| s.rsplit(['/', '\\']).find(|part| !part.is_empty()))
+    else {
         return "archive".to_string();
     };
     let lower = name.to_ascii_lowercase();
@@ -21,7 +26,8 @@ pub fn folder_stem(path: &Path) -> String {
             return stem.to_string();
         }
     }
-    path.file_stem()
+    Path::new(name)
+        .file_stem()
         .and_then(|s| s.to_str())
         .filter(|s| !s.is_empty())
         .unwrap_or("archive")
