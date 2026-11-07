@@ -1,0 +1,19 @@
+[package]
+name = "shellzip-integrate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "File associations, MIME tables, and shell-menu helpers for ShellZip"
+
+[dependencies]
+thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

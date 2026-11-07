@@ -1,0 +1,76 @@
+<!-- ShellZip document types. Merge into ShellZip.app/Contents/Info.plist CFBundleDocumentTypes. -->
+<!-- Generated from shellzip-integrate::macos_document_types(); keep in sync. -->
+<dict>
+  <key>CFBundleTypeName</key>
+  <string>ZIP Archive</string>
+  <key>CFBundleTypeRole</key>
+  <string>Viewer</string>
+  <key>CFBundleTypeIconFile</key>
+  <string>zip</string>
+  <key>CFBundleTypeExtensions</key>
+  <array>
+    <string>zip</string>
+    <string>zipx</string>
+  </array>
+</dict>
+<dict>
+  <key>CFBundleTypeName</key>
+  <string>7-Zip Archive</string>
+  <key>CFBundleTypeRole</key>
+  <string>Viewer</string>
+  <key>CFBundleTypeIconFile</key>
+  <string>7z</string>
+  <key>CFBundleTypeExtensions</key>
+  <array>
+    <string>7z</string>
+  </array>
+</dict>
+<dict>
+  <key>CFBundleTypeName</key>
+  <string>RAR Archive</string>
+  <key>CFBundleTypeRole</key>
+  <string>Viewer</string>
+  <key>CFBundleTypeIconFile</key>
+  <string>rar</string>
+  <key>CFBundleTypeExtensions</key>
+  <array>
+    <string>rar</string>
+  </array>
+</dict>
+<dict>
+  <key>CFBundleTypeName</key>
+  <string>TAR Archive</string>
+  <key>CFBundleTypeRole</key>
+  <string>Viewer</string>
+  <key>CFBundleTypeIconFile</key>
+  <string>tar</string>
+  <key>CFBundleTypeExtensions</key>
+  <array>
+    <string>tar</string>
+  </array>
+</dict>
+<dict>
+  <key>CFBundleTypeName</key>
+  <string>Gzipped TAR Archive</string>
+  <key>CFBundleTypeRole</key>
+  <string>Viewer</string>
+  <key>CFBundleTypeIconFile</key>
+  <string>tar.gz</string>
+  <key>CFBundleTypeExtensions</key>
+  <array>
+    <string>tgz</string>
+    <string>tar.gz</string>
+  </array>
+</dict>
+<dict>
+  <key>CFBundleTypeName</key>
+  <string>GZIP Archive</string>
+  <key>CFBundleTypeRole</key>
+  <string>Viewer</string>
+  <key>CFBundleTypeIconFile</key>
+  <string>gz</string>
+  <key>CFBundleTypeExtensions</key>
+  <array>
+    <string>gz</string>
+  </array>
+</dict>

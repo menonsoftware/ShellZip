@@ -8,7 +8,7 @@ An archive manager written in Rust: a GUI (`shellzip`), a CLI (`szip`), and a se
 
 ## How is this different from 7-Zip or WinRAR?
 
-ShellZip is a new implementation. It uses Rust crates (`zip`, `zesven`, `tar`, `unrar`, …), not `7zxa.dll` or WinRAR’s engine. The CLI accepts many WinRAR-style switches (`-p`, `-mt`, `-sfx`, `-hp`) so muscle memory still works. ZIP and 7z creation, tar/zstd, and a native GUI are in scope from the start. Solid recovery records, volume sets, and an Explorer shell extension are not.
+ShellZip is a new implementation. It uses Rust crates (`zip`, `zesven`, `tar`, `unrar`, …), not `7zxa.dll` or WinRAR’s engine. The CLI accepts many WinRAR-style switches (`-p`, `-mt`, `-sfx`, `-hp`) so muscle memory still works. ZIP and 7z creation, tar/zstd, a native GUI, and per-user file associations with a shell context menu are in scope. Solid recovery records and volume sets are not.
 
 ## Why can’t I create a `.rar`?
 
@@ -94,7 +94,11 @@ Theme, toolbar size, pack/extract defaults, recent archives, and recent destinat
 
 ## Is there an Explorer / Finder context menu?
 
-Not yet. The desktop file `scripts/shellzip.desktop` can register MIME types on Linux. A Windows `IExplorerCommand` shell extension is a later phase.
+Yes. **Options → Integrate with the file manager** (or `shellzip --integrate`) registers per-user associations and menus. The ShellZip submenu offers Open, Extract to…, Extract Here, and Extract Here (name). Handlers start `shellzip`; they do not extract inside the file manager. Remove with **Remove integration** or `shellzip --unintegrate`.
+
+- **Windows** — `shellzip_shell.dll` (`IContextMenu`, icon handler). Place the DLL next to `shellzip.exe`. See [platform/windows/README.md](../platform/windows/README.md).
+- **Linux** — desktop actions, KDE service menu, Nemo actions, Thunar snippet; optional GPL Nautilus script under [platform/linux/nautilus/](../platform/linux/nautilus/).
+- **macOS** — document types and a Finder Sync Swift source under [platform/macos/](../platform/macos/).
 
 ## What do the exit codes mean?
 

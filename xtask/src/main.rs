@@ -17,8 +17,11 @@ fn main() {
         "build-fixtures" => build_fixtures(),
         "sign" => sign(),
         "package-stubs" => package_stubs(),
+        "gen-file-icons" => gen_file_icons(),
         _ => {
-            eprintln!("usage: xtask bench | build-fixtures | sign <sfx> | package-stubs [stub]");
+            eprintln!(
+                "usage: xtask bench | build-fixtures | sign <sfx> | package-stubs [stub] | gen-file-icons"
+            );
             std::process::exit(2);
         }
     };
@@ -573,4 +576,98 @@ fn render(rows: &[Row], bytes: u64, speedup: f64) -> String {
          Matching packed sizes mean the parallel merge wrote the same compressed bytes as one thread.\n"
     ));
     out
+}
+
+/// Rasterize `grx/shellzip_file_icons/svg` into `png/`, `ico/`, and `icns/`.
+fn gen_file_icons() -> Result<(), Box<dyn std::error::Error>> {
+    let root = PathBuf::from("grx").join("shellzip_file_icons");
+    let svg_dir = root.join("svg");
+    let png_dir = root.join("png");
+    let ico_dir = root.join("ico");
+    let icns_dir = root.join("icns");
+    fs::create_dir_all(&png_dir)?;
+    fs::create_dir_all(&ico_dir)?;
+    fs::create_dir_all(&icns_dir)?;
+
+    let names = [
+        "zip", "7z", "rar", "tar", "gz", "bz2", "xz", "zst", "tar.gz", "tar.bz2", "tar.xz",
+        "tar.zst",
+    ];
+    let sizes: &[u32] = &[16, 20, 24, 32, 40, 48, 64, 96, 128, 256];
+
+    for name in names {
+        let mut ico_dir_entry = ico::IconDir::new(ico::ResourceType::Icon);
+        let mut icns_pngs: Vec<(u32, Vec<u8>)> = Vec::new();
+        for &size in sizes {
+            let svg_name = if size <= 24 {
+                format!("{name}_small.svg")
+            } else {
+                format!("{name}.svg")
+            };
+            let svg_path = svg_dir.join(&svg_name);
+            let png_bytes = raster_svg(&svg_path, size)?;
+            fs::write(png_dir.join(format!("{name}_{size}.png")), &png_bytes)?;
+
+            let image = image::load_from_memory(&png_bytes)?.into_rgba8();
+            let icon_image = ico::IconImage::from_rgba_data(size, size, image.into_raw());
+            ico_dir_entry.add_entry(ico::IconDirEntry::encode(&icon_image)?);
+
+            if matches!(size, 16 | 32 | 64 | 128 | 256) {
+                icns_pngs.push((size, png_bytes));
+            }
+        }
+        let ico_path = ico_dir.join(format!("{name}.ico"));
+        let mut ico_file = fs::File::create(&ico_path)?;
+        ico_dir_entry.write(&mut ico_file)?;
+        write_icns(&icns_dir.join(format!("{name}.icns")), &icns_pngs)?;
+        println!("wrote {name}.ico / {name}.icns");
+    }
+    Ok(())
+}
+
+fn raster_svg(path: &Path, size: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let data = fs::read(path)?;
+    let mut options = usvg::Options::default();
+    options.fontdb_mut().load_system_fonts();
+    let tree = usvg::Tree::from_data(&data, &options)?;
+    let mut pixmap = tiny_skia::Pixmap::new(size, size).ok_or("pixmap")?;
+    let scale = size as f32 / tree.size().width().max(tree.size().height());
+    let transform = tiny_skia::Transform::from_scale(scale, scale);
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    Ok(pixmap.encode_png()?)
+}
+
+fn write_icns(path: &Path, pngs: &[(u32, Vec<u8>)]) -> Result<(), Box<dyn std::error::Error>> {
+    // Modern ICNS stores PNG payloads under typed OSTypes.
+    let type_for = |size: u32| -> Option<[u8; 4]> {
+        match size {
+            16 => Some(*b"icp4"),
+            32 => Some(*b"icp5"),
+            64 => Some(*b"icp6"),
+            128 => Some(*b"ic07"),
+            256 => Some(*b"ic08"),
+            _ => None,
+        }
+    };
+    let mut entries = Vec::new();
+    for &(size, ref png) in pngs {
+        let Some(ostype) = type_for(size) else {
+            continue;
+        };
+        entries.push((ostype, png.clone()));
+    }
+    let mut body = Vec::new();
+    for (ostype, png) in &entries {
+        body.extend_from_slice(ostype);
+        let len = u32::try_from(png.len() + 8)?;
+        body.extend_from_slice(&len.to_be_bytes());
+        body.extend_from_slice(png);
+    }
+    let mut file = Vec::new();
+    file.extend_from_slice(b"icns");
+    let total = u32::try_from(body.len() + 8)?;
+    file.extend_from_slice(&total.to_be_bytes());
+    file.extend_from_slice(&body);
+    fs::write(path, file)?;
+    Ok(())
 }

@@ -22,6 +22,7 @@ use crate::explorer::{
 use crate::extract_dialog::{self, ExtractAction, ExtractRequest};
 use crate::icons::Icon;
 use crate::info_dialog::{self, InfoAction};
+use crate::launch::{self, LaunchAction};
 use crate::progress_dialog::{self, ProgressCommand};
 use crate::rename_dialog::{self, RenameAction, RenameTarget};
 use crate::report_dialog::{self, ReportAction, ReportArchive, ReportRow};
@@ -140,18 +141,28 @@ pub struct ShellZipApp {
     progress: Arc<SharedProgress>,
     tx: Sender<Outcome>,
     rx: Receiver<Outcome>,
+    /// Shell-menu extract jobs waiting until the previous one finishes.
+    shell_queue: Vec<(PathBuf, PathBuf, bool)>,
+    /// Remaining archives for a multi-file **Extract to…** after the dialog.
+    shell_extract_to: Vec<PathBuf>,
 }
 
 impl ShellZipApp {
-    /// Install image loaders, apply the file-manager theme, and list `launch` or the desktop.
-    pub fn new(cc: &eframe::CreationContext<'_>, launch: Option<PathBuf>) -> Self {
+    /// Install image loaders, apply the file-manager theme, and honour `launch`.
+    pub fn new(cc: &eframe::CreationContext<'_>, launch: LaunchAction) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let stored = settings::load();
         theme::apply(&cc.egui_ctx, stored.theme);
         let (tx, rx) = mpsc::channel();
-        let launch = launch.filter(|path| path.exists());
-        let open_file = launch.as_ref().is_some_and(|path| path.is_file());
-        let path = match &launch {
+        let open_path = match &launch {
+            LaunchAction::Open(path) if path.exists() => Some(path.clone()),
+            LaunchAction::ExtractTo(paths)
+            | LaunchAction::ExtractHere(paths)
+            | LaunchAction::ExtractHereNamed(paths) => paths.first().cloned(),
+            _ => None,
+        };
+        let open_file = open_path.as_ref().is_some_and(|path| path.is_file());
+        let path = match &open_path {
             Some(path) if path.is_dir() => path.clone(),
             Some(path) => path
                 .parent()
@@ -213,12 +224,102 @@ impl ShellZipApp {
             progress: Arc::new(SharedProgress::new()),
             tx,
             rx,
+            shell_queue: Vec::new(),
+            shell_extract_to: Vec::new(),
         };
         app.rebuild_view();
-        if let Some(path) = launch.filter(|path| path.is_file()) {
-            app.start_list(path);
-        }
+        app.apply_launch(launch);
         app
+    }
+
+    fn apply_launch(&mut self, launch: LaunchAction) {
+        match launch {
+            LaunchAction::Browse => {}
+            LaunchAction::Open(path) if path.is_file() => self.start_list(path),
+            LaunchAction::Open(path) if path.is_dir() => self.open_folder(path),
+            LaunchAction::Open(_) => {}
+            LaunchAction::ExtractTo(paths) => self.begin_shell_extract_to(paths),
+            LaunchAction::ExtractHere(paths) => {
+                let jobs = paths
+                    .into_iter()
+                    .map(|archive| {
+                        let output = launch::extract_here_dir(&archive);
+                        (archive, output, false)
+                    })
+                    .collect();
+                self.enqueue_shell_extracts(jobs);
+            }
+            LaunchAction::ExtractHereNamed(paths) => {
+                let jobs = paths
+                    .into_iter()
+                    .map(|archive| {
+                        let output = launch::extract_here_named_dir(&archive);
+                        (archive, output, false)
+                    })
+                    .collect();
+                self.enqueue_shell_extracts(jobs);
+            }
+        }
+    }
+
+    fn begin_shell_extract_to(&mut self, mut paths: Vec<PathBuf>) {
+        let Some(first) = paths.first().cloned() else {
+            return;
+        };
+        self.shell_extract_to = paths.split_off(1);
+        if self.refuse_operation() || self.extract_dialog.is_some() {
+            return;
+        }
+        self.extract_dialog = Some(extract_dialog::ExtractDialog::prepare(
+            &first,
+            None,
+            "",
+            self.extract,
+        ));
+    }
+
+    fn enqueue_shell_extracts(&mut self, mut jobs: Vec<(PathBuf, PathBuf, bool)>) {
+        if jobs.is_empty() {
+            return;
+        }
+        if self.operation.is_none() {
+            let (archive, output, show) = jobs.remove(0);
+            self.shell_queue = jobs;
+            self.start_shell_extract(archive, output, show);
+        } else {
+            self.shell_queue.extend(jobs);
+        }
+    }
+
+    fn start_shell_extract(&mut self, archive: PathBuf, output: PathBuf, show_in_explorer: bool) {
+        let settings = self.extract;
+        let flat = settings.paths == settings::PathMode::None;
+        let request = ExtractRequest {
+            archive,
+            output,
+            update: settings.update,
+            overwrite: settings.overwrite,
+            flat,
+            strip_prefix: String::new(),
+            keep_broken: settings.keep_broken,
+            restore_mtime: settings.restore_mtime,
+            show_in_explorer,
+            delete: settings.delete,
+            recycle: settings.recycle,
+            background: settings.background,
+            names: None,
+        };
+        self.start_extract(request);
+    }
+
+    fn pump_shell_queue(&mut self) {
+        if self.operation.is_some() {
+            return;
+        }
+        if let Some((archive, output, show)) = self.shell_queue.first().cloned() {
+            self.shell_queue.remove(0);
+            self.start_shell_extract(archive, output, show);
+        }
     }
 
     fn open_archive(&mut self) {
@@ -1389,6 +1490,7 @@ impl ShellZipApp {
                 Outcome::NeedPassword(request) => self.finish_password(request),
             }
         }
+        self.pump_shell_queue();
     }
 
     fn settle_side_status(&mut self, token: JobToken) {
@@ -2031,6 +2133,14 @@ impl ShellZipApp {
                 self.toolbar = size;
                 self.persist_settings();
             }
+            MenuCommand::Integrate => match launch::run_integrate() {
+                Ok(()) => self.status = "File manager integration installed.".to_string(),
+                Err(err) => self.error = Some(err),
+            },
+            MenuCommand::Unintegrate => match launch::run_unintegrate() {
+                Ok(()) => self.status = "File manager integration removed.".to_string(),
+                Err(err) => self.error = Some(err),
+            },
         }
     }
 
@@ -2512,15 +2622,29 @@ impl eframe::App for ShellZipApp {
         match extract_action {
             Some(ExtractAction::Submit(request)) => {
                 self.extract_dialog = None;
+                let rest = std::mem::take(&mut self.shell_extract_to);
+                if !rest.is_empty() {
+                    let output = request.output.clone();
+                    let show = request.show_in_explorer;
+                    let jobs = rest
+                        .into_iter()
+                        .map(|archive| (archive, output.clone(), show))
+                        .collect::<Vec<_>>();
+                    self.shell_queue.extend(jobs);
+                }
                 self.start_extract(request);
             }
             Some(ExtractAction::Save(settings)) => {
                 self.extract = settings;
                 self.persist_settings();
             }
-            Some(ExtractAction::Close) => self.extract_dialog = None,
+            Some(ExtractAction::Close) => {
+                self.extract_dialog = None;
+                self.shell_extract_to.clear();
+            }
             None => {}
         }
+        self.pump_shell_queue();
         let delete_choice = self.pending_archive_delete.as_mut().map(|pending| {
             let path = pending.path.clone();
             let recycle = pending.recycle;

@@ -18,6 +18,8 @@ PKG_GUI := shellzip-gui
 PKG_CORE := shellzip-core
 PKG_SFX := shellzip-sfx
 BIN_SFX := shellzip-sfx
+PKG_SHELL := shellzip-shell
+PKG_INTEGRATE := shellzip-integrate
 
 # `make release` leaves szip, shellzip, and the size-optimized stub together.
 ifeq ($(OS),Windows_NT)
@@ -34,11 +36,12 @@ OPEN_RELEASE = mkdir -p "$(CURDIR)/target/release" && (xdg-open "$(CURDIR)/targe
 endif
 
 .PHONY: all build release build-cli build-gui build-core \
-	release-cli release-gui release-sfx \
+	release-cli release-gui release-sfx release-shell \
 	run run-release gui gui-release explore \
 	test test-cli test-core test-sfx build-sfx \
 	check clippy lint fmt fmt-check doc deny \
-	clean ci install install-gui bench help
+	clean ci install install-gui install-shell \
+	gen-file-icons bench help
 
 all: build
 
@@ -46,7 +49,14 @@ build:
 	$(CARGO) build --workspace $(CARGO_FLAGS)
 
 # CLI + desktop + size-optimized SFX stub (minisize, not --release).
-release: release-cli release-gui release-sfx
+release: release-cli release-gui release-sfx release-shell
+
+release-shell:
+ifeq ($(OS),Windows_NT)
+	$(CARGO) build --release -p $(PKG_SHELL) $(CARGO_FLAGS)
+else
+	@echo skip shellzip-shell on non-Windows
+endif
 
 release-cli:
 	$(CARGO) build --release -p $(PKG_CLI) $(CARGO_FLAGS)
@@ -133,6 +143,17 @@ install:
 install-gui:
 	$(CARGO) install --path crates/$(PKG_GUI) --locked --force
 
+# Register file associations, icons, and shell menus for the current user.
+install-shell: install-gui
+ifeq ($(OS),Windows_NT)
+	$(CARGO) build --release -p $(PKG_SHELL) $(CARGO_FLAGS)
+	powershell -NoProfile -Command "$$bin = Join-Path $$env:USERPROFILE '.cargo\\bin'; New-Item -ItemType Directory -Force -Path $$bin | Out-Null; Copy-Item -Force 'target/release/shellzip_shell.dll' (Join-Path $$bin 'shellzip_shell.dll')"
+endif
+	shellzip --integrate
+
+gen-file-icons:
+	$(CARGO) run -p xtask -- gen-file-icons
+
 # Release timings for ZIP threads, plus 7z/Rar when they are on PATH.
 bench:
 	$(CARGO) run --release -p xtask -- bench
@@ -162,5 +183,8 @@ help:
 	@echo   make ci               fmt-check + clippy + test + deny
 	@echo   make install          cargo install szip
 	@echo   make install-gui      cargo install shellzip
+	@echo   make install-shell    install-gui + register associations
+	@echo   make gen-file-icons   Rasterize grx/shellzip_file_icons
+	@echo   make release-shell    Windows Explorer shell-extension DLL
 	@echo   make bench            Release ZIP timings into docs/BENCH.md
 	@echo   make clean            cargo clean

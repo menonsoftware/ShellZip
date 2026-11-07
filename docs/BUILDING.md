@@ -131,11 +131,33 @@ cargo run --release -p xtask -- bench
 
 Times ZIP creation at `-m5` with 1 and 8 threads against a 32 MiB text corpus, and 7z when `7z` is on `PATH`. Results overwrite [BENCH.md](BENCH.md). Criterion benches live under `crates/shellzip-core/benches/`.
 
+## File icons
+
+Master SVGs live in `grx/shellzip_file_icons/svg/`. Rasterize committed `.ico` / `.icns` / PNG trees with:
+
+```bash
+make gen-file-icons
+# or
+cargo run -p xtask -- gen-file-icons
+```
+
+Linux freedesktop MIME icons are already under `grx/shellzip_file_icons/linux/hicolor/`.
+
+## Shell integration
+
+```bash
+make install-shell          # cargo install shellzip, build the Windows DLL, then --integrate
+shellzip --integrate        # per-user associations + menus
+shellzip --unintegrate
+```
+
+Crates: `shellzip-integrate` (tables and installers), `shellzip-shell` (Windows Explorer cdylib). Platform notes: [platform/windows](../platform/windows), [platform/macos](../platform/macos), [platform/linux/nautilus](../platform/linux/nautilus).
+
 ## Platform notes
 
-- **Windows** — GUI and SFX are `windows_subsystem = "windows"`. Icons and manifests come from `winresource` build scripts. `--om` writes `Zone.Identifier`.
-- **Linux** — install the apt packages above before `make gui`. Optional: copy `scripts/shellzip.desktop` into an applications directory.
-- **macOS** — not in the CI matrix yet. The GUI crate has macOS icon dependencies; add `macos-latest` when a Mac-specific path exists.
+- **Windows** — GUI and SFX are `windows_subsystem = "windows"`. Icons and manifests come from `winresource` build scripts. `--om` writes `Zone.Identifier`. Build `shellzip-shell` for the Explorer menu.
+- **Linux** — install the apt packages above before `make gui`. `shellzip --integrate` installs the desktop file, hicolor MIME icons, and KDE/Nemo/Thunar actions.
+- **macOS** — not in the CI matrix yet. Bundle document types and the Finder Sync sources under `platform/macos/`.
 
 ## API docs
 

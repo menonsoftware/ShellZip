@@ -8,7 +8,7 @@ User and developer pages for this repository. Start at the root [README.md](../R
 |---|---|
 | [FAQ.md](FAQ.md) | Common questions (formats, passwords, SFX, settings, exit codes) |
 | [CLI.md](CLI.md) | `szip` commands, switches, examples |
-| [GUI.md](GUI.md) | Desktop window, dialogs, toolbar, settings |
+| [GUI.md](GUI.md) | Desktop window, dialogs, toolbar, settings, file-manager integration |
 | [FORMATS.md](FORMATS.md) | What each format can do, encryption, safety |
 
 ## Building and internals

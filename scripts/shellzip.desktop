@@ -2,8 +2,22 @@
 Type=Application
 Name=ShellZip
 Comment=Open, test, extract, and create archives
-Exec=shellzip %f
+Exec=shellzip %F
+Icon=shellzip
 Terminal=false
 Categories=Utility;Archiving;
-MimeType=application/zip;application/x-tar;application/gzip;application/zstd;application/vnd.rar;application/x-7z-compressed;
+MimeType=application/zip;application/x-7z-compressed;application/vnd.rar;application/x-rar-compressed;application/gzip;application/x-bzip2;application/x-xz;application/zstd;application/x-tar;application/x-compressed-tar;application/x-bzip-compressed-tar;application/x-xz-compressed-tar;application/x-zstd-compressed-tar;
 StartupNotify=true
+Actions=ExtractTo;ExtractHere;ExtractHereNamed;
+
+[Desktop Action ExtractTo]
+Name=Extract to…
+Exec=shellzip --extract-to %F
+
+[Desktop Action ExtractHere]
+Name=Extract Here
+Exec=shellzip --extract-here %F
+
+[Desktop Action ExtractHereNamed]
+Name=Extract Here (folder)
+Exec=shellzip --extract-here-named %F

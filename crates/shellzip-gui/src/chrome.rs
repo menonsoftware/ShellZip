@@ -107,6 +107,10 @@ pub enum MenuCommand {
     InvertSelection,
     /// Large (32) or extra-large (48) toolbar glyphs.
     ToolbarSize(ToolbarSize),
+    /// Register ShellZip with the file manager for this user.
+    Integrate,
+    /// Remove ShellZip file associations for this user.
+    Unintegrate,
 }
 
 /// Toolbar buttons, in the same order as the reference layout.
@@ -269,6 +273,13 @@ pub fn menu_bar(
                     }
                 }
             });
+            ui.separator();
+            if ui.button("Integrate with the file manager").clicked() {
+                command = Some(MenuCommand::Integrate);
+            }
+            if ui.button("Remove integration").clicked() {
+                command = Some(MenuCommand::Unintegrate);
+            }
         });
         ui.menu_button("Help", |ui| {
             if ui.button("About ShellZip").clicked() {

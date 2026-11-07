@@ -87,13 +87,30 @@ Settings persist in `settings.toml` (see [FAQ.md](FAQ.md#where-does-the-gui-stor
 
 **Help → About** shows the project licence, the UnRAR extraction notice, and a table of every third-party crate in the build.
 
-## Linux desktop entry
+## File manager integration
 
-`scripts/shellzip.desktop` registers ShellZip as a Utility / Archiving handler for ZIP, tar, gzip, zstd, RAR, and 7z MIME types. Install it into `~/.local/share/applications/` (or a system applications directory) after `shellzip` is on `PATH`.
+**Options → Integrate with the file manager** (or `shellzip --integrate` / `make install-shell`) registers ShellZip for the current user:
+
+- Default / Open With handlers for zip, zipx, 7z, rar, tar, gz, tgz, bz2, tbz2, xz, txz, zst, tzst
+- Per-format document icons from `grx/shellzip_file_icons`
+- Context menu: Open, Extract to…, Extract Here, Extract Here (archive folder name)
+
+Shell verbs:
+
+```text
+shellzip archive.zip
+shellzip --extract-to archive.zip
+shellzip --extract-here archive.zip
+shellzip --extract-here-named archive.zip
+shellzip --integrate
+shellzip --unintegrate
+```
+
+Extract Here uses the saved overwrite policy (Ask by default) and the password prompt when needed. Linux also installs `scripts/shellzip.desktop` MIME actions; see [platform/](../platform/) for OS-specific notes.
 
 ## Limitations
 
-- No Explorer / Finder context menu yet
 - TAR and single-file streams are not edited in place
 - The SFX stub extracts ZIP and 7z LZMA2/AES only; extra 7z codecs need `szip` or `shellzip`
 - Preview is for a single selected file, not a hex editor
+- `.exe` self-extractors are never claimed as a document type

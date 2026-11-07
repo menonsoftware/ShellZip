@@ -13,6 +13,7 @@ mod explorer;
 mod extract_dialog;
 mod icons;
 mod info_dialog;
+mod launch;
 mod progress_dialog;
 mod rename_dialog;
 mod report_dialog;
@@ -23,15 +24,19 @@ mod theme;
 mod view_dialog;
 mod worker;
 
-fn main() {
-    let launch = std::env::args()
-        .nth(1)
-        .map(std::path::PathBuf::from)
-        .filter(|path| {
-            path.as_os_str()
-                .to_str()
-                .is_none_or(|text| !text.starts_with('-'))
-        });
+fn main() -> std::process::ExitCode {
+    let mut argv = std::env::args();
+    let _program = argv.next();
+    match launch::parse(argv) {
+        launch::Startup::Exit(code) => code,
+        launch::Startup::Run(action) => {
+            run_window(action);
+            std::process::ExitCode::SUCCESS
+        }
+    }
+}
+
+fn run_window(action: launch::LaunchAction) {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1080.0, 720.0])
         .with_min_inner_size([820.0, 480.0])
@@ -46,7 +51,7 @@ fn main() {
     if let Err(err) = eframe::run_native(
         "ShellZip",
         options,
-        Box::new(move |cc| Ok(Box::new(app::ShellZipApp::new(cc, launch)))),
+        Box::new(move |cc| Ok(Box::new(app::ShellZipApp::new(cc, action)))),
     ) {
         anstream_fallback(&err);
         std::process::exit(1);

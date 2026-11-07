@@ -5,6 +5,8 @@ members = [
     "crates/shellzip-cli",
     "crates/shellzip-gui",
     "crates/shellzip-sfx",
+    "crates/shellzip-integrate",
+    "crates/shellzip-shell",
     "xtask",
 ]
 default-members = [
@@ -12,6 +14,7 @@ default-members = [
     "crates/shellzip-cli",
     "crates/shellzip-gui",
     "crates/shellzip-sfx",
+    "crates/shellzip-integrate",
 ]
 
 [workspace.package]

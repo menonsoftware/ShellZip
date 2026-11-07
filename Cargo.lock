@@ -755,6 +755,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
 name = "byteorder-lite"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2695,6 +2701,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "ico"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc50b891e4acf8fe0e71ef88ec43ad82ee07b3810ad09de10f1d01f072ed4b98"
+dependencies = [
+ "byteorder",
+ "png 0.17.16",
 ]
 
 [[package]]
@@ -4923,6 +4939,7 @@ dependencies = [
  "resvg 0.49.0",
  "rfd",
  "shellzip-core",
+ "shellzip-integrate",
  "sysinfo 0.40.1",
  "systemicons",
  "toml 1.1.8+spec-1.1.0",
@@ -4930,6 +4947,15 @@ dependencies = [
  "windows-icons",
  "winresource",
  "xdg-mime",
+]
+
+[[package]]
+name = "shellzip-integrate"
+version = "0.1.1"
+dependencies = [
+ "tempfile",
+ "thiserror 2.0.21",
+ "winreg",
 ]
 
 [[package]]
@@ -4942,6 +4968,15 @@ dependencies = [
  "windows-sys 0.59.0",
  "winresource",
  "zeroize",
+]
+
+[[package]]
+name = "shellzip-shell"
+version = "0.1.1"
+dependencies = [
+ "shellzip-integrate",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -7004,6 +7039,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "winreg"
+version = "0.55.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb5a765337c50e9ec252c2069be9bf91c7df47afb103b642ba3a53bf8101be97"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "winresource"
 version = "0.1.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7127,8 +7172,13 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 name = "xtask"
 version = "0.1.1"
 dependencies = [
+ "ico",
+ "image",
+ "resvg 0.49.0",
  "sha2 0.11.1",
  "shellzip-core",
+ "tiny-skia 0.12.0",
+ "usvg 0.49.0",
 ]
 
 [[package]]

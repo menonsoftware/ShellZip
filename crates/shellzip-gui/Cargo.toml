@@ -18,6 +18,7 @@ egui_extras = { version = "0.32", features = ["all_loaders"] }
 image = { workspace = true }
 rfd = "0.15"
 shellzip-core = { path = "../shellzip-core", features = ["rar", "sevenz-codecs", "sevenz-parallel"] }
+shellzip-integrate = { path = "../shellzip-integrate" }
 sysinfo = { version = "0.40.1", default-features = false, features = ["disk"] }
 toml = "1.1.8"
 trash = { version = "5.2.9", default-features = false, features = ["coinit_apartmentthreaded"] }

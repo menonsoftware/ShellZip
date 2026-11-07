@@ -15,6 +15,7 @@ Version **0.1.1**. Licensed under MIT. Not published to crates.io.
 - **Update, freshen, delete, and rename** inside ZIP and 7z
 - **Self-extractors** (`szip a --sfx` or `szip s`): stub + ZIP or 7z payload + 24-byte trailer
 - **Desktop manager** with explorer, add/extract dialogs, test, view, info, reports, and themes
+- **File associations and shell menus** on Windows, macOS, and Linux (`shellzip --integrate`)
 - **WinRAR-style switches** on the CLI (`-p`, `-mt`, `-sfx`, `-hp`, `-si`, …)
 - **Zip-slip and zip-bomb limits**, optional Mark of the Web on Windows (`--om`)
 
@@ -62,7 +63,10 @@ shellzip archive.zip
 ```bash
 make install        # cargo install szip
 make install-gui    # cargo install shellzip
+make install-shell  # install-gui + register associations and menus
 ```
+
+`shellzip --integrate` (also **Options → Integrate with the file manager**) registers per-user handlers, format icons from `grx/shellzip_file_icons`, and Open / Extract context-menu verbs.
 
 ## Command line
 
@@ -109,11 +113,13 @@ User guide: [docs/GUI.md](docs/GUI.md).
 ## Crates
 
 ```
-crates/shellzip-core   library: detect, pack, unpack, SFX trailer, safe paths
-crates/shellzip-cli    binary `szip`
-crates/shellzip-gui    binary `shellzip`
-crates/shellzip-sfx    self-extractor stub (minisize profile)
-xtask                  developer tasks (`bench`)
+crates/shellzip-core        library: detect, pack, unpack, SFX trailer, safe paths
+crates/shellzip-cli         binary `szip`
+crates/shellzip-gui         binary `shellzip`
+crates/shellzip-sfx         self-extractor stub (minisize profile)
+crates/shellzip-integrate   associations, MIME tables, menu helpers
+crates/shellzip-shell       Windows Explorer context-menu DLL
+xtask                       developer tasks (`bench`, `gen-file-icons`)
 ```
 
 `szip` and `shellzip` enable `rar`, `sevenz-codecs`, and `sevenz-parallel`. The SFX stub links only `sevenz` (LZMA2 and AES) so it stays small.
