@@ -91,10 +91,11 @@ jobs:
           dotnet-version: "8.0.x"
       - name: Install vpk
         run: dotnet tool update -g vpk
+      # Install only when both Certum secrets are non-empty. Missing secrets become
+      # "" in Actions; installing ssign anyway used to enable a broken sign path.
       - name: Install ssign (Certum)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && secrets.CERTUM_EMAIL != '' && secrets.CERTUM_OTP != ''
         run: cargo install ssign --locked
-        continue-on-error: true
       - name: Stage Velopack packDir
         shell: bash
         env:
@@ -117,6 +118,8 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          # Empty strings are treated as unset by xtask; only a complete
+          # CERTUM_EMAIL+CERTUM_OTP pair (or CERTUM_THUMBPRINT) enables signing.
           CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
           CERTUM_OTP: ${{ secrets.CERTUM_OTP }}
           CERTUM_THUMBPRINT: ${{ secrets.CERTUM_THUMBPRINT }}
@@ -126,7 +129,7 @@ jobs:
           VPK_OUTPUT_DIR: dist/velopack/Releases-${{ matrix.channel }}
         run: |
           set -euo pipefail
-          export PATH="$PATH:$HOME/.dotnet/tools"
+          export PATH="$PATH:$HOME/.dotnet/tools:$HOME/.cargo/bin"
           VERSION="${RELEASE_TAG#v}"
           export VELOPACK_VERSION="$VERSION"
           if [ "${{ runner.os }}" = "Linux" ] && [ -n "${GPG_PRIVATE_KEY:-}" ]; then

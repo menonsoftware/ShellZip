@@ -240,27 +240,7 @@ fn velopack_pack() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     if channel == "win" {
-        if std::env::var_os("CERTUM_EMAIL").is_some() && which_command("ssign") {
-            args.push("--signTemplate".into());
-            args.push("ssign {{file}}".into());
-            args.push("--signParallel".into());
-            args.push("1".into());
-            println!("xtask: Certum signing via ssign");
-        } else if let Ok(thumb) = std::env::var("CERTUM_THUMBPRINT") {
-            if !thumb.is_empty() {
-                args.push("--signParams".into());
-                args.push(format!(
-                    "/sha1 \"{thumb}\" /tr http://time.certum.pl /td sha256 /fd sha256"
-                ));
-                args.push("--signParallel".into());
-                args.push("1".into());
-                println!("xtask: Certum signing via signtool thumbprint");
-            }
-        } else {
-            eprintln!(
-                "xtask: warning: Windows pack is unsigned (set CERTUM_EMAIL or CERTUM_THUMBPRINT)"
-            );
-        }
+        apply_windows_sign_args(&mut args, &WinSignCreds::from_env(), which_command("ssign"));
     }
 
     let status = Command::new("vpk").args(&args).status().map_err(|err| {
@@ -292,6 +272,79 @@ fn which_command(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// GitHub Actions injects missing secrets as empty strings, so `var_os` alone is
+/// not enough — treat blank values as unset.
+fn env_nonempty(name: &str) -> Option<String> {
+    std::env::var(name).ok().and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct WinSignCreds {
+    email: Option<String>,
+    otp: Option<String>,
+    thumbprint: Option<String>,
+}
+
+impl WinSignCreds {
+    fn from_env() -> Self {
+        Self {
+            email: env_nonempty("CERTUM_EMAIL"),
+            otp: env_nonempty("CERTUM_OTP"),
+            thumbprint: env_nonempty("CERTUM_THUMBPRINT"),
+        }
+    }
+}
+
+/// Decide Windows Authenticode args for `vpk pack`.
+///
+/// Requires a complete Certum pair (`CERTUM_EMAIL` + `CERTUM_OTP`) before enabling
+/// `ssign`; a lone empty `CERTUM_EMAIL` from Actions must not turn signing on.
+fn apply_windows_sign_args(args: &mut Vec<String>, creds: &WinSignCreds, ssign_available: bool) {
+    match (creds.email.is_some(), creds.otp.is_some(), ssign_available) {
+        (true, true, true) => {
+            args.push("--signTemplate".into());
+            args.push("ssign {{file}}".into());
+            args.push("--signParallel".into());
+            args.push("1".into());
+            println!("xtask: Certum signing via ssign");
+            return;
+        }
+        (true, true, false) => {
+            eprintln!(
+                "xtask: warning: CERTUM_EMAIL/OTP set but ssign not on PATH; packing unsigned"
+            );
+        }
+        (true, false, _) | (false, true, _) => {
+            eprintln!(
+                "xtask: warning: set both CERTUM_EMAIL and CERTUM_OTP (non-empty) to sign; packing unsigned"
+            );
+        }
+        (false, false, _) => {}
+    }
+
+    if let Some(thumb) = creds.thumbprint.as_deref() {
+        args.push("--signParams".into());
+        args.push(format!(
+            "/sha1 \"{thumb}\" /tr http://time.certum.pl /td sha256 /fd sha256"
+        ));
+        args.push("--signParallel".into());
+        args.push("1".into());
+        println!("xtask: Certum signing via signtool thumbprint");
+        return;
+    }
+
+    eprintln!(
+        "xtask: warning: Windows pack is unsigned (set CERTUM_EMAIL+CERTUM_OTP or CERTUM_THUMBPRINT)"
+    );
+}
+
 /// Detach-sign release artifacts in a directory (`SHA256SUMS` + `.asc`).
 fn gpg_sign_release() -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::env::args()
@@ -302,7 +355,7 @@ fn gpg_sign_release() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn gpg_sign_dir(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    if std::env::var_os("GPG_PRIVATE_KEY").is_none() && std::env::var_os("GPG_KEY_ID").is_none() {
+    if env_nonempty("GPG_PRIVATE_KEY").is_none() && env_nonempty("GPG_KEY_ID").is_none() {
         eprintln!(
             "xtask: warning: skipping GPG signing (set GPG_PRIVATE_KEY / GPG_KEY_ID to enable)"
         );
@@ -1078,7 +1131,62 @@ fn write_icns(
 
 #[cfg(test)]
 mod tests {
-    use super::version_from_workspace_toml;
+    use super::{WinSignCreds, apply_windows_sign_args, version_from_workspace_toml};
+
+    fn has_sign_flag(args: &[String]) -> bool {
+        args.iter()
+            .any(|a| a.contains("sign") || a.contains("ssign"))
+    }
+
+    #[test]
+    fn windows_sign_stays_unsigned_without_creds() {
+        let mut args = Vec::new();
+        apply_windows_sign_args(&mut args, &WinSignCreds::default(), true);
+        assert!(!has_sign_flag(&args), "unexpected sign args: {args:?}");
+    }
+
+    #[test]
+    fn windows_sign_ignores_incomplete_certum_pair() {
+        let creds = WinSignCreds {
+            email: Some("dev@example.com".into()),
+            otp: None,
+            thumbprint: None,
+        };
+        let mut args = Vec::new();
+        apply_windows_sign_args(&mut args, &creds, true);
+        assert!(
+            !has_sign_flag(&args),
+            "email alone must not enable signing: {args:?}"
+        );
+    }
+
+    #[test]
+    fn windows_sign_enables_ssign_when_email_and_otp_present() {
+        let creds = WinSignCreds {
+            email: Some("dev@example.com".into()),
+            otp: Some("BASE32SEED".into()),
+            thumbprint: None,
+        };
+        let mut args = Vec::new();
+        apply_windows_sign_args(&mut args, &creds, true);
+        assert!(args.iter().any(|a| a == "--signTemplate"));
+        assert!(args.iter().any(|a| a == "ssign {{file}}"));
+    }
+
+    #[test]
+    fn windows_sign_requires_ssign_on_path() {
+        let creds = WinSignCreds {
+            email: Some("dev@example.com".into()),
+            otp: Some("BASE32SEED".into()),
+            thumbprint: None,
+        };
+        let mut args = Vec::new();
+        apply_windows_sign_args(&mut args, &creds, false);
+        assert!(
+            !has_sign_flag(&args),
+            "missing ssign must pack unsigned: {args:?}"
+        );
+    }
 
     #[test]
     fn reads_workspace_package_version() {
