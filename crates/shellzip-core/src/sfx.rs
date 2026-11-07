@@ -201,15 +201,21 @@ pub fn build(
         .and_then(|n| n.checked_add(TRAILER_LEN as u64))
         .ok_or_else(|| Error::Archive("SFX package size overflow".to_string()))?;
     ensure_package_fits(total)?;
-    progress.begin("SFX", total);
+    // Start progress only after the temp file exists, so a failed prepare does
+    // not leave sinks sitting in a begun overall job with no work started.
     let (tmp, mut writer) = crate::archiver::prepare_temp(dest)?;
+    progress.begin("SFX", total);
     let result = (|| -> Result<(), Error> {
+        // Always pair begin_entry with end_entry (including cancel/IO failure),
+        // matching strip(), so CLI bars finish the current file.
         progress.begin_entry(&path_label(stub), stub_len);
-        copy_exact(stub, &mut writer, stub_len, progress)?;
+        let stub_result = copy_exact(stub, &mut writer, stub_len, progress);
         progress.end_entry();
+        stub_result?;
         progress.begin_entry(&path_label(archive), archive_len);
-        copy_exact(archive, &mut writer, archive_len, progress)?;
+        let archive_result = copy_exact(archive, &mut writer, archive_len, progress);
         progress.end_entry();
+        archive_result?;
         ensure_running(progress)?;
         let encoded = trailer.encode();
         writer
@@ -265,8 +271,8 @@ pub fn strip(sfx: &Path, dest: &Path, progress: &dyn ProgressSink) -> Result<u64
             sfx.display()
         ))
     })?;
-    progress.begin("SFX", trailer.archive_len);
     let (tmp, mut writer) = crate::archiver::prepare_temp(dest)?;
+    progress.begin("SFX", trailer.archive_len);
     progress.begin_entry(&path_label(sfx), trailer.archive_len);
     let result = (|| -> Result<(), Error> {
         let mut file =
@@ -603,8 +609,39 @@ fn apply_delta(base: u64, delta: i64) -> std::io::Result<u64> {
 #[cfg(test)]
 mod tests {
     use std::io::{Cursor, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
+    /// Counts entry open/close pairs so cancel paths can assert cleanup.
+    struct CountingProgress {
+        begins: AtomicUsize,
+        ends: AtomicUsize,
+    }
+
+    impl CountingProgress {
+        fn cancel_immediately() -> Self {
+            Self {
+                begins: AtomicUsize::new(0),
+                ends: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl ProgressSink for CountingProgress {
+        fn begin(&self, _label: &str, _total_bytes: u64) {}
+        fn begin_entry(&self, _name: &str, _bytes: u64) {
+            self.begins.fetch_add(1, Ordering::Relaxed);
+        }
+        fn advance(&self, _bytes: u64) {}
+        fn end_entry(&self) {
+            self.ends.fetch_add(1, Ordering::Relaxed);
+        }
+        fn message(&self, _text: &str) {}
+        fn is_cancelled(&self) -> bool {
+            true
+        }
+    }
 
     fn tiny_zip() -> Vec<u8> {
         let mut cursor = Cursor::new(Vec::new());
@@ -644,6 +681,30 @@ mod tests {
         assert!(SfxTrailer::decode(b"nope").is_err());
         assert!(!trailer.fits(24));
         assert!(trailer.fits(128 + 64 + 24));
+    }
+
+    #[test]
+    fn build_closes_entry_when_cancelled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stub_path = tmp.path().join("stub.bin");
+        let zip_path = tmp.path().join("in.zip");
+        let sfx_path = tmp.path().join("out.exe");
+        std::fs::write(&stub_path, b"MZ-stub-bytes").unwrap();
+        std::fs::write(&zip_path, tiny_zip()).unwrap();
+
+        let progress = CountingProgress::cancel_immediately();
+        let err = build(&sfx_path, &stub_path, &zip_path, SfxPayload::Zip, &progress).unwrap_err();
+        assert!(matches!(err, Error::Interrupted), "{err}");
+        assert!(
+            progress.begins.load(Ordering::Relaxed) >= 1,
+            "cancel must happen after an entry was opened"
+        );
+        assert_eq!(
+            progress.begins.load(Ordering::Relaxed),
+            progress.ends.load(Ordering::Relaxed),
+            "begin_entry must be paired with end_entry on cancel"
+        );
+        assert!(!sfx_path.exists(), "cancelled build must not leave dest");
     }
 
     #[test]
