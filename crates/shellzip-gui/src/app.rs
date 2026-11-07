@@ -266,10 +266,12 @@ impl ShellZipApp {
         let Some(first) = paths.first().cloned() else {
             return;
         };
-        self.shell_extract_to = paths.split_off(1);
+        // Check before queueing rest paths — otherwise a refused call leaves
+        // stale entries that the next Submit drains into `shell_queue`.
         if self.refuse_operation() || self.extract_dialog.is_some() {
             return;
         }
+        self.shell_extract_to = paths.split_off(1);
         self.extract_dialog = Some(extract_dialog::ExtractDialog::prepare(
             &first,
             None,
