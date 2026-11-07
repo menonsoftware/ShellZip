@@ -32,9 +32,9 @@ jobs:
             ext: ""
             channel: osx
     runs-on: ${{ matrix.os }}
-    # Protected environment for Certum / GPG secrets. Create `signing` in
-    # repository settings; required reviewers are optional until secrets exist.
-    environment: signing
+    # When Certum / GPG secrets are ready, add `environment: signing` here and
+    # store those secrets on a GitHub Environment named `signing` (required
+    # reviewers recommended). Until then, packs stay unsigned with a warning.
     steps:
       - uses: actions/checkout@v4
         with:

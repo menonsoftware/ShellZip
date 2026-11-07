@@ -178,7 +178,7 @@ Authenticode uses a Certum SimplySign cloud certificate during `vpk pack` (not a
 | `CERTUM_EMAIL` + `CERTUM_OTP` | SimplySign account + TOTP **seed** for [`ssign`](https://le-syl21.github.io/ssign/) (`vpk --signTemplate "ssign {{file}}"`) |
 | `CERTUM_THUMBPRINT` | Optional local SimplySign Desktop + `signtool` path |
 
-Store secrets in the GitHub Environment named `signing` (required reviewers recommended). Prefer an **EV** Certum cert for instant SmartScreen; OV builds reputation over time. Timestamp: `http://time.certum.pl`. Missing secrets → unsigned Windows pack with a warning.
+When ready, create a GitHub Environment named `signing`, put these secrets there, and add `environment: signing` to the release workflow job so only that environment can see them (required reviewers recommended). Prefer an **EV** Certum cert for instant SmartScreen; OV builds reputation over time. Timestamp: `http://time.certum.pl`. Missing secrets → unsigned Windows pack with a warning.
 
 ### Linux GPG verification
 
