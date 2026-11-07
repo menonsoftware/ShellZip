@@ -90,6 +90,11 @@ pub static WINDOWS: &[Credit] = &[
         license: "Unlicense OR MIT",
     },
     Credit {
+        name: "anyhow",
+        version: "1.0.104",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "arboard",
         version: "3.7.0",
         license: "MIT OR Apache-2.0",
@@ -135,6 +140,11 @@ pub static WINDOWS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "block-buffer",
+        version: "0.12.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "block-padding",
         version: "0.3.3",
         license: "MIT OR Apache-2.0",
@@ -165,6 +175,11 @@ pub static WINDOWS: &[Credit] = &[
         license: "Unlicense OR MIT",
     },
     Credit {
+        name: "bytes",
+        version: "1.12.1",
+        license: "MIT",
+    },
+    Credit {
         name: "bzip2",
         version: "0.6.1",
         license: "MIT OR Apache-2.0",
@@ -177,6 +192,11 @@ pub static WINDOWS: &[Credit] = &[
     Credit {
         name: "cfg-if",
         version: "1.0.5",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "chacha20",
+        version: "0.10.2",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -200,6 +220,11 @@ pub static WINDOWS: &[Credit] = &[
         license: "MIT",
     },
     Credit {
+        name: "const-oid",
+        version: "0.10.2",
+        license: "Apache-2.0 OR MIT",
+    },
+    Credit {
         name: "constant_time_eq",
         version: "0.3.1",
         license: "CC0-1.0 OR MIT-0 OR Apache-2.0",
@@ -212,6 +237,11 @@ pub static WINDOWS: &[Credit] = &[
     Credit {
         name: "cpufeatures",
         version: "0.2.17",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "cpufeatures",
+        version: "0.3.1",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -245,6 +275,11 @@ pub static WINDOWS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "crypto-common",
+        version: "0.2.2",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "cursor-icon",
         version: "1.2.0",
         license: "MIT OR Apache-2.0 OR Zlib",
@@ -260,8 +295,18 @@ pub static WINDOWS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "derivative",
+        version: "2.2.0",
+        license: "MIT/Apache-2.0",
+    },
+    Credit {
         name: "digest",
         version: "0.10.7",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "digest",
+        version: "0.11.3",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -415,6 +460,11 @@ pub static WINDOWS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "getrandom",
+        version: "0.4.3",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "gif",
         version: "0.14.2",
         license: "MIT OR Apache-2.0",
@@ -467,6 +517,21 @@ pub static WINDOWS: &[Credit] = &[
     Credit {
         name: "hmac",
         version: "0.12.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "http",
+        version: "1.5.0",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "httparse",
+        version: "1.10.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "hybrid-array",
+        version: "0.4.15",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -540,9 +605,19 @@ pub static WINDOWS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "itoa",
+        version: "1.0.18",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "kurbo",
         version: "0.11.3",
         license: "Apache-2.0 OR MIT",
+    },
+    Credit {
+        name: "lazy_static",
+        version: "1.5.1",
+        license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "libbz2-rs-sys",
@@ -628,6 +703,11 @@ pub static WINDOWS: &[Credit] = &[
         name: "nohash-hasher",
         version: "0.2.0",
         license: "Apache-2.0 OR MIT",
+    },
+    Credit {
+        name: "normpath",
+        version: "1.5.2",
+        license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "ntapi",
@@ -740,6 +820,16 @@ pub static WINDOWS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "rand",
+        version: "0.10.3",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "rand_core",
+        version: "0.10.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "raw-window-handle",
         version: "0.6.2",
         license: "MIT OR Apache-2.0 OR Zlib",
@@ -820,8 +910,28 @@ pub static WINDOWS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "semver",
+        version: "1.0.28",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "serde",
+        version: "1.0.229",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "serde_core",
         version: "1.0.229",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "serde_derive",
+        version: "1.0.229",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "serde_json",
+        version: "1.0.154",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -835,8 +945,18 @@ pub static WINDOWS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "sha1",
+        version: "0.11.0",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "sha2",
         version: "0.10.9",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "sha2",
+        version: "0.11.1",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -888,6 +1008,11 @@ pub static WINDOWS: &[Credit] = &[
         name: "svgtypes",
         version: "0.15.3",
         license: "Apache-2.0 OR MIT",
+    },
+    Credit {
+        name: "syn",
+        version: "1.0.109",
+        license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "syn",
@@ -1005,6 +1130,11 @@ pub static WINDOWS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "typed-path",
+        version: "0.12.4",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "typenum",
         version: "1.20.1",
         license: "MIT OR Apache-2.0",
@@ -1045,6 +1175,16 @@ pub static WINDOWS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "ureq",
+        version: "3.5.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "ureq-proto",
+        version: "0.7.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "url",
         version: "2.5.8",
         license: "MIT OR Apache-2.0",
@@ -1055,9 +1195,24 @@ pub static WINDOWS: &[Credit] = &[
         license: "Apache-2.0 OR MIT",
     },
     Credit {
+        name: "utf8-zero",
+        version: "0.8.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "utf8_iter",
         version: "1.0.4",
         license: "Apache-2.0 OR MIT",
+    },
+    Credit {
+        name: "uuid",
+        version: "1.28.0",
+        license: "Apache-2.0 OR MIT",
+    },
+    Credit {
+        name: "velopack",
+        version: "1.2.161",
+        license: "MIT",
     },
     Credit {
         name: "walkdir",
@@ -1310,6 +1465,11 @@ pub static WINDOWS: &[Credit] = &[
         license: "Unicode-3.0",
     },
     Credit {
+        name: "xml",
+        version: "1.4.0",
+        license: "MIT",
+    },
+    Credit {
         name: "xmlwriter",
         version: "0.1.0",
         license: "MIT",
@@ -1380,9 +1540,19 @@ pub static WINDOWS: &[Credit] = &[
         license: "MIT",
     },
     Credit {
+        name: "zip",
+        version: "8.6.0",
+        license: "MIT",
+    },
+    Credit {
         name: "zlib-rs",
         version: "0.6.8",
         license: "Zlib",
+    },
+    Credit {
+        name: "zmij",
+        version: "1.0.23",
+        license: "MIT",
     },
     Credit {
         name: "zopfli",
@@ -1462,6 +1632,11 @@ pub static LINUX: &[Credit] = &[
         name: "aho-corasick",
         version: "1.1.5",
         license: "Unlicense OR MIT",
+    },
+    Credit {
+        name: "anyhow",
+        version: "1.0.104",
+        license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "arboard",
@@ -1604,6 +1779,11 @@ pub static LINUX: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "block-buffer",
+        version: "0.12.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "block-padding",
         version: "0.3.3",
         license: "MIT OR Apache-2.0",
@@ -1637,6 +1817,11 @@ pub static LINUX: &[Credit] = &[
         name: "byteorder-lite",
         version: "0.1.0",
         license: "Unlicense OR MIT",
+    },
+    Credit {
+        name: "bytes",
+        version: "1.12.1",
+        license: "MIT",
     },
     Credit {
         name: "bzip2",
@@ -1674,6 +1859,11 @@ pub static LINUX: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "chacha20",
+        version: "0.10.2",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "chrono",
         version: "0.4.45",
         license: "MIT OR Apache-2.0",
@@ -1694,6 +1884,11 @@ pub static LINUX: &[Credit] = &[
         license: "Apache-2.0 OR MIT",
     },
     Credit {
+        name: "const-oid",
+        version: "0.10.2",
+        license: "Apache-2.0 OR MIT",
+    },
+    Credit {
         name: "constant_time_eq",
         version: "0.3.1",
         license: "CC0-1.0 OR MIT-0 OR Apache-2.0",
@@ -1706,6 +1901,11 @@ pub static LINUX: &[Credit] = &[
     Credit {
         name: "cpufeatures",
         version: "0.2.17",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "cpufeatures",
+        version: "0.3.1",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -1739,6 +1939,11 @@ pub static LINUX: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "crypto-common",
+        version: "0.2.2",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "cursor-icon",
         version: "1.2.0",
         license: "MIT OR Apache-2.0 OR Zlib",
@@ -1754,8 +1959,18 @@ pub static LINUX: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "derivative",
+        version: "2.2.0",
+        license: "MIT/Apache-2.0",
+    },
+    Credit {
         name: "digest",
         version: "0.10.7",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "digest",
+        version: "0.11.3",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -2024,6 +2239,11 @@ pub static LINUX: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "getrandom",
+        version: "0.4.3",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "gif",
         version: "0.14.2",
         license: "MIT OR Apache-2.0",
@@ -2086,6 +2306,21 @@ pub static LINUX: &[Credit] = &[
     Credit {
         name: "hmac",
         version: "0.12.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "http",
+        version: "1.5.0",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "httparse",
+        version: "1.10.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "hybrid-array",
+        version: "0.4.15",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -2174,6 +2409,11 @@ pub static LINUX: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "itoa",
+        version: "1.0.18",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "kurbo",
         version: "0.11.3",
         license: "Apache-2.0 OR MIT",
@@ -2182,6 +2422,11 @@ pub static LINUX: &[Credit] = &[
         name: "kurbo",
         version: "0.13.1",
         license: "Apache-2.0 OR MIT",
+    },
+    Credit {
+        name: "lazy_static",
+        version: "1.5.1",
+        license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "libbz2-rs-sys",
@@ -2292,6 +2537,11 @@ pub static LINUX: &[Credit] = &[
         name: "nom",
         version: "7.1.3",
         license: "MIT",
+    },
+    Credit {
+        name: "normpath",
+        version: "1.5.2",
+        license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "num-conv",
@@ -2445,12 +2695,22 @@ pub static LINUX: &[Credit] = &[
     },
     Credit {
         name: "rand",
+        version: "0.10.3",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "rand",
         version: "0.9.5",
         license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "rand_chacha",
         version: "0.9.0",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "rand_core",
+        version: "0.10.1",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -2574,6 +2834,11 @@ pub static LINUX: &[Credit] = &[
         license: "MIT",
     },
     Credit {
+        name: "semver",
+        version: "1.0.28",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "serde",
         version: "1.0.229",
         license: "MIT OR Apache-2.0",
@@ -2586,6 +2851,11 @@ pub static LINUX: &[Credit] = &[
     Credit {
         name: "serde_derive",
         version: "1.0.229",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "serde_json",
+        version: "1.0.154",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -2604,8 +2874,18 @@ pub static LINUX: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "sha1",
+        version: "0.11.0",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "sha2",
         version: "0.10.9",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "sha2",
+        version: "0.11.1",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -2697,6 +2977,11 @@ pub static LINUX: &[Credit] = &[
         name: "svgtypes",
         version: "0.16.1",
         license: "Apache-2.0 OR MIT",
+    },
+    Credit {
+        name: "syn",
+        version: "1.0.109",
+        license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "syn",
@@ -2839,6 +3124,11 @@ pub static LINUX: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "typed-path",
+        version: "0.12.4",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "typenum",
         version: "1.20.1",
         license: "MIT OR Apache-2.0",
@@ -2894,6 +3184,16 @@ pub static LINUX: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "ureq",
+        version: "3.5.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "ureq-proto",
+        version: "0.7.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "url",
         version: "2.5.8",
         license: "MIT OR Apache-2.0",
@@ -2914,6 +3214,11 @@ pub static LINUX: &[Credit] = &[
         license: "Apache-2.0 OR MIT",
     },
     Credit {
+        name: "utf8-zero",
+        version: "0.8.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "utf8_iter",
         version: "1.0.4",
         license: "Apache-2.0 OR MIT",
@@ -2922,6 +3227,21 @@ pub static LINUX: &[Credit] = &[
         name: "uuid",
         version: "1.28.0",
         license: "Apache-2.0 OR MIT",
+    },
+    Credit {
+        name: "velopack",
+        version: "1.2.161",
+        license: "MIT",
+    },
+    Credit {
+        name: "wait-timeout",
+        version: "0.2.1",
+        license: "MIT/Apache-2.0",
+    },
+    Credit {
+        name: "waitpid-any",
+        version: "0.3.0",
+        license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "walkdir",
@@ -3074,6 +3394,11 @@ pub static LINUX: &[Credit] = &[
         license: "MIT OR Apache-2.0 OR Zlib",
     },
     Credit {
+        name: "xml",
+        version: "1.4.0",
+        license: "MIT",
+    },
+    Credit {
         name: "xmlwriter",
         version: "0.1.0",
         license: "MIT",
@@ -3179,9 +3504,19 @@ pub static LINUX: &[Credit] = &[
         license: "MIT",
     },
     Credit {
+        name: "zip",
+        version: "8.6.0",
+        license: "MIT",
+    },
+    Credit {
         name: "zlib-rs",
         version: "0.6.8",
         license: "Zlib",
+    },
+    Credit {
+        name: "zmij",
+        version: "1.0.23",
+        license: "MIT",
     },
     Credit {
         name: "zopfli",
@@ -3283,6 +3618,11 @@ pub static MACOS: &[Credit] = &[
         license: "Unlicense OR MIT",
     },
     Credit {
+        name: "anyhow",
+        version: "1.0.104",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "arboard",
         version: "3.7.0",
         license: "MIT OR Apache-2.0",
@@ -3300,6 +3640,11 @@ pub static MACOS: &[Credit] = &[
     Credit {
         name: "base64",
         version: "0.22.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "base64",
+        version: "0.23.1",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -3325,6 +3670,11 @@ pub static MACOS: &[Credit] = &[
     Credit {
         name: "block-buffer",
         version: "0.10.4",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "block-buffer",
+        version: "0.12.1",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -3368,6 +3718,11 @@ pub static MACOS: &[Credit] = &[
         license: "Unlicense OR MIT",
     },
     Credit {
+        name: "bytes",
+        version: "1.12.1",
+        license: "MIT",
+    },
+    Credit {
         name: "bzip2",
         version: "0.6.1",
         license: "MIT OR Apache-2.0",
@@ -3386,6 +3741,11 @@ pub static MACOS: &[Credit] = &[
         name: "cgl",
         version: "0.3.2",
         license: "MIT / Apache-2.0",
+    },
+    Credit {
+        name: "chacha20",
+        version: "0.10.2",
+        license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "chrono",
@@ -3411,6 +3771,11 @@ pub static MACOS: &[Credit] = &[
         name: "color_quant",
         version: "1.1.0",
         license: "MIT",
+    },
+    Credit {
+        name: "const-oid",
+        version: "0.10.2",
+        license: "Apache-2.0 OR MIT",
     },
     Credit {
         name: "constant_time_eq",
@@ -3463,6 +3828,11 @@ pub static MACOS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "cpufeatures",
+        version: "0.3.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "crc32fast",
         version: "1.5.3",
         license: "MIT OR Apache-2.0",
@@ -3493,6 +3863,11 @@ pub static MACOS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "crypto-common",
+        version: "0.2.2",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "cursor-icon",
         version: "1.2.0",
         license: "MIT OR Apache-2.0 OR Zlib",
@@ -3508,8 +3883,18 @@ pub static MACOS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "derivative",
+        version: "2.2.0",
+        license: "MIT/Apache-2.0",
+    },
+    Credit {
         name: "digest",
         version: "0.10.7",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "digest",
+        version: "0.11.3",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -3693,8 +4078,18 @@ pub static MACOS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "getrandom",
+        version: "0.4.3",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "gif",
         version: "0.14.2",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "glob",
+        version: "0.3.4",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -3735,6 +4130,21 @@ pub static MACOS: &[Credit] = &[
     Credit {
         name: "hmac",
         version: "0.12.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "http",
+        version: "1.5.0",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "httparse",
+        version: "1.10.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "hybrid-array",
+        version: "0.4.15",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -3813,9 +4223,19 @@ pub static MACOS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "itoa",
+        version: "1.0.18",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "kurbo",
         version: "0.11.3",
         license: "Apache-2.0 OR MIT",
+    },
+    Credit {
+        name: "lazy_static",
+        version: "1.5.1",
+        license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "libbz2-rs-sys",
@@ -3906,6 +4326,11 @@ pub static MACOS: &[Credit] = &[
         name: "nohash-hasher",
         version: "0.2.0",
         license: "Apache-2.0 OR MIT",
+    },
+    Credit {
+        name: "normpath",
+        version: "1.5.2",
+        license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "num-conv",
@@ -4108,6 +4533,16 @@ pub static MACOS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "rand",
+        version: "0.10.3",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "rand_core",
+        version: "0.10.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "raw-window-handle",
         version: "0.6.2",
         license: "MIT OR Apache-2.0 OR Zlib",
@@ -4193,8 +4628,28 @@ pub static MACOS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "semver",
+        version: "1.0.28",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "serde",
+        version: "1.0.229",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "serde_core",
         version: "1.0.229",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "serde_derive",
+        version: "1.0.229",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "serde_json",
+        version: "1.0.154",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -4208,8 +4663,18 @@ pub static MACOS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "sha1",
+        version: "0.11.0",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "sha2",
         version: "0.10.9",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "sha2",
+        version: "0.11.1",
         license: "MIT OR Apache-2.0",
     },
     Credit {
@@ -4261,6 +4726,11 @@ pub static MACOS: &[Credit] = &[
         name: "svgtypes",
         version: "0.15.3",
         license: "Apache-2.0 OR MIT",
+    },
+    Credit {
+        name: "syn",
+        version: "1.0.109",
+        license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "syn",
@@ -4383,6 +4853,11 @@ pub static MACOS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "typed-path",
+        version: "0.12.4",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "typenum",
         version: "1.20.1",
         license: "MIT OR Apache-2.0",
@@ -4423,6 +4898,16 @@ pub static MACOS: &[Credit] = &[
         license: "MIT OR Apache-2.0",
     },
     Credit {
+        name: "ureq",
+        version: "3.5.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "ureq-proto",
+        version: "0.7.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "url",
         version: "2.5.8",
         license: "MIT OR Apache-2.0",
@@ -4433,9 +4918,34 @@ pub static MACOS: &[Credit] = &[
         license: "Apache-2.0 OR MIT",
     },
     Credit {
+        name: "utf8-zero",
+        version: "0.8.1",
+        license: "MIT OR Apache-2.0",
+    },
+    Credit {
         name: "utf8_iter",
         version: "1.0.4",
         license: "Apache-2.0 OR MIT",
+    },
+    Credit {
+        name: "uuid",
+        version: "1.28.0",
+        license: "Apache-2.0 OR MIT",
+    },
+    Credit {
+        name: "velopack",
+        version: "1.2.161",
+        license: "MIT",
+    },
+    Credit {
+        name: "wait-timeout",
+        version: "0.2.1",
+        license: "MIT/Apache-2.0",
+    },
+    Credit {
+        name: "waitpid-any",
+        version: "0.3.0",
+        license: "MIT OR Apache-2.0",
     },
     Credit {
         name: "walkdir",
@@ -4491,6 +5001,11 @@ pub static MACOS: &[Credit] = &[
         name: "xattr",
         version: "1.6.1",
         license: "MIT OR Apache-2.0",
+    },
+    Credit {
+        name: "xml",
+        version: "1.4.0",
+        license: "MIT",
     },
     Credit {
         name: "xmlwriter",
@@ -4568,9 +5083,19 @@ pub static MACOS: &[Credit] = &[
         license: "MIT",
     },
     Credit {
+        name: "zip",
+        version: "8.6.0",
+        license: "MIT",
+    },
+    Credit {
         name: "zlib-rs",
         version: "0.6.8",
         license: "Zlib",
+    },
+    Credit {
+        name: "zmij",
+        version: "1.0.23",
+        license: "MIT",
     },
     Credit {
         name: "zopfli",

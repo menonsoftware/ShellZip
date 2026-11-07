@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def run(args: list[str]) -> str:
-    return subprocess.check_output(args, cwd=ROOT, text=True, stderr=subprocess.STDOUT)
+    return subprocess.check_output(args, cwd=ROOT, text=True, stderr=subprocess.DEVNULL)
 
 
 def license_for(pkg: dict | None) -> str:

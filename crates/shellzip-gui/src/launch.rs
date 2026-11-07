@@ -115,20 +115,12 @@ fn finish(result: Result<(), String>) -> ExitCode {
 fn paths_for_integrate() -> IntegratePaths {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("shellzip"));
     let mut paths = IntegratePaths::from_exe(exe);
-    let workspace_icons = PathBuf::from("grx").join("shellzip_file_icons");
-    if workspace_icons.is_dir() {
-        paths.icons_source = workspace_icons;
-    } else if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        let icons = PathBuf::from(&manifest)
-            .join("..")
-            .join("..")
-            .join("grx")
-            .join("shellzip_file_icons");
-        if icons.is_dir() {
-            paths.icons_source = icons;
-        }
-    }
+    // Prefer icons next to the binary (Velopack packDir / installed layout).
     if let Some(parent) = paths.exe.parent() {
+        let beside = parent.join("icons");
+        if beside.is_dir() {
+            paths.icons_source = beside;
+        }
         #[cfg(windows)]
         {
             let dll = parent.join("shellzip_shell.dll");
@@ -136,9 +128,21 @@ fn paths_for_integrate() -> IntegratePaths {
                 paths.shell_dll = Some(dll);
             }
         }
-        #[cfg(not(windows))]
-        {
-            let _ = parent;
+    }
+    // Dev fallback: workspace `grx/shellzip_file_icons` when beside-exe icons are missing.
+    if !paths.icons_source.is_dir() {
+        let workspace_icons = PathBuf::from("grx").join("shellzip_file_icons");
+        if workspace_icons.is_dir() {
+            paths.icons_source = workspace_icons;
+        } else if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+            let icons = PathBuf::from(&manifest)
+                .join("..")
+                .join("..")
+                .join("grx")
+                .join("shellzip_file_icons");
+            if icons.is_dir() {
+                paths.icons_source = icons;
+            }
         }
     }
     paths

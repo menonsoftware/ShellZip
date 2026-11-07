@@ -311,6 +311,15 @@ pub enum Outcome {
         /// Status line.
         message: String,
     },
+    /// Velopack update check finished (or reported a soft failure).
+    UpdateChecked {
+        /// Job that checked.
+        token: JobToken,
+        /// Status line.
+        message: String,
+        /// Show as an error banner when true.
+        is_error: bool,
+    },
     /// The archive needs a password before the job can continue.
     NeedPassword(PasswordRequest),
 }

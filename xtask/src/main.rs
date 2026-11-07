@@ -18,9 +18,12 @@ fn main() {
         "sign" => sign(),
         "package-stubs" => package_stubs(),
         "gen-file-icons" => gen_file_icons(),
+        "velopack-stage" => velopack_stage(),
+        "velopack-pack" => velopack_pack(),
+        "gpg-sign-release" => gpg_sign_release(),
         _ => {
             eprintln!(
-                "usage: xtask bench | build-fixtures | sign <sfx> | package-stubs [stub] | gen-file-icons"
+                "usage: xtask bench | build-fixtures | sign <sfx> | package-stubs [stub] | gen-file-icons | velopack-stage | velopack-pack | gpg-sign-release <dir>"
             );
             std::process::exit(2);
         }
@@ -47,6 +50,349 @@ fn sign() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Err(format!("signtool failed with {status}").into())
     }
+}
+
+/// Velopack packId — keep in sync with `shellzip-gui` bundle identifier.
+const VELOPACK_ID: &str = "com.shellzip.ShellZip";
+
+fn workspace_version() -> Result<String, Box<dyn std::error::Error>> {
+    let text = fs::read_to_string("Cargo.toml")?;
+    version_from_workspace_toml(&text)
+        .ok_or_else(|| "workspace.package.version not found in Cargo.toml".into())
+}
+
+/// Parse `version = "..."` from a `[workspace.package]` table. The key must be the
+/// complete token `version` (so `version_foo` / `version_override` do not match).
+fn version_from_workspace_toml(text: &str) -> Option<String> {
+    let mut in_package = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed == "[workspace.package]" {
+            in_package = true;
+            continue;
+        }
+        if !in_package {
+            continue;
+        }
+        if trimmed.starts_with('[') {
+            break;
+        }
+        let Some(rest) = trimmed.strip_prefix("version") else {
+            continue;
+        };
+        if !matches!(rest.chars().next(), Some(c) if c == '=' || c.is_whitespace()) {
+            continue;
+        }
+        let value = rest.trim().trim_start_matches('=').trim().trim_matches('"');
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+fn host_channel() -> &'static str {
+    if cfg!(windows) {
+        "win"
+    } else if cfg!(target_os = "macos") {
+        "osx"
+    } else {
+        "linux"
+    }
+}
+
+fn host_exe(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
+
+fn copy_tree(src: &Path, dest: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !src.is_dir() {
+        return Err(format!("missing directory {}", src.display()).into());
+    }
+    fs::create_dir_all(dest)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dest.join(entry.file_name());
+        if from.is_dir() {
+            copy_tree(&from, &to)?;
+        } else {
+            if let Some(parent) = to.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
+/// Stage release binaries and format icons into `dist/velopack/<channel>/`.
+fn velopack_stage() -> Result<(), Box<dyn std::error::Error>> {
+    let channel = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| host_channel().to_string());
+    let target = std::env::var("CARGO_BUILD_TARGET").unwrap_or_default();
+    let release_dir = if target.is_empty() {
+        PathBuf::from("target").join("release")
+    } else {
+        PathBuf::from("target").join(&target).join("release")
+    };
+    let minisize_dir = if target.is_empty() {
+        PathBuf::from("target").join("minisize")
+    } else {
+        PathBuf::from("target").join(&target).join("minisize")
+    };
+
+    let stage = PathBuf::from("dist").join("velopack").join(&channel);
+    if stage.exists() {
+        fs::remove_dir_all(&stage)?;
+    }
+    fs::create_dir_all(&stage)?;
+
+    let gui = host_exe("shellzip");
+    let cli = host_exe("szip");
+    let sfx = host_exe("shellzip-sfx");
+    for (src_dir, name) in [
+        (&release_dir, gui.as_str()),
+        (&release_dir, cli.as_str()),
+        (&minisize_dir, sfx.as_str()),
+    ] {
+        let src = src_dir.join(name);
+        if !src.is_file() {
+            return Err(format!("missing {}; build release binaries first", src.display()).into());
+        }
+        fs::copy(&src, stage.join(name))?;
+    }
+
+    if cfg!(windows) {
+        let dll = release_dir.join("shellzip_shell.dll");
+        if dll.is_file() {
+            fs::copy(&dll, stage.join("shellzip_shell.dll"))?;
+        } else {
+            eprintln!(
+                "xtask: warning: {} missing; Windows shell menus need the DLL",
+                dll.display()
+            );
+        }
+    }
+
+    let icons_src = PathBuf::from("grx").join("shellzip_file_icons");
+    let icons_dest = stage.join("icons");
+    copy_tree(&icons_src, &icons_dest)?;
+    println!("staged {}", stage.display());
+    Ok(())
+}
+
+/// Run `vpk pack` against a staged directory (requires .NET 8 + global `vpk`).
+fn velopack_pack() -> Result<(), Box<dyn std::error::Error>> {
+    let channel = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| host_channel().to_string());
+    let version = std::env::var("VELOPACK_VERSION")
+        .or_else(|_| workspace_version().map_err(|e| e.to_string()))
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let stage = PathBuf::from("dist").join("velopack").join(&channel);
+    if !stage.is_dir() {
+        return Err(format!(
+            "missing {}; run `cargo run -p xtask -- velopack-stage` first",
+            stage.display()
+        )
+        .into());
+    }
+
+    let main_exe = host_exe("shellzip");
+    let icon = match channel.as_str() {
+        "win" => PathBuf::from("crates/shellzip-gui/assets/shellzip.ico"),
+        "osx" => PathBuf::from("crates/shellzip-gui/assets/shellzip.icns"),
+        _ => PathBuf::from("crates/shellzip-gui/assets/icon.png"),
+    };
+    if !icon.is_file() {
+        return Err(format!("missing icon {}", icon.display()).into());
+    }
+
+    let output = PathBuf::from("dist")
+        .join("velopack")
+        .join(format!("Releases-{channel}"));
+    fs::create_dir_all(&output)?;
+
+    let mut args = vec![
+        "pack".into(),
+        "-u".into(),
+        VELOPACK_ID.into(),
+        "-v".into(),
+        version.clone(),
+        "-p".into(),
+        stage.display().to_string(),
+        "-e".into(),
+        main_exe,
+        "--packTitle".into(),
+        "ShellZip".into(),
+        "-c".into(),
+        channel.clone(),
+        "-i".into(),
+        icon.display().to_string(),
+        "-o".into(),
+        output.display().to_string(),
+    ];
+
+    if channel == "win" {
+        if std::env::var_os("CERTUM_EMAIL").is_some() && which_command("ssign") {
+            args.push("--signTemplate".into());
+            args.push("ssign {{file}}".into());
+            args.push("--signParallel".into());
+            args.push("1".into());
+            println!("xtask: Certum signing via ssign");
+        } else if let Ok(thumb) = std::env::var("CERTUM_THUMBPRINT") {
+            if !thumb.is_empty() {
+                args.push("--signParams".into());
+                args.push(format!(
+                    "/sha1 \"{thumb}\" /tr http://time.certum.pl /td sha256 /fd sha256"
+                ));
+                args.push("--signParallel".into());
+                args.push("1".into());
+                println!("xtask: Certum signing via signtool thumbprint");
+            }
+        } else {
+            eprintln!(
+                "xtask: warning: Windows pack is unsigned (set CERTUM_EMAIL or CERTUM_THUMBPRINT)"
+            );
+        }
+    }
+
+    let status = Command::new("vpk").args(&args).status().map_err(|err| {
+        format!(
+            "vpk was not found on PATH ({err}); install .NET 8 and `dotnet tool install -g vpk`"
+        )
+    })?;
+    if !status.success() {
+        return Err(format!("vpk pack failed with {status}").into());
+    }
+    println!(
+        "packed {VELOPACK_ID} {version} channel={channel} -> {}",
+        output.display()
+    );
+
+    if channel == "linux" {
+        let _ = gpg_sign_dir(&output);
+    }
+    Ok(())
+}
+
+fn which_command(name: &str) -> bool {
+    Command::new(name)
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Detach-sign release artifacts in a directory (`SHA256SUMS` + `.asc`).
+fn gpg_sign_release() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::args()
+        .nth(2)
+        .map(PathBuf::from)
+        .ok_or("usage: xtask gpg-sign-release <dir>")?;
+    gpg_sign_dir(&dir)
+}
+
+fn gpg_sign_dir(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::var_os("GPG_PRIVATE_KEY").is_none() && std::env::var_os("GPG_KEY_ID").is_none() {
+        eprintln!(
+            "xtask: warning: skipping GPG signing (set GPG_PRIVATE_KEY / GPG_KEY_ID to enable)"
+        );
+        return Ok(());
+    }
+    if !dir.is_dir() {
+        return Err(format!("missing {}", dir.display()).into());
+    }
+
+    let mut files = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == "SHA256SUMS" || name.ends_with(".asc") {
+            continue;
+        }
+        files.push(path);
+    }
+    files.sort();
+    if files.is_empty() {
+        return Err(format!("no files to sign in {}", dir.display()).into());
+    }
+
+    let sums_path = dir.join("SHA256SUMS");
+    let mut sums = String::new();
+    for path in &files {
+        let bytes = fs::read(path)?;
+        let digest = sha256_hex(&bytes);
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or("non-utf8 file name")?;
+        sums.push_str(&format!("{digest}  {name}\n"));
+    }
+    fs::write(&sums_path, &sums)?;
+
+    let key_id = std::env::var("GPG_KEY_ID").unwrap_or_default();
+    sign_with_gpg(&sums_path, &key_id)?;
+    for path in &files {
+        if path
+            .extension()
+            .is_some_and(|ext| ext == "AppImage" || ext == "nupkg" || ext == "zip")
+            || path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().contains("AppImage"))
+        {
+            sign_with_gpg(path, &key_id)?;
+        }
+    }
+    println!("gpg-signed {}", dir.display());
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn sign_with_gpg(path: &Path, key_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let out = PathBuf::from(format!("{}.asc", path.display()));
+    let mut cmd = Command::new("gpg");
+    cmd.args([
+        "--batch",
+        "--yes",
+        "--pinentry-mode",
+        "loopback",
+        "--detach-sign",
+        "--armor",
+        "-o",
+    ]);
+    cmd.arg(&out);
+    if !key_id.is_empty() {
+        cmd.args(["--local-user", key_id]);
+    }
+    if let Ok(pass) = std::env::var("GPG_PASSPHRASE") {
+        cmd.args(["--passphrase", &pass]);
+    }
+    cmd.arg(path);
+    let status = cmd
+        .status()
+        .map_err(|err| format!("gpg not found ({err})"))?;
+    if !status.success() {
+        return Err(format!("gpg --detach-sign failed for {}", path.display()).into());
+    }
+    Ok(())
 }
 
 fn package_stubs() -> Result<(), Box<dyn std::error::Error>> {
@@ -728,4 +1074,52 @@ fn write_icns(
     file.extend_from_slice(&body);
     fs::write(path, file)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_from_workspace_toml;
+
+    #[test]
+    fn reads_workspace_package_version() {
+        let text = r#"
+[workspace]
+members = ["crates/foo"]
+
+[workspace.package]
+edition = "2024"
+version = "1.2.3"
+license = "MIT"
+"#;
+        assert_eq!(version_from_workspace_toml(text).as_deref(), Some("1.2.3"));
+    }
+
+    #[test]
+    fn rejects_version_prefixed_keys() {
+        let text = r#"
+[workspace.package]
+version_override = "9.9.9"
+version_foo = "8.8.8"
+edition = "2024"
+"#;
+        assert_eq!(version_from_workspace_toml(text), None);
+    }
+
+    #[test]
+    fn accepts_version_with_spaces_around_equals() {
+        let text = "[workspace.package]\nversion  =  \"0.1.0\"\n";
+        assert_eq!(version_from_workspace_toml(text).as_deref(), Some("0.1.0"));
+    }
+
+    #[test]
+    fn stops_at_next_table() {
+        let text = r#"
+[workspace.package]
+edition = "2024"
+
+[workspace.dependencies]
+version = "should-not-win"
+"#;
+        assert_eq!(version_from_workspace_toml(text), None);
+    }
 }

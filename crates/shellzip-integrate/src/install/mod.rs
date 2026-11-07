@@ -58,6 +58,14 @@ impl IntegratePaths {
 }
 
 fn find_icons_source(exe: &Path) -> Option<PathBuf> {
+    // Installed / Velopack layout: `icons/` next to the GUI binary.
+    if let Some(parent) = exe.parent() {
+        let beside = parent.join("icons");
+        if beside.is_dir() {
+            return Some(beside);
+        }
+    }
+    // Dev layout: walk up for `grx/shellzip_file_icons`.
     let mut dir = exe.parent()?;
     for _ in 0..8 {
         let candidate = dir.join("grx").join("shellzip_file_icons");

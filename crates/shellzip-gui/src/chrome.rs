@@ -111,6 +111,8 @@ pub enum MenuCommand {
     Integrate,
     /// Remove ShellZip file associations for this user.
     Unintegrate,
+    /// Ask Velopack for a newer package on GitHub Releases.
+    CheckForUpdates,
 }
 
 /// Toolbar buttons, in the same order as the reference layout.
@@ -273,6 +275,10 @@ pub fn menu_bar(
                     }
                 }
             });
+            ui.separator();
+            if ui.button("Check for updates…").clicked() {
+                command = Some(MenuCommand::CheckForUpdates);
+            }
             ui.separator();
             if ui.button("Integrate with the file manager").clicked() {
                 command = Some(MenuCommand::Integrate);

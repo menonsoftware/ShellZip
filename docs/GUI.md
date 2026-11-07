@@ -91,15 +91,19 @@ Settings persist in `settings.toml` (see [FAQ.md](FAQ.md#where-does-the-gui-stor
 
 **Help → About** shows the project licence, the UnRAR extraction notice, and a table of every third-party crate linked into the GUI for this OS (regenerated from `cargo tree`; see `xtask/gen_credits.py`).
 
+## Updates
+
+**Options → Check for updates…** asks Velopack for a newer package on [GitHub Releases](https://github.com/menonsoftware/ShellZip/releases). This works only for Velopack installs (Windows Setup, Linux AppImage, macOS app). A plain `cargo run` or unzipped portable binary reports that updates need a Velopack install.
+
 ## File manager integration
 
 **Options → Integrate with the file manager** asks for confirmation, then registers ShellZip for the current user (`shellzip --integrate` / `make install-shell` skip the dialog):
 
 - Default / Open With handlers for zip, zipx, 7z, rar, tar, gz, tgz, bz2, tbz2, xz, txz, zst, tzst
-- Per-format document icons from `grx/shellzip_file_icons`
+- Per-format document icons from `grx/shellzip_file_icons` (or `icons/` next to a Velopack install)
 - Context menu: Open, Extract to…, Extract Here, Extract Here (archive folder name)
 
-**Options → Remove file manager integration** asks for confirmation before clearing those registrations.
+Velopack install/update/uninstall FastCallbacks run integrate automatically on Windows; on Linux and macOS, first launch and post-update restart do so (there is no Velopack uninstall hook when the AppImage / `.app` is deleted). **Options → Remove file manager integration** asks for confirmation before clearing those registrations.
 
 Shell verbs:
 

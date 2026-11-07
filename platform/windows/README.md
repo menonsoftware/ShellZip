@@ -25,6 +25,12 @@ shellzip --integrate
 
 Writes per-user ProgIDs under `HKCU\Software\Classes`, copies icons to `%LOCALAPPDATA%\ShellZip\icons`, and registers the DLL CLSID `{A7C3E5B1-4D2F-4A91-9E6C-8B1F0D2E3A45}` for context menus and compound-extension icons. No administrator rights. Does not rewrite `UserChoice` hashes; if Windows keeps another default, use Settings → Default apps.
 
+## Velopack install
+
+Release CI stages `shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, `shellzip_shell.dll`, and `icons/` (from `grx/shellzip_file_icons`), then runs `vpk pack` with `packId` `com.shellzip.ShellZip` and channel `win`. Install/update hooks call `--integrate`; uninstall hooks call `--unintegrate`.
+
+Authenticode signing uses Certum SimplySign during `vpk pack` when `CERTUM_EMAIL` / `CERTUM_OTP` (or `CERTUM_THUMBPRINT`) are set in the GitHub `signing` environment. See [docs/BUILDING.md](../../docs/BUILDING.md).
+
 ## Windows 11 sparse package
 
 [msix/ShellZipSparse.md](msix/ShellZipSparse.md) describes an optional sparse MSIX so `IExplorerCommand` items appear on the compact context menu. The classic `IContextMenu` handler already appears under **Show more options** (and on Windows 10) after `--integrate`.

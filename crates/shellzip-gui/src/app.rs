@@ -119,6 +119,8 @@ pub struct ShellZipApp {
     report_job: Option<u64>,
     pending_delete: Option<Vec<String>>,
     pending_shell: Option<ShellIntegrateKind>,
+    /// Outstanding Velopack update check, if any.
+    update_job: Option<u64>,
     add_dialog: Option<add_dialog::AddDialog>,
     extract_dialog: Option<extract_dialog::ExtractDialog>,
     sfx_dialog: Option<sfx_dialog::SfxDialog>,
@@ -211,6 +213,7 @@ impl ShellZipApp {
             report_job: None,
             pending_delete: None,
             pending_shell: None,
+            update_job: None,
             add_dialog: None,
             extract_dialog: None,
             sfx_dialog: None,
@@ -1536,6 +1539,26 @@ impl ShellZipApp {
                                 self.error = Some(message);
                             }
                         }
+                    } else if self.update_job == Some(token.id) {
+                        self.update_job = None;
+                        self.status.clear();
+                        self.error = Some(message);
+                    }
+                }
+                Outcome::UpdateChecked {
+                    token,
+                    message,
+                    is_error,
+                } => {
+                    if self.update_job == Some(token.id) {
+                        self.update_job = None;
+                        if is_error {
+                            self.status.clear();
+                            self.error = Some(message);
+                        } else {
+                            self.error = None;
+                            self.status = message;
+                        }
                     }
                 }
                 Outcome::NeedPassword(request) => self.finish_password(request),
@@ -2194,7 +2217,33 @@ impl ShellZipApp {
                     self.pending_shell = Some(ShellIntegrateKind::Remove);
                 }
             }
+            MenuCommand::CheckForUpdates => self.check_for_updates(),
         }
+    }
+
+    fn check_for_updates(&mut self) {
+        if self.update_job.is_some() {
+            self.status = "An update check is already running.".to_string();
+            return;
+        }
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        let token = JobToken {
+            id,
+            generation: self.generation,
+        };
+        self.update_job = Some(id);
+        self.error = None;
+        self.status = "Checking for updates…".to_string();
+        let tx = self.tx.clone();
+        worker::spawn(tx, token, move || {
+            let result = crate::update::check_and_apply();
+            Ok(Outcome::UpdateChecked {
+                token,
+                message: result.status_line(),
+                is_error: result.is_error(),
+            })
+        });
     }
 
     fn finish_shell_integrate(&mut self, kind: ShellIntegrateKind) {

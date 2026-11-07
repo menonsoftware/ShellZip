@@ -23,10 +23,14 @@ mod sfx_dialog;
 mod shell_icons;
 mod test_dialog;
 mod theme;
+mod update;
 mod view_dialog;
 mod worker;
 
 fn main() -> std::process::ExitCode {
+    // Velopack may exit or restart before ordinary startup (hooks, pending updates).
+    run_velopack_startup();
+
     let mut argv = std::env::args();
     let _program = argv.next();
     match launch::parse(argv) {
@@ -36,6 +40,36 @@ fn main() -> std::process::ExitCode {
             std::process::ExitCode::SUCCESS
         }
     }
+}
+
+/// Register install/uninstall hooks and apply pending updates before the window opens.
+///
+/// Velopack FastCallbacks (`on_after_install_*` / `on_before_uninstall_*`) exist only on
+/// Windows. On Linux and macOS, integrate on first run and again after an update restart;
+/// there is no uninstall hook (deleting the AppImage / `.app` does not invoke Velopack).
+fn run_velopack_startup() {
+    let mut app = velopack::VelopackApp::build();
+    #[cfg(target_os = "windows")]
+    {
+        app = app
+            .on_after_install_fast_callback(|_| {
+                let _ = launch::run_integrate();
+            })
+            .on_after_update_fast_callback(|_| {
+                let _ = launch::run_integrate();
+            })
+            .on_before_uninstall_fast_callback(|_| {
+                let _ = launch::run_unintegrate();
+            });
+    }
+    app = app
+        .on_first_run(|_| {
+            let _ = launch::run_integrate();
+        })
+        .on_restarted(|_| {
+            let _ = launch::run_integrate();
+        });
+    app.run();
 }
 
 fn run_window(action: launch::LaunchAction) {

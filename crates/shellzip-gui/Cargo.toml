@@ -22,6 +22,7 @@ shellzip-integrate = { path = "../shellzip-integrate" }
 sysinfo = { version = "0.40.1", default-features = false, features = ["disk"] }
 toml = "1.1.8"
 trash = { version = "5.2.9", default-features = false, features = ["coinit_apartmentthreaded"] }
+velopack = "1.2.161"
 
 [lints]
 workspace = true

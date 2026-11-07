@@ -41,7 +41,19 @@ endif
 	test test-cli test-core test-sfx build-sfx \
 	check clippy lint fmt fmt-check doc deny \
 	clean ci install install-gui install-shell \
-	gen-file-icons bench help
+	gen-file-icons bench velopack-stage velopack-pack help
+
+# Velopack channel for this host (win / osx / linux).
+ifeq ($(OS),Windows_NT)
+VELOPACK_CHANNEL ?= win
+else
+UNAME_S := $(shell uname -s 2>/dev/null || echo Linux)
+ifeq ($(UNAME_S),Darwin)
+VELOPACK_CHANNEL ?= osx
+else
+VELOPACK_CHANNEL ?= linux
+endif
+endif
 
 all: build
 
@@ -158,6 +170,16 @@ gen-file-icons:
 bench:
 	$(CARGO) run --release -p xtask -- bench
 
+# Stage GUI/CLI/SFX (+ shell DLL on Windows) and icons for `vpk pack`.
+velopack-stage: release
+	$(CARGO) run -p xtask -- velopack-stage $(VELOPACK_CHANNEL)
+
+# Package a Velopack release (requires .NET 8 + `dotnet tool install -g vpk`).
+# Windows: set CERTUM_EMAIL + ssign, or CERTUM_THUMBPRINT, to Authenticode-sign.
+# Linux: set GPG_PRIVATE_KEY / GPG_KEY_ID to detach-sign after pack.
+velopack-pack: velopack-stage
+	$(CARGO) run -p xtask -- velopack-pack $(VELOPACK_CHANNEL)
+
 help:
 	@echo ShellZip Makefile
 	@echo   make / make build     Debug workspace build
@@ -187,4 +209,6 @@ help:
 	@echo   make gen-file-icons   Rasterize grx/shellzip_file_icons
 	@echo   make release-shell    Windows Explorer shell-extension DLL
 	@echo   make bench            Release ZIP timings into docs/BENCH.md
+	@echo   make velopack-stage   Stage binaries + icons under dist/velopack/
+	@echo   make velopack-pack    Stage then run vpk pack (Certum/GPG when env set)
 	@echo   make clean            cargo clean

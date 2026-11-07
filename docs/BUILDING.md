@@ -33,6 +33,8 @@ libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 | `make ci` | fmt-check + clippy + test + deny + SFX-subset clippy |
 | `make install` / `make install-gui` | `cargo install` the CLI or GUI |
 | `make bench` | Release ZIP timings into `docs/BENCH.md` |
+| `make velopack-stage` | Stage GUI/CLI/SFX (+ shell DLL) and icons under `dist/velopack/` |
+| `make velopack-pack` | Stage then run `vpk pack` (Certum/GPG when env is set) |
 | `make doc` | `cargo doc --workspace --no-deps --open` |
 | `make clean` | `cargo clean` |
 
@@ -153,11 +155,51 @@ shellzip --unintegrate
 
 Crates: `shellzip-integrate` (tables and installers), `shellzip-shell` (Windows Explorer cdylib). Platform notes: [platform/windows](../platform/windows), [platform/macos](../platform/macos), [platform/linux/nautilus](../platform/linux/nautilus).
 
+Velopack installs call integrate automatically (Windows install/update/uninstall FastCallbacks; first-run and post-update restart on Linux/macOS — Velopack has no uninstall hook on those platforms). Portable zip/`cargo install` users still use **Options → Integrate** or `--integrate`. Packaged layouts ship format icons next to the binary as `icons/` (see `make velopack-stage`).
+
+## Velopack packaging
+
+Installers and auto-updates use [Velopack](https://github.com/velopack/velopack) (`packId` `com.shellzip.ShellZip`). Channels are `win` / `osx` / `linux`. Feeds live on GitHub Releases.
+
+```bash
+# Needs .NET 8 SDK and: dotnet tool install -g vpk
+make release                # or release-cli/gui/sfx/shell as needed
+make velopack-pack          # stages dist/velopack/<channel>/ then vpk pack
+```
+
+Tag releases still upload portable `ShellZip-<tag>-<target>.zip|.tar.gz` archives; prefer the Velopack Setup / AppImage / `.app` for GUI installs with updates.
+
+### Windows Certum signing
+
+Authenticode uses a Certum SimplySign cloud certificate during `vpk pack` (not a post-hoc `signtool` on Setup alone).
+
+| Env / secret | Purpose |
+|---|---|
+| `CERTUM_EMAIL` + `CERTUM_OTP` | SimplySign account + TOTP **seed** for [`ssign`](https://le-syl21.github.io/ssign/) (`vpk --signTemplate "ssign {{file}}"`) |
+| `CERTUM_THUMBPRINT` | Optional local SimplySign Desktop + `signtool` path |
+
+Store secrets in the GitHub Environment named `signing` (required reviewers recommended). Prefer an **EV** Certum cert for instant SmartScreen; OV builds reputation over time. Timestamp: `http://time.certum.pl`. Missing secrets → unsigned Windows pack with a warning.
+
+### Linux GPG verification
+
+After `vpk pack`, CI detach-signs the AppImage (and related artifacts) and publishes `SHA256SUMS` / `*.asc` when these secrets are set: `GPG_PRIVATE_KEY`, `GPG_KEY_ID`, optional `GPG_PASSPHRASE`. Publish the matching public key as `docs/signing-key.asc` and record its fingerprint here when the release key is created.
+
+```bash
+gpg --import docs/signing-key.asc
+sha256sum -c SHA256SUMS
+gpg --verify SHA256SUMS.asc SHA256SUMS
+gpg --verify ShellZip-*.AppImage.asc ShellZip-*.AppImage
+```
+
+### macOS
+
+Velopack packs an `.app` on `macos-latest`, but Apple Developer ID signing and notarization are not wired yet. Users may need to right-click → Open the first time (Gatekeeper). Certum cannot replace Apple codesign.
+
 ## Platform notes
 
-- **Windows** — GUI and SFX are `windows_subsystem = "windows"`. Icons and manifests come from `winresource` build scripts. `--om` writes `Zone.Identifier`. Build `shellzip-shell` for the Explorer menu.
-- **Linux** — install the apt packages above before `make gui`. `shellzip --integrate` installs the desktop file, hicolor MIME icons, and KDE/Nemo/Thunar actions.
-- **macOS** — not in the CI matrix yet. Bundle document types and the Finder Sync sources under `platform/macos/`.
+- **Windows** — GUI and SFX are `windows_subsystem = "windows"`. Icons and manifests come from `winresource` build scripts. `--om` writes `Zone.Identifier`. Build `shellzip-shell` for the Explorer menu. Sign releases with Certum via Velopack as above.
+- **Linux** — install the apt packages above before `make gui`. `shellzip --integrate` installs the desktop file, hicolor MIME icons, and KDE/Nemo/Thunar actions. Distribution is a Velopack AppImage (`chmod +x`); verify with GPG when signatures are published.
+- **macOS** — release matrix builds `aarch64-apple-darwin`. Bundle document types and the Finder Sync sources under `platform/macos/`. Notarization is deferred.
 
 ## API docs
 

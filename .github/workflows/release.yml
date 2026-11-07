@@ -22,13 +22,19 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             ext: .exe
+            channel: win
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             ext: ""
+            channel: linux
           - os: macos-latest
             target: aarch64-apple-darwin
             ext: ""
+            channel: osx
     runs-on: ${{ matrix.os }}
+    # Protected environment for Certum / GPG secrets. Create `signing` in
+    # repository settings; required reviewers are optional until secrets exist.
+    environment: signing
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,12 +46,15 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++ pkg-config libgtk-3-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+          sudo apt-get install -y g++ pkg-config libgtk-3-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libssl-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev gnupg
       - name: Build CLI and GUI
         run: cargo build --release --locked --target ${{ matrix.target }} -p shellzip-cli -p shellzip-gui
       - name: Build SFX stub
         run: cargo build --profile minisize --locked --target ${{ matrix.target }} -p shellzip-sfx
-      - name: Package
+      - name: Build Windows shell extension
+        if: runner.os == 'Windows'
+        run: cargo build --release --locked --target ${{ matrix.target }} -p shellzip-shell
+      - name: Portable archive
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -64,6 +73,9 @@ jobs:
           cp "target/${target}/release/shellzip${ext}" "$name/"
           cp "$sfx_src" "$name/shellzip-sfx${ext}"
           cp README.md "$name/"
+          if [ "$RUNNER_OS" = "Windows" ] && [ -f "target/${target}/release/shellzip_shell.dll" ]; then
+            cp "target/${target}/release/shellzip_shell.dll" "$name/"
+          fi
           cp "$sfx_src" "$sfx_asset"
           if [ "$RUNNER_OS" = "Windows" ]; then
             7z a "$name.zip" "$name"
@@ -73,6 +85,85 @@ jobs:
             tar tzf "$name.tar.gz" | tee package-listing.txt
           fi
           grep -F "shellzip-sfx${ext}" package-listing.txt
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Install vpk
+        run: dotnet tool update -g vpk
+      - name: Install ssign (Certum)
+        if: runner.os == 'Windows'
+        run: cargo install ssign --locked
+        continue-on-error: true
+      - name: Stage Velopack packDir
+        shell: bash
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+        run: cargo run -p xtask -- velopack-stage ${{ matrix.channel }}
+      - name: Download previous Velopack release
+        shell: bash
+        env:
+          VPK_OUTPUT_DIR: dist/velopack/Releases-${{ matrix.channel }}
+        run: |
+          set -euo pipefail
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          mkdir -p "$VPK_OUTPUT_DIR"
+          vpk download github \
+            --repoUrl "https://github.com/${{ github.repository }}" \
+            --channel "${{ matrix.channel }}" \
+            --outputDir "$VPK_OUTPUT_DIR" \
+            || echo "No previous ${{ matrix.channel }} feed (first release or empty channel)"
+      - name: Pack Velopack
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP: ${{ secrets.CERTUM_OTP }}
+          CERTUM_THUMBPRINT: ${{ secrets.CERTUM_THUMBPRINT }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+          VPK_OUTPUT_DIR: dist/velopack/Releases-${{ matrix.channel }}
+        run: |
+          set -euo pipefail
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          VERSION="${RELEASE_TAG#v}"
+          export VELOPACK_VERSION="$VERSION"
+          if [ "${{ runner.os }}" = "Linux" ] && [ -n "${GPG_PRIVATE_KEY:-}" ]; then
+            GNUPGHOME="$(mktemp -d)"
+            export GNUPGHOME
+            chmod 700 "$GNUPGHOME"
+            printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          fi
+          cargo run -p xtask -- velopack-pack ${{ matrix.channel }}
+      - name: Upload Velopack to GitHub Releases
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VPK_OUTPUT_DIR: dist/velopack/Releases-${{ matrix.channel }}
+        run: |
+          set -euo pipefail
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          VERSION="${RELEASE_TAG#v}"
+          vpk upload github \
+            --repoUrl "https://github.com/${{ github.repository }}" \
+            --token "$GITHUB_TOKEN" \
+            --channel "${{ matrix.channel }}" \
+            --outputDir "$VPK_OUTPUT_DIR" \
+            --tag "$RELEASE_TAG" \
+            --releaseName "ShellZip $VERSION" \
+            --publish \
+            --merge
+      - name: Upload GPG signatures
+        if: runner.os == 'Linux'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: |
+            dist/velopack/Releases-linux/SHA256SUMS
+            dist/velopack/Releases-linux/*.asc
+          fail_on_unmatched_files: false
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
