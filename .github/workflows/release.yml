@@ -91,11 +91,12 @@ jobs:
           dotnet-version: "8.0.x"
       - name: Install vpk
         run: dotnet tool update -g vpk
-      # Install only when both Certum secrets are non-empty. Missing secrets become
-      # "" in Actions; installing ssign anyway used to enable a broken sign path.
+      # Optional: xtask only enables --signTemplate when CERTUM_EMAIL and
+      # CERTUM_OTP are both non-empty, so a blank Actions secret cannot break pack.
       - name: Install ssign (Certum)
-        if: runner.os == 'Windows' && secrets.CERTUM_EMAIL != '' && secrets.CERTUM_OTP != ''
+        if: runner.os == 'Windows'
         run: cargo install ssign --locked
+        continue-on-error: true
       - name: Stage Velopack packDir
         shell: bash
         env:
