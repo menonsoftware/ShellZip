@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::{Duration, Instant};
 
 use shellzip_core::{
     CompressOpts, ConflictChoice, Entry, Error, ExtractOpts, ListOpts, Password, SevenZOpts,
@@ -38,7 +39,9 @@ use crate::test_dialog::{self, TestCommand};
 use crate::theme::{self, Preference};
 use crate::view_dialog::{self, PreviewData};
 use crate::worker::ExtractJob;
-use crate::worker::{self, JobToken, Outcome, PasswordJob, PasswordRequest, SharedProgress};
+use crate::worker::{
+    self, JobDone, JobToken, Outcome, PasswordJob, PasswordRequest, SharedProgress,
+};
 
 /// An unpacked archive waiting for a delete confirmation.
 struct PendingArchiveDelete {
@@ -150,8 +153,8 @@ pub struct ShellZipApp {
     icons: IconCache,
     tree: FolderTree,
     progress: Arc<SharedProgress>,
-    tx: Sender<Outcome>,
-    rx: Receiver<Outcome>,
+    tx: Sender<JobDone>,
+    rx: Receiver<JobDone>,
     /// Shell-menu extract jobs waiting until the previous one finishes.
     shell_queue: Vec<(PathBuf, PathBuf, bool)>,
     /// Remaining archives for a multi-file **Extract to…** after the dialog.
@@ -1470,29 +1473,30 @@ impl ShellZipApp {
     }
 
     fn poll(&mut self) {
-        while let Ok(outcome) = self.rx.try_recv() {
+        while let Ok(JobDone { outcome, elapsed }) = self.rx.try_recv() {
             match outcome {
                 Outcome::Directory {
                     generation,
                     path,
                     rows,
                     error,
-                } => self.apply_directory(generation, path, rows, error),
+                } => self.apply_directory(generation, path, rows, error, elapsed),
                 Outcome::Listed {
                     token,
                     path,
                     format,
                     entries,
-                } => self.finish_listed(token, path, format, entries),
+                } => self.finish_listed(token, path, format, entries, elapsed),
                 Outcome::Finished { token, summary } => {
                     if self.operation.as_ref().is_some_and(|op| op.id == token.id) {
                         let kind = self.operation.as_ref().map(|op| op.kind);
+                        let stamped = with_elapsed(summary, self.operation_elapsed(elapsed));
                         self.clear_operation();
                         self.ask = None;
                         if matches!(kind, Some(OpKind::Test)) {
                             self.test_dialog = None;
                         }
-                        self.status = summary;
+                        self.status = stamped;
                         if matches!(kind, Some(OpKind::Add | OpKind::Extract)) {
                             self.maybe_close_shell_verb();
                         }
@@ -1500,7 +1504,7 @@ impl ShellZipApp {
                         self.browse_job = None;
                         self.listing = false;
                         if token.generation == self.generation {
-                            self.status = summary;
+                            self.status = with_elapsed(summary, Some(elapsed));
                         }
                     } else {
                         self.settle_side_status(token);
@@ -1521,9 +1525,10 @@ impl ShellZipApp {
                     if !self.operation.as_ref().is_some_and(|op| op.id == token.id) {
                         continue;
                     }
+                    let stamped = with_elapsed(summary, self.operation_elapsed(elapsed));
                     self.clear_operation();
                     self.ask = None;
-                    self.status = summary;
+                    self.status = stamped;
                     self.remember_destination(&output);
                     if show_in_explorer {
                         self.open_destination(&output);
@@ -1543,9 +1548,13 @@ impl ShellZipApp {
                 }
                 Outcome::Tested { token, report } => {
                     if self.operation.as_ref().is_some_and(|op| op.id == token.id) {
+                        let stamped = with_elapsed(
+                            test_dialog::summary_line(&report),
+                            self.operation_elapsed(elapsed),
+                        );
                         self.clear_operation();
                         self.ask = None;
-                        self.status = test_dialog::summary_line(&report);
+                        self.status = stamped;
                         if let Some(dialog) = &mut self.test_dialog {
                             dialog.finish(&report);
                         }
@@ -1598,45 +1607,47 @@ impl ShellZipApp {
                 Outcome::Failed { token, message } => {
                     if self.operation.as_ref().is_some_and(|op| op.id == token.id) {
                         let kind = self.operation.as_ref().map(|op| op.kind);
+                        let stamped = with_elapsed(message, self.operation_elapsed(elapsed));
                         self.clear_operation();
                         self.ask = None;
                         self.status.clear();
                         if matches!(kind, Some(OpKind::Test)) {
                             self.test_dialog = None;
                         }
-                        self.error = Some(message);
+                        self.error = Some(stamped);
                     } else if self.browse_job == Some(token.id) {
                         self.browse_job = None;
                         self.listing = false;
                         if token.generation == self.generation {
                             self.status.clear();
-                            self.error = Some(message);
+                            self.error = Some(with_elapsed(message, Some(elapsed)));
                         }
                     } else if self.view_job == Some(token.id) {
                         self.view_job = None;
                         if token.generation == self.generation {
                             self.status.clear();
-                            self.error = Some(message);
+                            self.error = Some(with_elapsed(message, Some(elapsed)));
                         }
                     } else if self.info_job == Some(token.id) {
                         self.info_job = None;
                         if token.generation == self.generation {
                             self.status.clear();
-                            self.error = Some(message);
+                            self.error = Some(with_elapsed(message, Some(elapsed)));
                         }
                     } else if self.report_job == Some(token.id) {
                         self.report_job = None;
                         if token.generation == self.generation {
+                            let stamped = with_elapsed(message, Some(elapsed));
                             if let Some(dialog) = &mut self.report_dialog {
-                                dialog.fail(message);
+                                dialog.fail(stamped);
                             } else {
-                                self.error = Some(message);
+                                self.error = Some(stamped);
                             }
                         }
                     } else if self.update_job == Some(token.id) {
                         self.update_job = None;
                         self.status.clear();
-                        self.error = Some(message);
+                        self.error = Some(with_elapsed(message, Some(elapsed)));
                     }
                 }
                 Outcome::UpdateChecked {
@@ -1648,10 +1659,10 @@ impl ShellZipApp {
                         self.update_job = None;
                         if is_error {
                             self.status.clear();
-                            self.error = Some(message);
+                            self.error = Some(with_elapsed(message, Some(elapsed)));
                         } else {
                             self.error = None;
-                            self.status = message;
+                            self.status = with_elapsed(message, Some(elapsed));
                         }
                     }
                 }
@@ -1659,6 +1670,11 @@ impl ShellZipApp {
             }
         }
         self.pump_shell_queue();
+    }
+
+    /// Pause-aware job clock when the worker started progress; otherwise wall time.
+    fn operation_elapsed(&self, wall: Duration) -> Option<Duration> {
+        Some(self.progress.running_elapsed().unwrap_or(wall))
     }
 
     fn settle_side_status(&mut self, token: JobToken) {
@@ -1682,23 +1698,25 @@ impl ShellZipApp {
         path: PathBuf,
         format: String,
         entries: Vec<Entry>,
+        wall: Duration,
     ) {
         let kind = self
             .operation
             .as_ref()
             .filter(|op| op.id == token.id)
             .map(|op| op.kind);
+        let op_elapsed = kind.and_then(|_| self.operation_elapsed(wall));
         match listed_effect(kind, token.generation, self.generation) {
             ListedEffect::Finish { kind, open } => {
                 self.clear_operation();
                 self.ask = None;
                 if self.shell_verb && kind == OpKind::Add {
-                    self.status = format!("created {}", path.display());
+                    self.status = with_elapsed(format!("created {}", path.display()), op_elapsed);
                     self.maybe_close_shell_verb();
                 } else if open {
-                    self.apply_archive(path, format, entries);
+                    self.apply_archive(path, format, entries, op_elapsed);
                 } else if kind == OpKind::Add {
-                    self.status = format!("created {}", path.display());
+                    self.status = with_elapsed(format!("created {}", path.display()), op_elapsed);
                 }
             }
             ListedEffect::Browse { open } => {
@@ -1707,7 +1725,7 @@ impl ShellZipApp {
                     self.listing = false;
                 }
                 if open {
-                    self.apply_archive(path, format, entries);
+                    self.apply_archive(path, format, entries, Some(wall));
                 }
             }
         }
@@ -1861,6 +1879,7 @@ impl ShellZipApp {
         path: PathBuf,
         rows: Vec<Row>,
         error: Option<String>,
+        elapsed: Duration,
     ) {
         if !folder_still_shown(generation, self.generation) {
             return;
@@ -1877,14 +1896,20 @@ impl ShellZipApp {
         }
         match error {
             Some(message) => {
-                self.error = Some(message);
+                self.error = Some(with_elapsed(message, Some(elapsed)));
                 self.status.clear();
             }
             None => self.status.clear(),
         }
     }
 
-    fn apply_archive(&mut self, path: PathBuf, format: String, entries: Vec<Entry>) {
+    fn apply_archive(
+        &mut self,
+        path: PathBuf,
+        format: String,
+        entries: Vec<Entry>,
+        elapsed: Option<Duration>,
+    ) {
         let members = entries.iter().map(|entry| entry.path.clone()).collect();
         let index = Box::new(ArchiveIndex::build(&entries));
         let prefix = match self.restore_prefix.take() {
@@ -1910,7 +1935,9 @@ impl ShellZipApp {
         self.rebuild_view();
         self.error = None;
         self.status = match &self.place {
-            Place::Archive { path, .. } => format!("Opened {}", path.display()),
+            Place::Archive { path, .. } => {
+                with_elapsed(format!("Opened {}", path.display()), elapsed)
+            }
             Place::Folder { .. } => String::new(),
         };
     }
@@ -2348,14 +2375,29 @@ impl ShellZipApp {
     }
 
     fn finish_shell_integrate(&mut self, kind: ShellIntegrateKind) {
+        let started = Instant::now();
         match kind {
             ShellIntegrateKind::Install => match launch::run_integrate() {
-                Ok(()) => self.status = "File manager integration installed.".to_string(),
-                Err(err) => self.error = Some(err),
+                Ok(()) => {
+                    self.status = with_elapsed(
+                        "File manager integration installed.".to_string(),
+                        Some(started.elapsed()),
+                    );
+                }
+                Err(err) => {
+                    self.error = Some(with_elapsed(err, Some(started.elapsed())));
+                }
             },
             ShellIntegrateKind::Remove => match launch::run_unintegrate() {
-                Ok(()) => self.status = "File manager integration removed.".to_string(),
-                Err(err) => self.error = Some(err),
+                Ok(()) => {
+                    self.status = with_elapsed(
+                        "File manager integration removed.".to_string(),
+                        Some(started.elapsed()),
+                    );
+                }
+                Err(err) => {
+                    self.error = Some(with_elapsed(err, Some(started.elapsed())));
+                }
             },
         }
     }
@@ -3063,7 +3105,7 @@ fn folder_still_shown(listing_generation: u64, current: u64) -> bool {
     listing_generation == current
 }
 
-fn spawn_directory(tx: Sender<Outcome>, path: PathBuf, generation: u64) {
+fn spawn_directory(tx: Sender<JobDone>, path: PathBuf, generation: u64) {
     let token = JobToken { id: 0, generation };
     worker::spawn(tx, token, move || {
         let (rows, error) = match read_directory(&path) {
@@ -3077,6 +3119,15 @@ fn spawn_directory(tx: Sender<Outcome>, path: PathBuf, generation: u64) {
             error,
         })
     });
+}
+
+/// Append ` · {elapsed}` when a duration is known.
+fn with_elapsed(text: impl Into<String>, elapsed: Option<Duration>) -> String {
+    let text = text.into();
+    match elapsed {
+        Some(duration) => format!("{text} · {}", progress_dialog::format_elapsed(duration)),
+        None => text,
+    }
 }
 
 /// True when a one-click shell add should open the dialog instead of packing.

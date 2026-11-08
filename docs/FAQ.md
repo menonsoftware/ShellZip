@@ -102,6 +102,10 @@ Yes. **Options → Integrate with the file manager** (or `shellzip --integrate`)
 - **Linux** — desktop actions, KDE service menu, Nemo actions, Thunar snippet; optional GPL Nautilus script under [platform/linux/nautilus/](../platform/linux/nautilus/).
 - **macOS** — document types and a Finder Sync Swift source under [platform/macos/](../platform/macos/).
 
+## Why does Windows Defender call ShellZip a trojan?
+
+Releases are still **unsigned**. SmartScreen warns about an unknown publisher for that reason alone. A Defender **trojan** label is usually a heuristic / ML hit on shapes this project ships on purpose: stripped LTO release binaries, the SFX stub (PE with an appended archive that extracts itself), the Explorer COM context-menu DLL that `--integrate` installs under `%LOCALAPPDATA%\ShellZip`, and Velopack’s download-and-restart update path. There is no process injection and no Run / AppInit / IFEO persistence. Authenticode signing (Certum) is documented in [BUILDING.md](BUILDING.md); until that is wired in CI, allow the file in Defender or build from this repository.
+
 ## What do the exit codes mean?
 
 They follow the RAR convention:

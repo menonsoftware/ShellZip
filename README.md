@@ -12,7 +12,16 @@ It packs and unpacks ZIP, 7z, tar, gzip, and zstd, extracts xz, bzip2, and RAR, 
 
 Licensed under MIT. Not published to crates.io.
 
-**Windows:** App signing is still pending. This release is unsigned, so Windows (SmartScreen or Microsoft Defender) may detect ShellZip as a virus. That warning is from the missing signature.
+## Windows Defender and SmartScreen
+
+App signing is still pending, so release builds ship **without Authenticode**. SmartScreen treats that as an unknown publisher. Microsoft Defender can also score the binary as a trojan from heuristics that match shapes ShellZip really uses:
+
+- **Unsigned, stripped release PEs** — workspace release profile uses LTO, one codegen unit, and `strip`; CI leaves the Velopack pack unsigned until Certum secrets are set ([docs/BUILDING.md](docs/BUILDING.md))
+- **Self-extracting stub** — `shellzip-sfx` is a small windowed PE with an appended archive and an `SZSFX01` trailer; it reads its own image and writes the payload (including `.exe` members)
+- **Explorer shell DLL** — `shellzip_shell.dll` is an in-proc `IContextMenu`; `--integrate` copies it under `%LOCALAPPDATA%\ShellZip`, registers the COM server, and the menu starts `shellzip.exe`
+- **Velopack updates** — an installed build can download a newer package from GitHub Releases, restart, and re-run `--integrate`
+
+ShellZip does not inject into other processes, write Run / AppInit / IFEO keys, or shell out to `cmd` or PowerShell. The only optional network path is the GitHub update check. Until signing is live, allow the file in Defender or prefer a local `cargo` / `make release` build you trust.
 
 ## Features
 
@@ -115,6 +124,7 @@ Full switch list: [docs/CLI.md](docs/CLI.md).
 
 - Drag a folder onto the window to pack it, or drop an archive to open it
 - Add and Extract dialogs cover format, compression, update mode, passwords, and overwrite
+- The status bar keeps the result and the elapsed time after a job finishes
 - Light / dark / system theme, toolbar size, recent archives, and settings in a TOML file
 - Generate an HTML, Markdown, or text listing from **Commands → Generate report**
 - **Options → Check for updates…** looks for a newer Velopack package on GitHub Releases. A `cargo` build or an unzipped portable archive cannot update this way

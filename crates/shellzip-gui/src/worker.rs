@@ -155,6 +155,12 @@ impl SharedProgress {
             paused,
         }
     }
+
+    /// Pause-aware time since [`ProgressSink::begin`], or `None` if the clock never started.
+    pub fn running_elapsed(&self) -> Option<Duration> {
+        let clock = lock(&self.clock);
+        clock.started.is_some().then(|| active_elapsed(&clock))
+    }
 }
 
 fn active_elapsed(clock: &Clock) -> Duration {
@@ -397,13 +403,22 @@ pub struct ExtractJob {
     pub names: Option<Vec<String>>,
 }
 
-/// Run `job` on a new thread and send one [`Outcome`].
+/// One worker result plus wall time from spawn to send.
+pub struct JobDone {
+    /// What finished.
+    pub outcome: Outcome,
+    /// Wall time for the whole thread, including pauses and password waits.
+    pub elapsed: Duration,
+}
+
+/// Run `job` on a new thread and send one [`JobDone`].
 pub fn spawn(
-    tx: Sender<Outcome>,
+    tx: Sender<JobDone>,
     token: JobToken,
     job: impl FnOnce() -> Result<Outcome, Error> + Send + 'static,
 ) {
     std::thread::spawn(move || {
+        let started = Instant::now();
         let outcome = match job() {
             Ok(outcome) => outcome,
             Err(Error::Interrupted) => Outcome::Finished {
@@ -415,7 +430,10 @@ pub fn spawn(
                 message: err.to_string(),
             },
         };
-        let _ = tx.send(outcome);
+        let _ = tx.send(JobDone {
+            outcome,
+            elapsed: started.elapsed(),
+        });
     });
 }
 
@@ -503,5 +521,13 @@ mod tests {
         assert!(progress.snapshot().paused);
         progress.set_paused(false);
         assert!(!progress.snapshot().paused);
+    }
+
+    #[test]
+    fn running_elapsed_is_none_before_begin() {
+        let progress = SharedProgress::new();
+        assert!(progress.running_elapsed().is_none());
+        progress.begin("extract notes.zip", 100);
+        assert!(progress.running_elapsed().is_some());
     }
 }

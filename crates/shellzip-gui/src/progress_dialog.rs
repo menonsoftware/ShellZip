@@ -145,6 +145,18 @@ pub(crate) fn format_clock(elapsed: Duration) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:02}")
 }
 
+/// Short elapsed for the status bar: tenths under a minute, else [`format_clock`].
+pub(crate) fn format_elapsed(elapsed: Duration) -> String {
+    if elapsed.as_secs() < 60 {
+        let tenths = elapsed.as_millis() / 100;
+        let whole = tenths / 10;
+        let frac = tenths % 10;
+        format!("{whole}.{frac}s")
+    } else {
+        format_clock(elapsed)
+    }
+}
+
 /// Fraction and whether the bar should animate because the total is unknown.
 pub fn job_fraction(done: u64, total: u64) -> (f32, bool) {
     fraction(done, total)
@@ -164,5 +176,26 @@ pub fn status_text(snapshot: &ProgressSnapshot) -> String {
         snapshot.label.clone()
     } else {
         snapshot.entry.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_elapsed_uses_tenths_under_a_minute() {
+        assert_eq!(format_elapsed(Duration::from_millis(400)), "0.4s");
+        assert_eq!(format_elapsed(Duration::from_millis(12_300)), "12.3s");
+        assert_eq!(format_elapsed(Duration::from_secs(59)), "59.0s");
+    }
+
+    #[test]
+    fn format_elapsed_uses_clock_from_one_minute() {
+        assert_eq!(format_elapsed(Duration::from_secs(61)), "00:01:01");
+        assert_eq!(
+            format_elapsed(Duration::from_secs(3600 + 2 * 60 + 3)),
+            "01:02:03"
+        );
     }
 }

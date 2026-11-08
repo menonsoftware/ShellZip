@@ -33,6 +33,10 @@ Release CI stages `shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, `shellzip_shel
 
 Authenticode signing uses Certum SimplySign during `vpk pack` when `CERTUM_EMAIL` / `CERTUM_OTP` (or `CERTUM_THUMBPRINT`) are set in the GitHub `signing` environment. See [docs/BUILDING.md](../../docs/BUILDING.md).
 
+## SmartScreen and Defender
+
+Until Certum secrets are set, the Velopack Setup and portable zip are **unsigned**. SmartScreen flags an unknown publisher. Defender may also score `shellzip.exe`, `shellzip-sfx.exe`, or `shellzip_shell.dll` as a trojan because of the same shapes: stripped release PEs, the SFX overlay trailer, the in-proc Explorer DLL plus HKLM `InprocServer32` / Approved registration from `--integrate`, and Velopack’s update download. That is a false positive on those heuristics, not evidence of injection or Run-key persistence. Prefer a signed release once CI signing is live; otherwise allow the path in Defender or build locally with `make release`.
+
 ## Windows 11 sparse package
 
 [msix/ShellZipSparse.md](msix/ShellZipSparse.md) describes an optional sparse MSIX so `IExplorerCommand` items appear on the compact context menu. The classic `IContextMenu` handler already appears under **Show more options** (and on Windows 10) after `--integrate`.
