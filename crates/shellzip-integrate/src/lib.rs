@@ -17,6 +17,8 @@ pub use formats::{
     ArchiveKind, EXTENSIONS, FormatIcon, MIME_TYPES, icon_for_extension, icon_for_path,
     kind_for_path,
 };
+#[cfg(windows)]
+pub use install::registered_host_exe;
 pub use install::{IntegrateError, IntegratePaths, integrate, unintegrate};
 pub use menu::{
     MenuAction, MenuModel, MenuRow, action_flag, action_label, action_verb, is_registered_archive,

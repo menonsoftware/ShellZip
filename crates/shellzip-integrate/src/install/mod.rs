@@ -77,6 +77,12 @@ fn find_icons_source(exe: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Absolute GUI path stored by the last Windows `--integrate`, if it still exists.
+#[cfg(windows)]
+pub fn registered_host_exe() -> Option<PathBuf> {
+    windows::registered_host_exe()
+}
+
 /// Install per-user associations, icons, and menus for this OS.
 pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
     #[cfg(windows)]

@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use shellzip_integrate::{
     MenuAction, MenuRow, action_flag, action_verb, icon_for_path, menu_for_selection,
-    paths_for_action, quote_command_line,
+    paths_for_action, quote_command_line, registered_host_exe,
 };
 use windows::Win32::Foundation::{
     CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_FAIL, E_INVALIDARG, E_NOTIMPL, E_POINTER,
@@ -300,6 +300,12 @@ fn launch_shellzip(action: MenuAction, files: &[PathBuf]) -> WinResult<()> {
 }
 
 fn shellzip_exe() -> Option<PathBuf> {
+    // Prefer the path written by `--integrate`. The DLL is copied to
+    // `%LOCALAPPDATA%\ShellZip`, so a sibling `shellzip.exe` is usually absent,
+    // and Explorer's PATH rarely includes cargo or the install folder.
+    if let Some(path) = registered_host_exe() {
+        return Some(path);
+    }
     let mut buf = vec![0u16; 520];
     let len = unsafe { GetModuleFileNameW(Some(MODULE.into()), &mut buf) } as usize;
     if len == 0 {

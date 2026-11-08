@@ -236,13 +236,14 @@ OpenWithProgids\\{ext} += {prog}
             exe = exe,
         ));
     }
-    out.push_str(
+    out.push_str(&format!(
         "\
-*\\shellex\\ContextMenuHandlers\\ShellZip = {CLSID}
-Directory\\shellex\\ContextMenuHandlers\\ShellZip = {CLSID}
+*\\shellex\\ContextMenuHandlers\\ShellZip = {{CLSID}}
+Directory\\shellex\\ContextMenuHandlers\\ShellZip = {{CLSID}}
+Software\\ShellZip\\ExePath = {exe}
 Approved shell extension list += ShellZip
-",
-    );
+"
+    ));
     out
 }
 
@@ -267,6 +268,7 @@ mod tests {
         assert!(plan.contains(r"C:\icons\tar.gz.ico,0"));
         assert!(plan.contains(r"*\shellex\ContextMenuHandlers\ShellZip"));
         assert!(plan.contains(r"Directory\shellex\ContextMenuHandlers\ShellZip"));
+        assert!(plan.contains(r"Software\ShellZip\ExePath = C:\ShellZip\shellzip.exe"));
     }
 
     #[test]

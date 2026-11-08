@@ -13,6 +13,9 @@ use crate::writers::windows_registry_plan;
 
 const SHELL_CLSID: &str = "{A7C3E5B1-4D2F-4A91-9E6C-8B1F0D2E3A45}";
 const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Approved";
+/// Where integrate stores the GUI path for the shell extension to launch.
+const HOST_EXE_KEY: &str = r"Software\ShellZip";
+const HOST_EXE_VALUE: &str = "ExePath";
 /// Files, filesystem folders, and the Folder class (drives and namespace folders).
 const MENU_HANDLER_KEYS: &[&str] = &[
     r"*\shellex\ContextMenuHandlers\ShellZip",
@@ -76,6 +79,10 @@ pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
         }
     }
 
+    // The DLL is copied under LocalAppData; Explorer's PATH rarely includes the
+    // GUI, so store an absolute ExePath for menu verbs to launch. Write this
+    // before the DLL copy so a locked Explorer file cannot skip it.
+    write_host_exe(&exe_str)?;
     // Explorer loads InprocServer32 from HKLM\Software\Classes\CLSID. A CLSID
     // that exists only under HKCU is ignored, so the menu never appears.
     register_shell_menu(&classes, paths.shell_dll.as_deref())?;
@@ -129,6 +136,7 @@ pub fn unintegrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
         let _ = approved.delete_value(SHELL_CLSID);
     }
     remove_machine_registration();
+    let _ = hkcu.delete_subkey_all(HOST_EXE_KEY);
     if let Ok(dll) = shell_dll_dest() {
         let _ = fs::remove_file(dll);
     }
@@ -138,6 +146,22 @@ pub fn unintegrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
     }
     let _ = paths;
     let _ = notify_assoc_changed();
+    Ok(())
+}
+
+/// Absolute `shellzip.exe` written by the last successful `--integrate`.
+pub(crate) fn registered_host_exe() -> Option<PathBuf> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let key = hkcu.open_subkey(HOST_EXE_KEY).ok()?;
+    let path: String = key.get_value(HOST_EXE_VALUE).ok()?;
+    let path = PathBuf::from(path);
+    path.is_file().then_some(path)
+}
+
+fn write_host_exe(exe: &str) -> Result<(), IntegrateError> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let key = hkcu.create_subkey(HOST_EXE_KEY)?.0;
+    key.set_value(HOST_EXE_VALUE, &exe)?;
     Ok(())
 }
 
@@ -287,10 +311,16 @@ fn install_shell_dll(source: &Path) -> Result<PathBuf, IntegrateError> {
         fs::create_dir_all(parent)?;
     }
     let same = source.canonicalize().ok() == dest.canonicalize().ok() && dest.is_file();
-    if !same {
-        fs::copy(source, &dest)?;
+    if same {
+        return Ok(dest);
     }
-    Ok(dest)
+    match fs::copy(source, &dest) {
+        Ok(_) => Ok(dest),
+        Err(err) if err.raw_os_error() == Some(32) => Err(IntegrateError::Message(
+            "could not update shellzip_shell.dll because Explorer still has it loaded. Restart Explorer (or sign out) and run shellzip --integrate again".into(),
+        )),
+        Err(err) => Err(err.into()),
+    }
 }
 
 #[cfg(test)]
