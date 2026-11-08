@@ -14,14 +14,14 @@ Licensed under MIT. Not published to crates.io.
 
 ## Windows Defender and SmartScreen
 
-App signing is still pending, so release builds ship **without Authenticode**. SmartScreen treats that as an unknown publisher. Microsoft Defender can also score the binary as a trojan from heuristics that match shapes ShellZip really uses:
+Velopack Setup and portable zips ship **without Authenticode**. SmartScreen treats that as an unknown publisher. The Microsoft Store MSIX is re-signed by Partner Center. Microsoft Defender can also score the binary as a trojan from heuristics that match shapes ShellZip really uses:
 
-- **Unsigned, stripped release PEs** — workspace release profile uses LTO, one codegen unit, and `strip`; CI leaves the Velopack pack unsigned until Certum secrets are set ([docs/BUILDING.md](docs/BUILDING.md))
+- **Unsigned, stripped release PEs** — workspace release profile uses LTO, one codegen unit, and `strip`; CI leaves the Velopack pack unsigned on purpose ([docs/BUILDING.md](docs/BUILDING.md))
 - **Self-extracting stub** — `shellzip-sfx` is a small windowed PE with an appended archive and an `SZSFX01` trailer; it reads its own image and writes the payload (including `.exe` members)
 - **Explorer shell DLL** — `shellzip_shell.dll` is an in-proc `IContextMenu`; `--integrate` copies it under `%LOCALAPPDATA%\ShellZip`, registers the COM server, and the menu starts `shellzip.exe`
 - **Velopack updates** — an installed build can download a newer package from GitHub Releases, restart, and re-run `--integrate`
 
-ShellZip does not inject into other processes, write Run / AppInit / IFEO keys, or shell out to `cmd` or PowerShell. The only optional network path is the GitHub update check. Until signing is live, allow the file in Defender or prefer a local `cargo` / `make release` build you trust.
+ShellZip does not inject into other processes, write Run / AppInit / IFEO keys, or shell out to `cmd` or PowerShell. The only optional network path is the GitHub update check. For unsigned Velopack builds, allow the file in Defender or prefer a local `cargo` / `make release` build you trust.
 
 ## Features
 
@@ -53,6 +53,35 @@ RAR creation is out of scope. The UnRAR licence forbids rebuilding the RAR compr
 Opening an archive sniffs the bytes. A `.zip` that is actually RAR 5 is treated as RAR 5.
 
 See [docs/FORMATS.md](docs/FORMATS.md) for methods, encryption, and safety limits.
+
+## System requirements
+
+Published builds are 64-bit: **x86_64** Windows, **x86_64** Linux, and **Apple silicon** macOS. `szip` is a terminal program. `shellzip` is a desktop window on the same machine.
+
+### Minimum
+
+| | |
+|---|---|
+| **Processor** | One 64-bit core |
+| **Memory** | 1 GB RAM. Pack, list, test, and extract stream file bytes through a fixed buffer, so an archive does not have to fit in memory |
+| **Disk** | 50 MB for the program. The Windows Setup is about 27 MB and the Linux AppImage about 23 MB. Also leave free space for the archive, a second copy while an update is written, and the unpacked files. Extract and test stop at 64 GiB uncompressed; raise that with `--max-size` |
+| **Display** | 820×480 for the desktop window |
+| **Graphics** | OpenGL for the desktop window (eframe glow; WGL on Windows). Integrated graphics is enough. 64 MB of video memory, shared or dedicated, covers the window framebuffer and the UI atlas. DirectX is not used, and no DirectX runtime is required |
+| **System** | Windows 10 or later, 64-bit Linux with GTK 3 and X11 or Wayland, or macOS on Apple silicon |
+
+Linux package names for a source build are in [docs/BUILDING.md](docs/BUILDING.md).
+
+### Recommended
+
+| | |
+|---|---|
+| **Processor** | 4 or more cores. Workers default to the CPU count, up to 64. On the bench corpus, eight ZIP threads were about 4.9× a single thread ([docs/BENCH.md](docs/BENCH.md)) |
+| **Memory** | 4 GB RAM or more. 7z compression takes an automatic share of system memory, and solid LZMA2 uses more than the streaming ZIP path |
+| **Disk** | An SSD, with free space well above the archives you pack or unpack. Parallel ZIP keeps one temporary piece per worker for members of 1 MiB and larger |
+| **Display** | 1080×720, the window’s default size |
+| **Graphics** | The same integrated OpenGL GPU and 64 MB of video memory. Archive work runs on the CPU, so a discrete GPU and extra VRAM leave pack and extract times unchanged |
+
+ShellZip works offline. The only network use is the optional update check against GitHub Releases.
 
 ## Build and run
 

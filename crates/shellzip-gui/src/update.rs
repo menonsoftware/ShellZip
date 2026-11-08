@@ -20,6 +20,8 @@ pub enum CheckResult {
     },
     /// Running from `cargo run`, a zip drop, or another non-Velopack layout.
     NotInstalled,
+    /// Installed from the Microsoft Store; Partner Center delivers updates.
+    StoreInstall,
     /// Network, feed, or apply failure.
     Failed(String),
 }
@@ -29,6 +31,9 @@ pub enum CheckResult {
 /// Call from a worker thread. On [`CheckResult::Applying`], Velopack restarts
 /// the process and this function does not return.
 pub fn check_and_apply() -> CheckResult {
+    if crate::package::is_packaged() {
+        return CheckResult::StoreInstall;
+    }
     let source = GithubSource::new(GITHUB_REPO, None, false);
     let manager = match UpdateManager::new(source, None, None) {
         Ok(manager) => manager,
@@ -63,6 +68,7 @@ impl CheckResult {
             Self::NotInstalled => {
                 "Updates need a Velopack install (Setup or AppImage), not a cargo build.".into()
             }
+            Self::StoreInstall => "Updates for this install come from the Microsoft Store.".into(),
             Self::Failed(message) => format!("Update check failed: {message}"),
         }
     }

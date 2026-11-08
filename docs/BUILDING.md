@@ -34,7 +34,8 @@ libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 | `make install` / `make install-gui` | `cargo install` the CLI or GUI |
 | `make bench` | Release ZIP timings into `docs/BENCH.md` |
 | `make velopack-stage` | Stage GUI/CLI/SFX (+ shell DLL) and icons under `dist/velopack/` |
-| `make velopack-pack` | Stage then run `vpk pack` (Certum/GPG when env is set) |
+| `make velopack-pack` | Stage then run `vpk pack` (GPG on Linux when env is set) |
+| `make msix` | Windows: build release binaries and pack an unsigned Store MSIX under `dist/msix/` |
 | `make doc` | `cargo doc --workspace --no-deps --open` |
 | `make clean` | `cargo clean` |
 
@@ -167,20 +168,25 @@ make release                # or release-cli/gui/sfx/shell as needed
 make velopack-pack          # stages dist/velopack/<channel>/ then vpk pack
 ```
 
-Tag releases still upload portable `ShellZip-<tag>-<target>.zip|.tar.gz` archives; prefer the Velopack Setup / AppImage / `.app` for GUI installs with updates.
+Tag releases still upload portable `ShellZip-<tag>-<target>.zip|.tar.gz` archives; prefer the Velopack Setup / AppImage / `.app` for GUI installs with updates. Windows also packs `ShellZip-<tag>-x64.msix` for Partner Center.
 
-### Windows Certum signing
+### Windows Store MSIX
 
-Authenticode uses a Certum SimplySign cloud certificate during `vpk pack` (not a post-hoc `signtool` on Setup alone).
+`make msix` (or the Windows leg of `release.yml`) runs `xtask msix-pack`. The package is full-trust desktop (`shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`), declares archive file associations and static Extract verbs, and stays **unsigned** on GitHub Releases. Partner Center re-signs it after `msstore publish`.
 
 | Env / secret | Purpose |
 |---|---|
-| `CERTUM_EMAIL` + `CERTUM_OTP` | SimplySign account + TOTP **seed** for [`ssign`](https://le-syl21.github.io/ssign/) (`vpk --signTemplate "ssign {{file}}"`) |
-| `CERTUM_THUMBPRINT` | Optional local SimplySign Desktop + `signtool` path |
+| `STORE_IDENTITY_NAME` | Package Identity `Name` (must match Partner Center) |
+| `STORE_PUBLISHER` | Package Identity `Publisher` (`CN=…` exactly as Partner Center shows) |
+| `STORE_PUBLISHER_DISPLAY_NAME` | Must match Partner Center publisher display name (for example `Menonsoftware`) |
+| `STORE_APP_ID` | Store product id for `msstore publish` |
+| `STORE_TENANT_ID` / `STORE_SELLER_ID` / `STORE_CLIENT_ID` / `STORE_CLIENT_SECRET` | Entra app that Partner Center granted Manager rights |
 
-When ready, create a GitHub Environment named `signing`, put these secrets there, and add `environment: signing` to the release workflow job so only that environment can see them (required reviewers recommended). Prefer an **EV** Certum cert for instant SmartScreen; OV builds reputation over time. Timestamp: `http://time.certum.pl`.
+Upload only the `.msix` from `dist/msix/` (not the `payload/` folder). Partner Center re-signs it. Local defaults (`CN=ShellZip` / display name `ShellZip`) are for layout checks only — a Store submission must be packed with the real identity env vars set. `runFullTrust` needs a restricted-capability note / approval in Partner Center the first time.
 
-Both `CERTUM_EMAIL` and `CERTUM_OTP` must be non-empty before CI installs `ssign` or passes `--signTemplate` to `vpk`. Missing, blank, or one-sided secrets → unsigned Windows pack with a warning (GitHub Actions injects absent secrets as `""`, which must not enable signing). Until Certum is ready, leave those secrets unset (or clear incomplete values) so releases can ship unsigned.
+If any publish secret is empty, CI skips the Store upload and still ships Velopack. Reserve the app name and complete the first listing in Partner Center before the CLI can publish updates.
+
+Windows Velopack Setup and the portable zip stay unsigned on purpose (no Authenticode signer in CI).
 
 ### Linux GPG verification
 
@@ -195,11 +201,11 @@ gpg --verify ShellZip-*.AppImage.asc ShellZip-*.AppImage
 
 ### macOS
 
-Velopack packs an `.app` on `macos-latest`, but Apple Developer ID signing and notarization are not wired yet. Users may need to right-click → Open the first time (Gatekeeper). Certum cannot replace Apple codesign.
+Velopack packs an `.app` on `macos-latest`, but Apple Developer ID signing and notarization are not wired yet. Users may need to right-click → Open the first time (Gatekeeper).
 
 ## Platform notes
 
-- **Windows** — GUI and SFX are `windows_subsystem = "windows"`. Icons and manifests come from `winresource` build scripts. `--om` writes `Zone.Identifier`. Build `shellzip-shell` for the Explorer menu. Sign releases with Certum via Velopack as above.
+- **Windows** — GUI and SFX are `windows_subsystem = "windows"`. Icons and manifests come from `winresource` build scripts. `--om` writes `Zone.Identifier`. Build `shellzip-shell` for the Explorer menu on Velopack / portable installs. Store installs use the MSIX associations instead.
 - **Linux** — install the apt packages above before `make gui`. `shellzip --integrate` installs the desktop file, hicolor MIME icons, and KDE/Nemo/Thunar actions. Distribution is a Velopack AppImage (`chmod +x`); verify with GPG when signatures are published.
 - **macOS** — release matrix builds `aarch64-apple-darwin`. Bundle document types and the Finder Sync sources under `platform/macos/`. Notarization is deferred.
 

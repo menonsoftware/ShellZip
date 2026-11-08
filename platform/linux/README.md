@@ -17,8 +17,6 @@ Format icons ship beside the binary as `icons/` (freedesktop tree from `grx/shel
 
 When release secrets `GPG_PRIVATE_KEY` / `GPG_KEY_ID` are set, CI publishes `SHA256SUMS`, `SHA256SUMS.asc`, and `*.AppImage.asc`. Verify with the public key documented in [docs/BUILDING.md](../../docs/BUILDING.md) (published as `docs/signing-key.asc` once the release key exists).
 
-Certum Authenticode is Windows-only; it does not sign AppImages.
-
 ## Integrate
 
 ```bash

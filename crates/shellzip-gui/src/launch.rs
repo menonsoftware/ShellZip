@@ -177,11 +177,23 @@ fn paths_for_integrate() -> IntegratePaths {
 
 /// Install file associations for the current user.
 pub fn run_integrate() -> Result<(), String> {
+    if crate::package::is_packaged() {
+        eprintln!(
+            "shellzip: the Store package already registers archive types; --integrate is not needed"
+        );
+        return Ok(());
+    }
     integrate(&paths_for_integrate()).map_err(|err| err.to_string())
 }
 
 /// Remove file associations for the current user.
 pub fn run_unintegrate() -> Result<(), String> {
+    if crate::package::is_packaged() {
+        eprintln!(
+            "shellzip: the Store package registers archive types; --unintegrate is not needed"
+        );
+        return Ok(());
+    }
     unintegrate(&paths_for_integrate()).map_err(|err| err.to_string())
 }
 

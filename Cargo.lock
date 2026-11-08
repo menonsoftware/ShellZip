@@ -5006,6 +5006,7 @@ dependencies = [
  "toml 1.2.1+spec-1.1.0",
  "trash",
  "velopack",
+ "windows 0.61.3",
  "windows-icons",
  "winresource",
  "xdg-mime",
@@ -7340,6 +7341,7 @@ dependencies = [
  "resvg 0.49.0",
  "sha2 0.11.1",
  "shellzip-core",
+ "shellzip-integrate",
  "tiny-skia 0.12.0",
  "usvg 0.49.0",
 ]

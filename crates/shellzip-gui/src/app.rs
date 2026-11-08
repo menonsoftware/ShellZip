@@ -2678,8 +2678,14 @@ impl eframe::App for ShellZipApp {
         egui::TopBottomPanel::top("menu")
             .frame(chrome::bar_frame(ctx, 4, 0))
             .show(ctx, |ui| {
-                menu_command =
-                    chrome::menu_bar(ui, self.theme, self.toolbar, into_archive, &self.opened);
+                menu_command = chrome::menu_bar(
+                    ui,
+                    self.theme,
+                    self.toolbar,
+                    into_archive,
+                    &self.opened,
+                    !crate::package::is_packaged(),
+                );
             });
         let blocked = self.dialog_blocks_shell();
         if !blocked {

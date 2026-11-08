@@ -201,7 +201,7 @@ Acceptance: every RAR fixture lists/tests/extracts identically to `UnRAR.exe` (c
 1. `crates/shellzip-sfx`: tiny binary (no clap, `panic=abort`, `opt-level="z"`, LTO) that: `current_exe()` → read last 24 bytes → verify `SfxTrailer { magic: b"SZSFX01", archive_offset: u64, archive_len: u64, flags }` → open `File` and wrap in a `Take`/offset reader → `zip::ZipArchive` → extract to `--dest`/cwd; switches `-s` silent, `-d<dir>`, `-y`; on Windows show a minimal dialog (Win32 `MessageBoxW`/`TaskDialog` via `windows-sys`) when run without a console; mirrors `STARTDLG / GETPASSWORD1 / REPLACEFILEDLG` roles **[observed in Default.SFX resources]**.
 2. `core/sfx.rs::build()`: copy stub → append ZIP → append trailer; `detect.rs` recognises `MZ` + trailer and `open()` transparently serves the inner ZIP (`zip` crate tolerates prepended data).
 3. `szip s archive.zip` ↔ `rar s` convert to/from SFX; `szip a -sfx out.exe …`.
-4. Ship prebuilt stubs `szip-sfx-x86_64-pc-windows-msvc.exe`, `-gnu-linux` as `include_bytes!` or alongside the CLI (like `Default.SFX`/`WinCon.SFX` **[observed]**). Note: stubs stay unsigned until after appending; provide `xtask sign` that runs `signtool` on the final SFX.
+4. Ship prebuilt stubs `szip-sfx-x86_64-pc-windows-msvc.exe`, `-gnu-linux` as `include_bytes!` or alongside the CLI (like `Default.SFX`/`WinCon.SFX` **[observed]**). Stubs stay unsigned until after appending (Store packages are re-signed by Partner Center).
 5. Tests: build SFX, run it in a temp dir, compare tree; `szip l out.exe` works.
 
 **GUI (2–3 days, optional)**

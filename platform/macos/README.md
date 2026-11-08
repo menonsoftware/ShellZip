@@ -16,7 +16,7 @@
 
 ## Velopack
 
-Release CI packs an aarch64 `.app` with Velopack (`packId` `com.shellzip.ShellZip`, channel `osx`). Apple Developer ID signing and notarization are **not** configured yet — Gatekeeper may require right-click → Open on first launch. Certum certificates cannot substitute for Apple codesign.
+Release CI packs an aarch64 `.app` with Velopack (`packId` `com.shellzip.ShellZip`, channel `osx`). Apple Developer ID signing and notarization are **not** configured yet — Gatekeeper may require right-click → Open on first launch.
 
 First launch runs `--integrate`. Format icons ship as `icons/` next to the binary inside the pack.
 

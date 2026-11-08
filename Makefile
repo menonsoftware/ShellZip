@@ -41,7 +41,7 @@ endif
 	test test-cli test-core test-sfx build-sfx \
 	check clippy lint fmt fmt-check doc deny \
 	clean ci install install-gui install-shell \
-	gen-file-icons bench velopack-stage velopack-pack help
+	gen-file-icons bench velopack-stage velopack-pack msix help
 
 # Velopack channel for this host (win / osx / linux).
 ifeq ($(OS),Windows_NT)
@@ -180,6 +180,14 @@ velopack-stage: release
 velopack-pack: velopack-stage
 	$(CARGO) run -p xtask -- velopack-pack $(VELOPACK_CHANNEL)
 
+# Windows-only: release binaries + unsigned Store MSIX under dist/msix/.
+msix: release
+ifeq ($(OS),Windows_NT)
+	$(CARGO) run -p xtask -- msix-pack
+else
+	@echo msix is Windows-only
+endif
+
 help:
 	@echo ShellZip Makefile
 	@echo   make / make build     Debug workspace build
@@ -210,5 +218,6 @@ help:
 	@echo   make release-shell    Windows Explorer shell-extension DLL
 	@echo   make bench            Release ZIP timings into docs/BENCH.md
 	@echo   make velopack-stage   Stage binaries + icons under dist/velopack/
-	@echo   make velopack-pack    Stage then run vpk pack (Certum/GPG when env set)
+	@echo   make velopack-pack    Stage then run vpk pack (GPG when env set)
+	@echo   make msix             Windows: pack unsigned Store MSIX under dist/msix/
 	@echo   make clean            cargo clean

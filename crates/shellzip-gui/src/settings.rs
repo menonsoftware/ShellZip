@@ -247,10 +247,17 @@ pub fn load() -> StoredSettings {
     let Some(path) = settings_path() else {
         return defaults();
     };
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return defaults();
-    };
-    parse(&text).unwrap_or_else(defaults)
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        return parse(&text).unwrap_or_else(defaults);
+    }
+    // Windows once used the roaming config dir; keep reading it until the next save.
+    #[cfg(windows)]
+    if let Some(legacy) = legacy_roaming_settings_path()
+        && let Ok(text) = std::fs::read_to_string(legacy)
+    {
+        return parse(&text).unwrap_or_else(defaults);
+    }
+    defaults()
 }
 
 /// Write pack options, extract options, report options, the theme, and recent paths.
@@ -289,8 +296,38 @@ fn defaults() -> StoredSettings {
 }
 
 fn settings_path() -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        windows_settings_path()
+    }
+    #[cfg(not(windows))]
+    {
+        directories::ProjectDirs::from("com", "ShellZip", "shellzip")
+            .map(|dirs| dirs.config_dir().join("settings.toml"))
+    }
+}
+
+/// `%LOCALAPPDATA%\ShellZip\settings.toml` — outside the install folder for Store builds.
+#[cfg(windows)]
+fn windows_settings_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|base| {
+        std::path::PathBuf::from(base)
+            .join("ShellZip")
+            .join("settings.toml")
+    })
+}
+
+/// Previous Windows location from `directories::ProjectDirs::config_dir()`.
+#[cfg(windows)]
+fn legacy_roaming_settings_path() -> Option<std::path::PathBuf> {
     directories::ProjectDirs::from("com", "ShellZip", "shellzip")
         .map(|dirs| dirs.config_dir().join("settings.toml"))
+}
+
+/// Join used by unit tests so the LocalAppData layout stays fixed.
+#[cfg(all(test, windows))]
+fn settings_path_under(local_app_data: &std::path::Path) -> std::path::PathBuf {
+    local_app_data.join("ShellZip").join("settings.toml")
 }
 
 fn serialize(settings: &StoredSettings) -> Result<String, String> {
@@ -769,5 +806,33 @@ flat = true
         assert!(!parsed.sfx.background);
         assert_eq!(parsed.theme, Preference::System);
         assert_eq!(parsed.report, ReportSettings::default());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_settings_live_under_local_app_data() {
+        let base = std::path::Path::new(r"C:\Users\Example\AppData\Local");
+        let path = settings_path_under(base);
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(r"C:\Users\Example\AppData\Local\ShellZip\settings.toml")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn legacy_roaming_path_uses_project_dirs_config() {
+        let Some(legacy) = legacy_roaming_settings_path() else {
+            return;
+        };
+        let text = legacy.to_string_lossy();
+        assert!(
+            text.contains("ShellZip") && text.ends_with("settings.toml"),
+            "unexpected legacy path: {text}"
+        );
+        assert!(
+            !text.contains(r"Local\ShellZip\settings.toml"),
+            "legacy path must stay in the roaming config tree: {text}"
+        );
     }
 }

@@ -176,6 +176,7 @@ pub fn menu_bar(
     toolbar: ToolbarSize,
     into_archive: bool,
     opened: &[String],
+    show_integrate: bool,
 ) -> Option<MenuCommand> {
     let mut command = None;
     let add_label = if into_archive {
@@ -279,12 +280,14 @@ pub fn menu_bar(
             if ui.button("Check for updates…").clicked() {
                 command = Some(MenuCommand::CheckForUpdates);
             }
-            ui.separator();
-            if ui.button("Integrate with the file manager").clicked() {
-                command = Some(MenuCommand::Integrate);
-            }
-            if ui.button("Remove integration").clicked() {
-                command = Some(MenuCommand::Unintegrate);
+            if show_integrate {
+                ui.separator();
+                if ui.button("Integrate with the file manager").clicked() {
+                    command = Some(MenuCommand::Integrate);
+                }
+                if ui.button("Remove integration").clicked() {
+                    command = Some(MenuCommand::Unintegrate);
+                }
             }
         });
         ui.menu_button("Help", |ui| {

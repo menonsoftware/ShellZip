@@ -14,6 +14,7 @@ mod extract_dialog;
 mod icons;
 mod info_dialog;
 mod launch;
+mod package;
 mod progress_bar;
 mod progress_dialog;
 mod rename_dialog;
@@ -28,8 +29,10 @@ mod view_dialog;
 mod worker;
 
 fn main() -> std::process::ExitCode {
-    // Velopack may exit or restart before ordinary startup (hooks, pending updates).
-    run_velopack_startup();
+    // Store packages update through Partner Center; Velopack must not write next to the exe.
+    if !package::is_packaged() {
+        run_velopack_startup();
+    }
 
     let mut argv = std::env::args();
     let _program = argv.next();

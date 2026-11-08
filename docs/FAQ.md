@@ -84,27 +84,26 @@ ZIP stores already-compressed types by default (the WinRAR `-ms` list): `7z`, `j
 
 ## Where does the GUI store settings?
 
-A `settings.toml` under the platform config directory from the `directories` crate (`com` / `ShellZip` / `shellzip`):
-
 | OS | Typical path |
 |---|---|
-| Windows | `%APPDATA%\ShellZip\shellzip\config\settings.toml` |
+| Windows | `%LOCALAPPDATA%\ShellZip\settings.toml` |
 | Linux | `~/.config/shellzip/settings.toml` |
 | macOS | `~/Library/Application Support/com.ShellZip.shellzip/settings.toml` |
 
-Theme, toolbar size, pack/extract defaults, recent archives, and recent destinations are stored there. Passwords are not.
+On Windows, an older build that wrote `%APPDATA%\ShellZip\shellzip\config\settings.toml` is still read once if the LocalAppData file is missing; the next save writes the new path. Theme, toolbar size, pack/extract defaults, recent archives, and recent destinations are stored there. Passwords are not.
 
 ## Is there an Explorer / Finder context menu?
 
-Yes. **Options → Integrate with the file manager** (or `shellzip --integrate`) registers per-user associations and menus. The ShellZip submenu offers Open, Extract to…, Extract Here, and Extract Here (name). Handlers start `shellzip`; they do not extract inside the file manager. Remove with **Remove integration** or `shellzip --unintegrate`.
+Yes for Velopack / portable installs. **Options → Integrate with the file manager** (or `shellzip --integrate`) registers per-user associations and menus. The ShellZip submenu offers Open, Extract to…, Extract Here, and Extract Here (name). Handlers start `shellzip`; they do not extract inside the file manager. Remove with **Remove integration** or `shellzip --unintegrate`.
 
-- **Windows** — `shellzip_shell.dll` (`IContextMenu`, icon handler). Place the DLL next to `shellzip.exe`. See [platform/windows/README.md](../platform/windows/README.md).
+- **Windows (Velopack / portable)** — `shellzip_shell.dll` (`IContextMenu`, icon handler). Place the DLL next to `shellzip.exe`. See [platform/windows/README.md](../platform/windows/README.md).
+- **Windows (Microsoft Store)** — archive types and static Extract verbs come from the MSIX manifest. The Integrate menu is hidden; the cascaded ShellZip submenu is not part of the Store package yet.
 - **Linux** — desktop actions, KDE service menu, Nemo actions, Thunar snippet; optional GPL Nautilus script under [platform/linux/nautilus/](../platform/linux/nautilus/).
 - **macOS** — document types and a Finder Sync Swift source under [platform/macos/](../platform/macos/).
 
 ## Why does Windows Defender call ShellZip a trojan?
 
-Releases are still **unsigned**. SmartScreen warns about an unknown publisher for that reason alone. A Defender **trojan** label is usually a heuristic / ML hit on shapes this project ships on purpose: stripped LTO release binaries, the SFX stub (PE with an appended archive that extracts itself), the Explorer COM context-menu DLL that `--integrate` installs under `%LOCALAPPDATA%\ShellZip`, and Velopack’s download-and-restart update path. There is no process injection and no Run / AppInit / IFEO persistence. Authenticode signing (Certum) is documented in [BUILDING.md](BUILDING.md); until that is wired in CI, allow the file in Defender or build from this repository.
+Velopack Setup and portable zips are **unsigned**. SmartScreen warns about an unknown publisher for that reason alone. A Defender **trojan** label is usually a heuristic / ML hit on shapes this project ships on purpose: stripped LTO release binaries, the SFX stub (PE with an appended archive that extracts itself), the Explorer COM context-menu DLL that `--integrate` installs under `%LOCALAPPDATA%\ShellZip`, and Velopack’s download-and-restart update path. There is no process injection and no Run / AppInit / IFEO persistence. Prefer the Store install when available; otherwise allow the file in Defender or build from this repository.
 
 ## What do the exit codes mean?
 

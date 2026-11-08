@@ -17,7 +17,7 @@ cargo build --release -p shellzip-shell
 
 Copy `shellzip_shell.dll` next to `shellzip.exe` (same folder as `target/release`).
 
-## Register
+## Register (Velopack / portable)
 
 ```bat
 shellzip --integrate
@@ -29,14 +29,18 @@ After a cargo rebuild, run `shellzip --integrate` again so `ExePath` and the cop
 
 ## Velopack install
 
-Release CI stages `shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, `shellzip_shell.dll`, and `icons/` (from `grx/shellzip_file_icons`), then runs `vpk pack` with `packId` `com.shellzip.ShellZip` and channel `win`. Install/update hooks call `--integrate`; uninstall hooks call `--unintegrate`.
+Release CI stages `shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, `shellzip_shell.dll`, and `icons/` (from `grx/shellzip_file_icons`), then runs `vpk pack` with `packId` `com.shellzip.ShellZip` and channel `win`. Install/update hooks call `--integrate`; uninstall hooks call `--unintegrate`. The Velopack Setup stays **unsigned**.
 
-Authenticode signing uses Certum SimplySign during `vpk pack` when `CERTUM_EMAIL` / `CERTUM_OTP` (or `CERTUM_THUMBPRINT`) are set in the GitHub `signing` environment. See [docs/BUILDING.md](../../docs/BUILDING.md).
+## Microsoft Store MSIX
+
+Release CI also packs `ShellZip-<tag>-x64.msix` (`make msix` locally). The package includes `shellzip.exe`, `szip.exe`, and `shellzip-sfx.exe` only — not `shellzip_shell.dll`. Archive types and static Extract verbs are declared in `AppxManifest.xml`. Settings live under `%LOCALAPPDATA%\ShellZip\settings.toml`. The Store build skips Velopack hooks and the Integrate menu; updates come from the Store.
+
+Use either the Store package or the Velopack Setup, not both, so associations are not registered twice. See [docs/BUILDING.md](../../docs/BUILDING.md) for Partner Center secrets.
 
 ## SmartScreen and Defender
 
-Until Certum secrets are set, the Velopack Setup and portable zip are **unsigned**. SmartScreen flags an unknown publisher. Defender may also score `shellzip.exe`, `shellzip-sfx.exe`, or `shellzip_shell.dll` as a trojan because of the same shapes: stripped release PEs, the SFX overlay trailer, the in-proc Explorer DLL plus HKLM `InprocServer32` / Approved registration from `--integrate`, and Velopack’s update download. That is a false positive on those heuristics, not evidence of injection or Run-key persistence. Prefer a signed release once CI signing is live; otherwise allow the path in Defender or build locally with `make release`.
+The Velopack Setup and portable zip are **unsigned**. SmartScreen flags an unknown publisher. Defender may also score `shellzip.exe`, `shellzip-sfx.exe`, or `shellzip_shell.dll` as a trojan because of the same shapes: stripped release PEs, the SFX overlay trailer, the in-proc Explorer DLL plus HKLM `InprocServer32` / Approved registration from `--integrate`, and Velopack’s update download. That is a false positive on those heuristics, not evidence of injection or Run-key persistence. Prefer the Store install when available; otherwise allow the path in Defender or build locally with `make release`.
 
 ## Windows 11 sparse package
 
-[msix/ShellZipSparse.md](msix/ShellZipSparse.md) describes an optional sparse MSIX so `IExplorerCommand` items appear on the compact context menu. The classic `IContextMenu` handler already appears under **Show more options** (and on Windows 10) after `--integrate`.
+[msix/ShellZipSparse.md](msix/ShellZipSparse.md) describes a future sparse MSIX so `IExplorerCommand` items appear on the compact context menu. The classic `IContextMenu` handler already appears under **Show more options** (and on Windows 10) after `--integrate`. The Store package currently ships associations and static verbs only.

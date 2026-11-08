@@ -7,6 +7,7 @@ use std::process::Command;
 use std::time::Instant;
 
 use shellzip_core::{CompressOpts, NopProgress, add};
+use shellzip_integrate::EXTENSIONS;
 
 fn main() {
     let command = std::env::args()
@@ -15,15 +16,15 @@ fn main() {
     let result = match command.as_str() {
         "bench" => bench(),
         "build-fixtures" => build_fixtures(),
-        "sign" => sign(),
         "package-stubs" => package_stubs(),
         "gen-file-icons" => gen_file_icons(),
         "velopack-stage" => velopack_stage(),
         "velopack-pack" => velopack_pack(),
+        "msix-pack" => msix_pack(),
         "gpg-sign-release" => gpg_sign_release(),
         _ => {
             eprintln!(
-                "usage: xtask bench | build-fixtures | sign <sfx> | package-stubs [stub] | gen-file-icons | velopack-stage | velopack-pack | gpg-sign-release <dir>"
+                "usage: xtask bench | build-fixtures | package-stubs [stub] | gen-file-icons | velopack-stage | velopack-pack | msix-pack | gpg-sign-release <dir>"
             );
             std::process::exit(2);
         }
@@ -31,24 +32,6 @@ fn main() {
     if let Err(err) = result {
         eprintln!("xtask: {err}");
         std::process::exit(1);
-    }
-}
-
-fn sign() -> Result<(), Box<dyn std::error::Error>> {
-    let path = std::env::args().nth(2).ok_or("usage: xtask sign <sfx>")?;
-    let status = Command::new("signtool")
-        .args(["sign", "/fd", "SHA256", "/a", &path])
-        .status()
-        .map_err(|err| {
-            format!(
-                "signtool was not found on PATH ({err}); the SFX stays unsigned until you sign it"
-            )
-        })?;
-    if status.success() {
-        println!("signed {path}");
-        Ok(())
-    } else {
-        Err(format!("signtool failed with {status}").into())
     }
 }
 
@@ -219,7 +202,7 @@ fn velopack_pack() -> Result<(), Box<dyn std::error::Error>> {
         .join(format!("Releases-{channel}"));
     fs::create_dir_all(&output)?;
 
-    let mut args = vec![
+    let args = vec![
         "pack".into(),
         "-u".into(),
         VELOPACK_ID.into(),
@@ -240,7 +223,9 @@ fn velopack_pack() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     if channel == "win" {
-        apply_windows_sign_args(&mut args, &WinSignCreds::from_env(), which_command("ssign"));
+        eprintln!(
+            "xtask: Windows Velopack pack is unsigned (Store MSIX is signed by Partner Center)"
+        );
     }
 
     let status = Command::new("vpk").args(&args).status().map_err(|err| {
@@ -262,16 +247,6 @@ fn velopack_pack() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn which_command(name: &str) -> bool {
-    Command::new(name)
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
 /// GitHub Actions injects missing secrets as empty strings, so `var_os` alone is
 /// not enough — treat blank values as unset.
 fn env_nonempty(name: &str) -> Option<String> {
@@ -285,64 +260,286 @@ fn env_nonempty(name: &str) -> Option<String> {
     })
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct WinSignCreds {
-    email: Option<String>,
-    otp: Option<String>,
-    thumbprint: Option<String>,
-}
-
-impl WinSignCreds {
-    fn from_env() -> Self {
-        Self {
-            email: env_nonempty("CERTUM_EMAIL"),
-            otp: env_nonempty("CERTUM_OTP"),
-            thumbprint: env_nonempty("CERTUM_THUMBPRINT"),
-        }
+/// Build an unsigned Store MSIX from the release Windows exes.
+fn msix_pack() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(not(windows))]
+    {
+        return Err("msix-pack is Windows-only".into());
+    }
+    #[cfg(windows)]
+    {
+        msix_pack_windows()
     }
 }
 
-/// Decide Windows Authenticode args for `vpk pack`.
-///
-/// Requires a complete Certum pair (`CERTUM_EMAIL` + `CERTUM_OTP`) before enabling
-/// `ssign`; a lone empty `CERTUM_EMAIL` from Actions must not turn signing on.
-fn apply_windows_sign_args(args: &mut Vec<String>, creds: &WinSignCreds, ssign_available: bool) {
-    match (creds.email.is_some(), creds.otp.is_some(), ssign_available) {
-        (true, true, true) => {
-            args.push("--signTemplate".into());
-            args.push("ssign {{file}}".into());
-            args.push("--signParallel".into());
-            args.push("1".into());
-            println!("xtask: Certum signing via ssign");
-            return;
+#[cfg(windows)]
+fn msix_pack_windows() -> Result<(), Box<dyn std::error::Error>> {
+    let version = std::env::var("VELOPACK_VERSION")
+        .or_else(|_| workspace_version().map_err(|e| e.to_string()))
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let msix_ver = msix_version(&version)?;
+    let identity_name = env_nonempty("STORE_IDENTITY_NAME").unwrap_or_else(|| "ShellZip".into());
+    let publisher = env_nonempty("STORE_PUBLISHER").unwrap_or_else(|| "CN=ShellZip".into());
+    let publisher_display =
+        env_nonempty("STORE_PUBLISHER_DISPLAY_NAME").unwrap_or_else(|| "ShellZip".into());
+
+    let target = std::env::var("CARGO_BUILD_TARGET").unwrap_or_default();
+    let release_dir = if target.is_empty() {
+        PathBuf::from("target").join("release")
+    } else {
+        PathBuf::from("target").join(&target).join("release")
+    };
+    let minisize_dir = if target.is_empty() {
+        PathBuf::from("target").join("minisize")
+    } else {
+        PathBuf::from("target").join(&target).join("minisize")
+    };
+
+    let root = PathBuf::from("dist").join("msix");
+    let payload = root.join("payload");
+    if root.exists() {
+        fs::remove_dir_all(&root)?;
+    }
+    let assets = payload.join("Assets");
+    fs::create_dir_all(&assets)?;
+
+    for (src_dir, name) in [
+        (&release_dir, "shellzip.exe"),
+        (&release_dir, "szip.exe"),
+        (&minisize_dir, "shellzip-sfx.exe"),
+    ] {
+        let src = src_dir.join(name);
+        if !src.is_file() {
+            return Err(format!(
+                "missing {}; build release Windows binaries first",
+                src.display()
+            )
+            .into());
         }
-        (true, true, false) => {
-            eprintln!(
-                "xtask: warning: CERTUM_EMAIL/OTP set but ssign not on PATH; packing unsigned"
-            );
-        }
-        (true, false, _) | (false, true, _) => {
-            eprintln!(
-                "xtask: warning: set both CERTUM_EMAIL and CERTUM_OTP (non-empty) to sign; packing unsigned"
-            );
-        }
-        (false, false, _) => {}
+        fs::copy(&src, payload.join(name))?;
     }
 
-    if let Some(thumb) = creds.thumbprint.as_deref() {
-        args.push("--signParams".into());
-        args.push(format!(
-            "/sha1 \"{thumb}\" /tr http://time.certum.pl /td sha256 /fd sha256"
+    let icon_src = PathBuf::from("crates/shellzip-gui/assets/icon.png");
+    write_resized_png(&icon_src, &assets.join("Square44x44Logo.png"), 44)?;
+    write_resized_png(&icon_src, &assets.join("Square150x150Logo.png"), 150)?;
+    write_resized_png(&icon_src, &assets.join("StoreLogo.png"), 50)?;
+
+    let mime_icons = PathBuf::from("grx")
+        .join("shellzip_file_icons")
+        .join("linux")
+        .join("hicolor")
+        .join("256x256")
+        .join("mimetypes");
+    for kind in EXTENSIONS {
+        let mime_file = format!("{}.png", kind.mime.replace('/', "-"));
+        let src = mime_icons.join(&mime_file);
+        if !src.is_file() {
+            return Err(format!("missing file-type icon {}", src.display()).into());
+        }
+        let dest_name = format!("FileType{}.png", kind.extension.replace('.', "_"));
+        fs::copy(&src, assets.join(&dest_name))?;
+    }
+
+    let manifest = build_appx_manifest(&identity_name, &publisher, &publisher_display, &msix_ver);
+    fs::write(payload.join("AppxManifest.xml"), &manifest)?;
+
+    let tag = if version.starts_with('v') {
+        version.clone()
+    } else {
+        format!("v{version}")
+    };
+    let out_msix = root.join(format!("ShellZip-{tag}-x64.msix"));
+    let makeappx = find_makeappx()?;
+    let status = Command::new(&makeappx)
+        .args([
+            "pack",
+            "/d",
+            &payload.display().to_string(),
+            "/p",
+            &out_msix.display().to_string(),
+            "/o",
+        ])
+        .status()
+        .map_err(|err| format!("makeappx failed to start ({err})"))?;
+    if !status.success() {
+        return Err(format!("makeappx pack failed with {status}").into());
+    }
+    println!("packed {}", out_msix.display());
+    Ok(())
+}
+
+/// `1.2.3` → `1.2.3.0` for the Appx Identity Version attribute.
+fn msix_version(semver: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let trimmed = semver.trim().trim_start_matches('v');
+    let mut parts = trimmed.split('.');
+    let major = parts.next().ok_or("empty version")?;
+    let minor = parts.next().unwrap_or("0");
+    let patch = parts.next().unwrap_or("0");
+    if major.is_empty()
+        || !major.chars().all(|c| c.is_ascii_digit())
+        || !minor.chars().all(|c| c.is_ascii_digit())
+        || !patch.chars().all(|c| c.is_ascii_digit())
+    {
+        return Err(format!("invalid semver for MSIX: {semver}").into());
+    }
+    Ok(format!("{major}.{minor}.{patch}.0"))
+}
+
+fn write_resized_png(src: &Path, dest: &Path, size: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let image = image::open(src)?;
+    let resized = image.resize_exact(size, size, image::imageops::FilterType::Lanczos3);
+    resized.save(dest)?;
+    Ok(())
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Generate `AppxManifest.xml` for the full-trust desktop package.
+fn build_appx_manifest(
+    identity_name: &str,
+    publisher: &str,
+    publisher_display: &str,
+    version: &str,
+) -> String {
+    let mut associations = String::new();
+    for kind in EXTENSIONS {
+        let logo = format!("Assets\\FileType{}.png", kind.extension.replace('.', "_"));
+        let display = xml_escape(kind.type_name);
+        associations.push_str(&format!(
+            r#"
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="{name}">
+            <uap:DisplayName>{display}</uap:DisplayName>
+            <uap:Logo>{logo}</uap:Logo>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.{ext}</uap:FileType>
+            </uap:SupportedFileTypes>
+            <uap2:SupportedVerbs>
+              <uap3:Verb Id="ExtractTo" Parameters="--extract-to &quot;%1&quot;">Extract to…</uap3:Verb>
+              <uap3:Verb Id="ExtractHere" Parameters="--extract-here &quot;%1&quot;">Extract Here</uap3:Verb>
+              <uap3:Verb Id="ExtractHereNamed" Parameters="--extract-here-named &quot;%1&quot;">Extract Here (name)</uap3:Verb>
+            </uap2:SupportedVerbs>
+          </uap:FileTypeAssociation>
+        </uap:Extension>"#,
+            name = kind.extension.replace('.', "_"),
+            display = display,
+            logo = logo,
+            ext = kind.extension,
         ));
-        args.push("--signParallel".into());
-        args.push("1".into());
-        println!("xtask: Certum signing via signtool thumbprint");
-        return;
     }
 
-    eprintln!(
-        "xtask: warning: Windows pack is unsigned (set CERTUM_EMAIL+CERTUM_OTP or CERTUM_THUMBPRINT)"
-    );
+    format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap2="http://schemas.microsoft.com/appx/manifest/uap/windows10/2"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap2 uap3 uap5 rescap">
+  <Identity
+    Name="{identity}"
+    Publisher="{publisher}"
+    Version="{version}"
+    ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>ShellZip</DisplayName>
+    <PublisherDisplayName>{publisher_display}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Archive manager for ZIP, 7z, RAR, TAR, and related formats.</Description>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Applications>
+    <Application Id="ShellZip" Executable="shellzip.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="ShellZip"
+        Description="ShellZip archive manager"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <uap5:Extension Category="windows.appExecutionAlias">
+          <uap5:AppExecutionAlias>
+            <uap5:ExecutionAlias Alias="shellzip.exe" />
+          </uap5:AppExecutionAlias>
+        </uap5:Extension>{associations}
+      </Extensions>
+    </Application>
+    <Application Id="Szip" Executable="szip.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="szip"
+        Description="ShellZip command-line tool"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <uap5:Extension Category="windows.appExecutionAlias">
+          <uap5:AppExecutionAlias>
+            <uap5:ExecutionAlias Alias="szip.exe" />
+          </uap5:AppExecutionAlias>
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
+"#,
+        identity = xml_escape(identity_name),
+        publisher = xml_escape(publisher),
+        publisher_display = xml_escape(publisher_display),
+        version = version,
+        associations = associations,
+    )
+}
+
+#[cfg(windows)]
+fn find_makeappx() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Ok(path) = which_on_path("makeappx.exe") {
+        return Ok(path);
+    }
+    let kits = PathBuf::from(r"C:\Program Files (x86)\Windows Kits\10\bin");
+    if kits.is_dir() {
+        let mut versions: Vec<_> = fs::read_dir(&kits)?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().is_dir())
+            .map(|entry| entry.path())
+            .collect();
+        versions.sort();
+        versions.reverse();
+        for version in versions {
+            let candidate = version.join("x64").join("makeappx.exe");
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+    Err("makeappx.exe not found; install the Windows 10 SDK".into())
+}
+
+#[cfg(windows)]
+fn which_on_path(name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let path = std::env::var_os("PATH").ok_or("PATH is not set")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    Err(format!("{name} not on PATH").into())
 }
 
 /// Detach-sign release artifacts in a directory (`SHA256SUMS` + `.asc`).
@@ -1131,62 +1328,7 @@ fn write_icns(
 
 #[cfg(test)]
 mod tests {
-    use super::{WinSignCreds, apply_windows_sign_args, version_from_workspace_toml};
-
-    fn has_sign_flag(args: &[String]) -> bool {
-        args.iter()
-            .any(|a| a.contains("sign") || a.contains("ssign"))
-    }
-
-    #[test]
-    fn windows_sign_stays_unsigned_without_creds() {
-        let mut args = Vec::new();
-        apply_windows_sign_args(&mut args, &WinSignCreds::default(), true);
-        assert!(!has_sign_flag(&args), "unexpected sign args: {args:?}");
-    }
-
-    #[test]
-    fn windows_sign_ignores_incomplete_certum_pair() {
-        let creds = WinSignCreds {
-            email: Some("dev@example.com".into()),
-            otp: None,
-            thumbprint: None,
-        };
-        let mut args = Vec::new();
-        apply_windows_sign_args(&mut args, &creds, true);
-        assert!(
-            !has_sign_flag(&args),
-            "email alone must not enable signing: {args:?}"
-        );
-    }
-
-    #[test]
-    fn windows_sign_enables_ssign_when_email_and_otp_present() {
-        let creds = WinSignCreds {
-            email: Some("dev@example.com".into()),
-            otp: Some("BASE32SEED".into()),
-            thumbprint: None,
-        };
-        let mut args = Vec::new();
-        apply_windows_sign_args(&mut args, &creds, true);
-        assert!(args.iter().any(|a| a == "--signTemplate"));
-        assert!(args.iter().any(|a| a == "ssign {{file}}"));
-    }
-
-    #[test]
-    fn windows_sign_requires_ssign_on_path() {
-        let creds = WinSignCreds {
-            email: Some("dev@example.com".into()),
-            otp: Some("BASE32SEED".into()),
-            thumbprint: None,
-        };
-        let mut args = Vec::new();
-        apply_windows_sign_args(&mut args, &creds, false);
-        assert!(
-            !has_sign_flag(&args),
-            "missing ssign must pack unsigned: {args:?}"
-        );
-    }
+    use super::{build_appx_manifest, msix_version, version_from_workspace_toml};
 
     #[test]
     fn reads_workspace_package_version() {
@@ -1229,5 +1371,28 @@ edition = "2024"
 version = "should-not-win"
 "#;
         assert_eq!(version_from_workspace_toml(text), None);
+    }
+
+    #[test]
+    fn msix_version_appends_revision() {
+        assert_eq!(msix_version("1.2.3").unwrap(), "1.2.3.0");
+        assert_eq!(msix_version("v0.1.9").unwrap(), "0.1.9.0");
+    }
+
+    #[test]
+    fn appx_manifest_lists_every_extension_and_verbs() {
+        let xml = build_appx_manifest("ShellZip", "CN=ShellZip", "ShellZip", "0.1.9.0");
+        for kind in shellzip_integrate::EXTENSIONS {
+            assert!(
+                xml.contains(&format!(".{ext}</uap:FileType>", ext = kind.extension)),
+                "missing FileType for {}",
+                kind.extension
+            );
+        }
+        assert!(xml.contains("--extract-to"));
+        assert!(xml.contains("--extract-here"));
+        assert!(xml.contains("--extract-here-named"));
+        assert!(xml.contains("runFullTrust"));
+        assert!(!xml.contains("shellzip_shell.dll"));
     }
 }

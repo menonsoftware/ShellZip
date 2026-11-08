@@ -93,7 +93,7 @@ Settings persist in `settings.toml` (see [FAQ.md](FAQ.md#where-does-the-gui-stor
 
 ## Updates
 
-**Options → Check for updates…** asks Velopack for a newer package on [GitHub Releases](https://github.com/menonsoftware/ShellZip/releases). This works only for Velopack installs (Windows Setup, Linux AppImage, macOS app). A plain `cargo run` or unzipped portable binary reports that updates need a Velopack install.
+**Options → Check for updates…** asks Velopack for a newer package on [GitHub Releases](https://github.com/menonsoftware/ShellZip/releases). This works only for Velopack installs (Windows Setup, Linux AppImage, macOS app). A Microsoft Store install reports that updates come from the Store. A plain `cargo run` or unzipped portable binary reports that updates need a Velopack install.
 
 ## File manager integration
 
@@ -104,6 +104,8 @@ Settings persist in `settings.toml` (see [FAQ.md](FAQ.md#where-does-the-gui-stor
 - Context menu: Open, Extract to…, Extract Here, Extract Here (archive folder name)
 
 Velopack install/update/uninstall FastCallbacks run integrate automatically on Windows; on Linux and macOS, first launch and post-update restart do so (there is no Velopack uninstall hook when the AppImage / `.app` is deleted). **Options → Remove file manager integration** asks for confirmation before clearing those registrations.
+
+A Microsoft Store install hides those menu items: archive associations and static Extract verbs are declared in the MSIX. Prefer one Windows installer (Store or Velopack), not both.
 
 Shell verbs:
 

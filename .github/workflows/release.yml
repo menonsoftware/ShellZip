@@ -37,9 +37,8 @@ jobs:
             ext: ""
             channel: osx
     runs-on: ${{ matrix.os }}
-    # When Certum / GPG secrets are ready, add `environment: signing` here and
-    # store those secrets on a GitHub Environment named `signing` (required
-    # reviewers recommended). Until then, packs stay unsigned with a warning.
+    # Optional GPG secrets sign the Linux Velopack feed. Windows Velopack packs
+    # stay unsigned; Partner Center re-signs the Store MSIX after upload.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -98,12 +97,6 @@ jobs:
           dotnet-version: "8.0.x"
       - name: Install vpk
         run: dotnet tool update -g vpk
-      # Optional: xtask only enables --signTemplate when CERTUM_EMAIL and
-      # CERTUM_OTP are both non-empty, so a blank Actions secret cannot break pack.
-      - name: Install ssign (Certum)
-        if: runner.os == 'Windows'
-        run: cargo install ssign --locked
-        continue-on-error: true
       - name: Stage Velopack packDir
         shell: bash
         env:
@@ -126,11 +119,6 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-          # Empty strings are treated as unset by xtask; only a complete
-          # CERTUM_EMAIL+CERTUM_OTP pair (or CERTUM_THUMBPRINT) enables signing.
-          CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
-          CERTUM_OTP: ${{ secrets.CERTUM_OTP }}
-          CERTUM_THUMBPRINT: ${{ secrets.CERTUM_THUMBPRINT }}
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
@@ -166,6 +154,57 @@ jobs:
             --releaseName "ShellZip $VERSION" \
             --publish \
             --merge
+      - name: Pack Store MSIX
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+          STORE_IDENTITY_NAME: ${{ secrets.STORE_IDENTITY_NAME }}
+          STORE_PUBLISHER: ${{ secrets.STORE_PUBLISHER }}
+          STORE_PUBLISHER_DISPLAY_NAME: ${{ secrets.STORE_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          export VELOPACK_VERSION="$VERSION"
+          cargo run -p xtask -- msix-pack
+      - name: Upload Store MSIX to GitHub Releases
+        if: runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: dist/msix/ShellZip-*-x64.msix
+          fail_on_unmatched_files: true
+      - name: Setup Microsoft Store CLI
+        if: runner.os == 'Windows'
+        uses: microsoft/microsoft-store-apppublisher@v1.2
+      - name: Publish MSIX to Microsoft Store
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          STORE_APP_ID: ${{ secrets.STORE_APP_ID }}
+          STORE_TENANT_ID: ${{ secrets.STORE_TENANT_ID }}
+          STORE_SELLER_ID: ${{ secrets.STORE_SELLER_ID }}
+          STORE_CLIENT_ID: ${{ secrets.STORE_CLIENT_ID }}
+          STORE_CLIENT_SECRET: ${{ secrets.STORE_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          required=(STORE_APP_ID STORE_TENANT_ID STORE_SELLER_ID STORE_CLIENT_ID STORE_CLIENT_SECRET)
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Skipping Store publish: $name is empty"
+              exit 0
+            fi
+          done
+          MSIX=$(ls dist/msix/ShellZip-*-x64.msix | head -n 1)
+          test -f "$MSIX"
+          msstore reconfigure \
+            --tenantId "$STORE_TENANT_ID" \
+            --sellerId "$STORE_SELLER_ID" \
+            --clientId "$STORE_CLIENT_ID" \
+            --clientSecret "$STORE_CLIENT_SECRET"
+          msstore publish "$MSIX" -id "$STORE_APP_ID"
       - name: Upload GPG signatures
         if: runner.os == 'Linux'
         uses: softprops/action-gh-release@v2
