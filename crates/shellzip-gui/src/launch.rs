@@ -12,6 +12,12 @@ pub enum LaunchAction {
     Browse,
     /// Open one archive in the window.
     Open(PathBuf),
+    /// Show the add dialog for these files and folders.
+    Add(Vec<PathBuf>),
+    /// Pack immediately as ZIP with saved settings.
+    AddZip(Vec<PathBuf>),
+    /// Pack immediately as 7z with saved settings.
+    Add7z(Vec<PathBuf>),
     /// Show the extract dialog for these archives.
     ExtractTo(Vec<PathBuf>),
     /// Extract into each archive's parent directory.
@@ -35,6 +41,27 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Startup {
     match args.peek().map(String::as_str) {
         Some("--integrate") => Startup::Exit(finish(run_integrate())),
         Some("--unintegrate") => Startup::Exit(finish(run_unintegrate())),
+        Some("--add") => {
+            args.next();
+            match collect_paths(&mut args) {
+                Ok(paths) => Startup::Run(LaunchAction::Add(paths)),
+                Err(err) => Startup::Exit(usage(&err)),
+            }
+        }
+        Some("--add-zip") => {
+            args.next();
+            match collect_paths(&mut args) {
+                Ok(paths) => Startup::Run(LaunchAction::AddZip(paths)),
+                Err(err) => Startup::Exit(usage(&err)),
+            }
+        }
+        Some("--add-7z") => {
+            args.next();
+            match collect_paths(&mut args) {
+                Ok(paths) => Startup::Run(LaunchAction::Add7z(paths)),
+                Err(err) => Startup::Exit(usage(&err)),
+            }
+        }
         Some("--extract-to") => {
             args.next();
             match collect_paths(&mut args) {
@@ -92,7 +119,7 @@ fn collect_paths(
         paths.push(PathBuf::from(args.next().expect("peeked")));
     }
     if paths.is_empty() {
-        return Err("missing archive path".into());
+        return Err("missing path".into());
     }
     Ok(paths)
 }
@@ -178,6 +205,14 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+        match parse(vec!["--add-zip".into(), "a.txt".into(), "b.txt".into()]) {
+            Startup::Run(LaunchAction::AddZip(paths)) => assert_eq!(paths.len(), 2),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(matches!(
+            parse(vec!["--add".into(), "notes.txt".into()]),
+            Startup::Run(LaunchAction::Add(_))
+        ));
         assert_eq!(
             extract_here_named_dir(std::path::Path::new("backup.tar.gz")),
             PathBuf::from(".").join("backup")

@@ -55,12 +55,10 @@ pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
             .0
             .set_value("", &kind.prog_id);
 
-        let assoc =
+        // Drop legacy per-extension handlers so archives are not double-listed.
+        let legacy =
             format!("SystemFileAssociations\\{ext_key}\\shellex\\ContextMenuHandlers\\ShellZip");
-        classes
-            .create_subkey(&assoc)?
-            .0
-            .set_value("", &SHELL_CLSID)?;
+        let _ = classes.delete_subkey_all(&legacy);
 
         // Compound archives end in .gz / .bz2 / .xz / .zst; IconHandler picks tar.*.ico.
         if matches!(kind.extension, "gz" | "bz2" | "xz" | "zst") {
@@ -85,6 +83,14 @@ pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
         hkcu.create_subkey(APPROVED)?
             .0
             .set_value(SHELL_CLSID, &"ShellZip Context Menu")?;
+
+        // One handler for every file and folder (WinRAR-style add + extract).
+        for key in [
+            "*\\shellex\\ContextMenuHandlers\\ShellZip",
+            "Directory\\shellex\\ContextMenuHandlers\\ShellZip",
+        ] {
+            classes.create_subkey(key)?.0.set_value("", &SHELL_CLSID)?;
+        }
     }
 
     let _plan = windows_registry_plan(&exe_str, &icons_dir.to_string_lossy());
@@ -119,6 +125,13 @@ pub fn unintegrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
         {
             let _ = ext.delete_value("");
         }
+    }
+
+    for key in [
+        "*\\shellex\\ContextMenuHandlers\\ShellZip",
+        "Directory\\shellex\\ContextMenuHandlers\\ShellZip",
+    ] {
+        let _ = classes.delete_subkey_all(key);
     }
 
     let _ = hkcu.delete_subkey_all(format!(r"Software\Classes\CLSID\{SHELL_CLSID}"));

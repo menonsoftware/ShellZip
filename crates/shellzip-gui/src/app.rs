@@ -5,9 +5,11 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use shellzip_core::{
-    CompressOpts, ConflictChoice, Entry, Error, ExtractOpts, ListOpts, Password, SfxDirection,
-    UpdateMode, add, add_prompted, add_sfx, convert, delete, extract, list_with, test,
+    CompressOpts, ConflictChoice, Entry, Error, ExtractOpts, ListOpts, Password, SevenZOpts,
+    SfxDirection, SfxPayload, UpdateMode, add, add_prompted, add_sfx, convert, delete, extract,
+    list_with, test,
 };
+use shellzip_integrate::{selection_dir, suggested_archive_path};
 
 use crate::about;
 use crate::add_dialog::{self, AddAction, AddRequest, AskPrompt, AskReply};
@@ -165,7 +167,10 @@ impl ShellZipApp {
         let (tx, rx) = mpsc::channel();
         let open_path = match &launch {
             LaunchAction::Open(path) if path.exists() => Some(path.clone()),
-            LaunchAction::ExtractTo(paths)
+            LaunchAction::Add(paths)
+            | LaunchAction::AddZip(paths)
+            | LaunchAction::Add7z(paths)
+            | LaunchAction::ExtractTo(paths)
             | LaunchAction::ExtractHere(paths)
             | LaunchAction::ExtractHereNamed(paths) => paths.first().cloned(),
             _ => None,
@@ -251,6 +256,9 @@ impl ShellZipApp {
             LaunchAction::Open(path) if path.is_file() => self.start_list(path),
             LaunchAction::Open(path) if path.is_dir() => self.open_folder(path),
             LaunchAction::Open(_) => {}
+            LaunchAction::Add(paths) => self.begin_shell_add_dialog(paths),
+            LaunchAction::AddZip(paths) => self.begin_shell_quick_add(paths, "zip"),
+            LaunchAction::Add7z(paths) => self.begin_shell_quick_add(paths, "7z"),
             LaunchAction::ExtractTo(paths) => self.begin_shell_extract_to(paths),
             LaunchAction::ExtractHere(paths) => {
                 let jobs = paths
@@ -273,6 +281,47 @@ impl ShellZipApp {
                 self.enqueue_shell_extracts(jobs);
             }
         }
+    }
+
+    fn begin_shell_add_dialog(&mut self, files: Vec<PathBuf>) {
+        if self.refuse_operation() || files.is_empty() || self.add_dialog.is_some() {
+            return;
+        }
+        let dir = selection_dir(&files);
+        self.add_dialog = Some(add_dialog::AddDialog::prepare(&dir, files, &self.options));
+    }
+
+    fn begin_shell_quick_add(&mut self, files: Vec<PathBuf>, extension: &str) {
+        if self.refuse_operation() || files.is_empty() {
+            return;
+        }
+        let dest = suggested_archive_path(&files, extension);
+        if quick_add_needs_dialog(&files, &dest, extension) {
+            self.begin_shell_add_dialog(files);
+            return;
+        }
+        let request = AddRequest {
+            dest,
+            inputs: files,
+            level: self.options.level.min(5),
+            method: self.options.method,
+            update: UpdateMode::Add,
+            sfx: false,
+            password: String::new(),
+            sevenz: SevenZOpts {
+                method: self.options.sevenz_method,
+                solid: self.options.solid,
+                encrypt_headers: false,
+            },
+            sfx_payload: if extension.eq_ignore_ascii_case("7z") {
+                SfxPayload::SevenZ
+            } else {
+                SfxPayload::Zip
+            },
+            comment: None,
+            background: self.options.background,
+        };
+        self.start_add(request);
     }
 
     fn begin_shell_extract_to(&mut self, mut paths: Vec<PathBuf>) {
@@ -2969,6 +3018,21 @@ fn spawn_directory(tx: Sender<Outcome>, path: PathBuf, generation: u64) {
     });
 }
 
+/// True when a one-click shell add should open the dialog instead of packing.
+///
+/// That covers packing a file into itself, and overwriting a non-archive path.
+fn quick_add_needs_dialog(inputs: &[PathBuf], dest: &Path, extension: &str) -> bool {
+    if inputs.iter().any(|path| path == dest) {
+        return true;
+    }
+    if !dest.exists() {
+        return false;
+    }
+    !dest
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case(extension))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3002,6 +3066,26 @@ mod tests {
                 kind: OpKind::Add,
                 open: true
             }
+        ));
+    }
+
+    #[test]
+    fn quick_add_opens_dialog_for_self_or_foreign_file() {
+        let notes = PathBuf::from("notes.zip");
+        assert!(quick_add_needs_dialog(
+            std::slice::from_ref(&notes),
+            &notes,
+            "zip"
+        ));
+        assert!(quick_add_needs_dialog(
+            &[PathBuf::from("a.txt")],
+            Path::new("a.txt"),
+            "zip"
+        ));
+        assert!(!quick_add_needs_dialog(
+            &[PathBuf::from("a.txt")],
+            Path::new("missing.zip"),
+            "zip"
         ));
     }
 

@@ -238,7 +238,8 @@ OpenWithProgids\\{ext} += {prog}
     }
     out.push_str(
         "\
-SystemFileAssociations\\.<ext>\\shellex\\ContextMenuHandlers\\ShellZip = {CLSID}
+*\\shellex\\ContextMenuHandlers\\ShellZip = {CLSID}
+Directory\\shellex\\ContextMenuHandlers\\ShellZip = {CLSID}
 Approved shell extension list += ShellZip
 ",
     );
@@ -264,6 +265,8 @@ mod tests {
         assert!(plan.contains("ShellZip.zip"));
         assert!(plan.contains(r"C:\icons\zip.ico,0"));
         assert!(plan.contains(r"C:\icons\tar.gz.ico,0"));
+        assert!(plan.contains(r"*\shellex\ContextMenuHandlers\ShellZip"));
+        assert!(plan.contains(r"Directory\shellex\ContextMenuHandlers\ShellZip"));
     }
 
     #[test]
