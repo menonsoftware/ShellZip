@@ -1,5 +1,7 @@
 <p align="center">
   <img src="grx/ShellZip_Banner.jpg" alt="ShellZip" width="800">
+  <br>
+  <a href="https://github.com/menonsoftware/ShellZip/releases/latest"><img src="https://img.shields.io/github/v/release/menonsoftware/ShellZip" alt="Latest release"></a>
 </p>
 
 # ShellZip
@@ -8,7 +10,7 @@ ShellZip is a Rust archive manager: a desktop window (`shellzip`), a command-lin
 
 It packs and unpacks ZIP, 7z, tar, gzip, and zstd, extracts xz, bzip2, and RAR, and never creates a RAR archive. Detection uses magic bytes, not the file extension. Entry names are checked before anything is written to disk.
 
-Version **0.1.6**. Licensed under MIT. Not published to crates.io.
+Licensed under MIT. Not published to crates.io.
 
 **Windows:** App signing is still pending. This release is unsigned, so Windows (SmartScreen or Microsoft Defender) may detect ShellZip as a virus. That warning is from the missing signature.
 
