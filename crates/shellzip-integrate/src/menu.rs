@@ -233,7 +233,11 @@ mod tests {
 
     #[test]
     fn plain_file_shows_add_only() {
-        let model = menu_for_selection(&[PathBuf::from(r"D:\docs\notes.txt")]);
+        // Join so the parent and file name are real components on both
+        // Windows (`\`) and Linux (`/`). A raw `D:\...` string is one
+        // filename on Unix, so the label would include the whole path.
+        let notes = PathBuf::from("docs").join("notes.txt");
+        let model = menu_for_selection(&[notes]);
         assert!(model.archives.is_empty());
         assert_eq!(model.rows.len(), 3);
         assert_eq!(
@@ -257,7 +261,7 @@ mod tests {
                 label: "Add to notes.7z".to_string(),
             }
         );
-        assert_eq!(model.add_zip_path, PathBuf::from(r"D:\docs\notes.zip"));
+        assert_eq!(model.add_zip_path, PathBuf::from("docs").join("notes.zip"));
     }
 
     #[test]
@@ -297,12 +301,14 @@ mod tests {
 
     #[test]
     fn multi_file_uses_parent_folder_name() {
+        // Same as `plain_file_shows_add_only`: build components with `join`
+        // so the parent folder name is visible on Unix and Windows.
         let model = menu_for_selection(&[
-            PathBuf::from(r"D:\pack\one.txt"),
-            PathBuf::from(r"D:\pack\two.txt"),
+            PathBuf::from("pack").join("one.txt"),
+            PathBuf::from("pack").join("two.txt"),
         ]);
-        assert_eq!(model.add_zip_path, PathBuf::from(r"D:\pack\pack.zip"));
-        assert_eq!(model.add_7z_path, PathBuf::from(r"D:\pack\pack.7z"));
+        assert_eq!(model.add_zip_path, PathBuf::from("pack").join("pack.zip"));
+        assert_eq!(model.add_7z_path, PathBuf::from("pack").join("pack.7z"));
     }
 
     #[test]

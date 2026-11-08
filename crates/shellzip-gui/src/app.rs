@@ -156,6 +156,10 @@ pub struct ShellZipApp {
     shell_queue: Vec<(PathBuf, PathBuf, bool)>,
     /// Remaining archives for a multi-file **Extract to…** after the dialog.
     shell_extract_to: Vec<PathBuf>,
+    /// True when this window was opened only for a shell context-menu verb.
+    shell_verb: bool,
+    /// Close the window on the next frame after a shell verb finishes.
+    close_after_shell: bool,
 }
 
 impl ShellZipApp {
@@ -244,6 +248,8 @@ impl ShellZipApp {
             rx,
             shell_queue: Vec::new(),
             shell_extract_to: Vec::new(),
+            shell_verb: false,
+            close_after_shell: false,
         };
         app.rebuild_view();
         app.apply_launch(launch);
@@ -256,11 +262,24 @@ impl ShellZipApp {
             LaunchAction::Open(path) if path.is_file() => self.start_list(path),
             LaunchAction::Open(path) if path.is_dir() => self.open_folder(path),
             LaunchAction::Open(_) => {}
-            LaunchAction::Add(paths) => self.begin_shell_add_dialog(paths),
-            LaunchAction::AddZip(paths) => self.begin_shell_quick_add(paths, "zip"),
-            LaunchAction::Add7z(paths) => self.begin_shell_quick_add(paths, "7z"),
-            LaunchAction::ExtractTo(paths) => self.begin_shell_extract_to(paths),
+            LaunchAction::Add(paths) => {
+                self.shell_verb = true;
+                self.begin_shell_add_dialog(paths);
+            }
+            LaunchAction::AddZip(paths) => {
+                self.shell_verb = true;
+                self.begin_shell_quick_add(paths, "zip");
+            }
+            LaunchAction::Add7z(paths) => {
+                self.shell_verb = true;
+                self.begin_shell_quick_add(paths, "7z");
+            }
+            LaunchAction::ExtractTo(paths) => {
+                self.shell_verb = true;
+                self.begin_shell_extract_to(paths);
+            }
             LaunchAction::ExtractHere(paths) => {
+                self.shell_verb = true;
                 let jobs = paths
                     .into_iter()
                     .map(|archive| {
@@ -271,6 +290,7 @@ impl ShellZipApp {
                 self.enqueue_shell_extracts(jobs);
             }
             LaunchAction::ExtractHereNamed(paths) => {
+                self.shell_verb = true;
                 let jobs = paths
                     .into_iter()
                     .map(|archive| {
@@ -281,6 +301,27 @@ impl ShellZipApp {
                 self.enqueue_shell_extracts(jobs);
             }
         }
+    }
+
+    /// Close after a shell-menu add/extract once nothing else is pending.
+    ///
+    /// Errors keep the window open so the message stays visible.
+    fn maybe_close_shell_verb(&mut self) {
+        if !self.shell_verb || self.close_after_shell {
+            return;
+        }
+        if self.error.is_some()
+            || self.operation.is_some()
+            || !self.shell_queue.is_empty()
+            || self.add_dialog.is_some()
+            || self.extract_dialog.is_some()
+            || self.password_ask.is_some()
+            || self.ask.is_some()
+            || self.pending_archive_delete.is_some()
+        {
+            return;
+        }
+        self.close_after_shell = true;
     }
 
     fn begin_shell_add_dialog(&mut self, files: Vec<PathBuf>) {
@@ -1452,6 +1493,9 @@ impl ShellZipApp {
                             self.test_dialog = None;
                         }
                         self.status = summary;
+                        if matches!(kind, Some(OpKind::Add | OpKind::Extract)) {
+                            self.maybe_close_shell_verb();
+                        }
                     } else if self.browse_job == Some(token.id) {
                         self.browse_job = None;
                         self.listing = false;
@@ -1495,6 +1539,7 @@ impl ShellZipApp {
                             });
                         }
                     }
+                    self.maybe_close_shell_verb();
                 }
                 Outcome::Tested { token, report } => {
                     if self.operation.as_ref().is_some_and(|op| op.id == token.id) {
@@ -1647,7 +1692,10 @@ impl ShellZipApp {
             ListedEffect::Finish { kind, open } => {
                 self.clear_operation();
                 self.ask = None;
-                if open {
+                if self.shell_verb && kind == OpKind::Add {
+                    self.status = format!("created {}", path.display());
+                    self.maybe_close_shell_verb();
+                } else if open {
                     self.apply_archive(path, format, entries);
                 } else if kind == OpKind::Add {
                     self.status = format!("created {}", path.display());
@@ -1753,6 +1801,10 @@ impl ShellZipApp {
             if matches!(job, Some(PasswordJob::View { .. })) {
                 self.view_job = None;
                 self.status.clear();
+            }
+            if matches!(job, Some(PasswordJob::Extract(_))) {
+                self.shell_queue.clear();
+                self.maybe_close_shell_verb();
             }
             return;
         }
@@ -2808,6 +2860,7 @@ impl eframe::App for ShellZipApp {
             Some(ExtractAction::Close) => {
                 self.extract_dialog = None;
                 self.shell_extract_to.clear();
+                self.maybe_close_shell_verb();
             }
             None => {}
         }
@@ -2838,8 +2891,10 @@ impl eframe::App for ShellZipApp {
             if confirmed {
                 self.pending_archive_delete = None;
                 self.remove_archive(&path, recycle);
+                self.maybe_close_shell_verb();
             } else if !still_open {
                 self.pending_archive_delete = None;
+                self.maybe_close_shell_verb();
             }
         }
         let add_action = self
@@ -2851,7 +2906,10 @@ impl eframe::App for ShellZipApp {
                 self.add_dialog = None;
                 self.start_add(request);
             }
-            Some(AddAction::Close) => self.add_dialog = None,
+            Some(AddAction::Close) => {
+                self.add_dialog = None;
+                self.maybe_close_shell_verb();
+            }
             None => {}
         }
         let pending_ask = self
@@ -2891,6 +2949,9 @@ impl eframe::App for ShellZipApp {
         }
         if !submitted && !self.dialog_blocks_shell() {
             self.shortcuts(ctx);
+        }
+        if self.close_after_shell {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 }
