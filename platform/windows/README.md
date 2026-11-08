@@ -4,8 +4,8 @@
 
 | File | Role |
 |---|---|
-| `shellzip.exe` | GUI; receives Open / `--extract-*` verbs |
-| `shellzip_shell.dll` | Explorer `IContextMenu` + `IExtractIcon` / `IPersistFile` |
+| `shellzip.exe` | GUI; receives Open / `--add*` / `--extract-*` verbs |
+| `shellzip_shell.dll` | Explorer cascaded `IContextMenu` + `IExtractIcon` / `IPersistFile` |
 | `grx/shellzip_file_icons/ico/*.ico` | Per-format document icons |
 
 Build:
@@ -23,7 +23,9 @@ Copy `shellzip_shell.dll` next to `shellzip.exe` (same folder as `target/release
 shellzip --integrate
 ```
 
-Writes per-user ProgIDs under `HKCU\Software\Classes`, copies icons to `%LOCALAPPDATA%\ShellZip\icons`, and registers the DLL CLSID `{A7C3E5B1-4D2F-4A91-9E6C-8B1F0D2E3A45}` for context menus and compound-extension icons. No administrator rights. Does not rewrite `UserChoice` hashes; if Windows keeps another default, use Settings → Default apps.
+Writes per-user ProgIDs under `HKCU\Software\Classes`, copies icons to `%LOCALAPPDATA%\ShellZip\icons`, copies `shellzip_shell.dll` to `%LOCALAPPDATA%\ShellZip\`, stores `HKCU\Software\ShellZip\ExePath` (so menu verbs can find `shellzip.exe` after the DLL is relocated), and registers the CLSID `{A7C3E5B1-4D2F-4A91-9E6C-8B1F0D2E3A45}` for a cascaded **ShellZip** context menu on every file and folder. Machine registration of the COM server may require elevation. Does not rewrite `UserChoice` hashes; if Windows keeps another default, use Settings → Default apps.
+
+After a cargo rebuild, run `shellzip --integrate` again so `ExePath` and the copied DLL match the new binaries.
 
 ## Velopack install
 

@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use shellzip_integrate::{
-    MenuAction, action_flag, action_label, icon_for_path, menu_for_selection, quote_command_line,
+    MenuAction, MenuRow, action_flag, action_verb, icon_for_path, menu_for_selection,
+    paths_for_action, quote_command_line, registered_host_exe,
 };
 use windows::Win32::Foundation::{
     CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_FAIL, E_INVALIDARG, E_NOTIMPL, E_POINTER,
@@ -26,8 +27,8 @@ use windows::Win32::UI::Shell::{
     IExtractIconW, IExtractIconW_Impl, IShellExtInit, IShellExtInit_Impl,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    HMENU, InsertMenuItemW, MENUITEMINFOW, MFS_ENABLED, MFT_STRING, MIIM_FTYPE, MIIM_ID,
-    MIIM_STRING,
+    CreatePopupMenu, DestroyMenu, HMENU, InsertMenuItemW, MENUITEMINFOW, MFS_ENABLED,
+    MFT_SEPARATOR, MFT_STRING, MIIM_FTYPE, MIIM_ID, MIIM_STATE, MIIM_STRING, MIIM_SUBMENU,
 };
 use windows::core::{
     BOOL, GUID, HRESULT, IUnknown, Interface, PCWSTR, PWSTR, Ref, Result as WinResult, implement,
@@ -37,6 +38,8 @@ use windows::core::{
 pub const CLSID_SHELLZIP: GUID = GUID::from_u128(0xA7C3_E5B1_4D2F_4A91_9E6C_8B1F_0D2E_3A45);
 
 const CF_HDROP: u16 = 15;
+/// `CMF_DEFAULTONLY` — Explorer is only asking for a default verb.
+const CMF_DEFAULTONLY: u32 = 0x0000_0001;
 
 static LOCKS: AtomicU32 = AtomicU32::new(0);
 static mut MODULE: HINSTANCE = HINSTANCE(std::ptr::null_mut());
@@ -107,42 +110,63 @@ impl IContextMenu_Impl for Ext_Impl {
         indexmenu: u32,
         idcmdfirst: u32,
         _idcmdlast: u32,
-        _uflags: u32,
+        uflags: u32,
     ) -> HRESULT {
+        if uflags & CMF_DEFAULTONLY != 0 {
+            return S_OK;
+        }
         let files = self.files.lock().map(|g| g.clone()).unwrap_or_default();
         if files.is_empty() {
             return S_OK;
         }
         let model = menu_for_selection(&files);
-        let labels = [
-            format!("ShellZip: {}", action_label(MenuAction::Open)),
-            format!("ShellZip: {}", action_label(MenuAction::ExtractTo)),
-            format!("ShellZip: {}", action_label(MenuAction::ExtractHere)),
-            format!("ShellZip: {}", model.extract_here_named_label),
-        ];
-        for (i, label) in labels.iter().enumerate() {
-            let offset = u32::try_from(i).unwrap_or(0);
-            if insert_string(hmenu, indexmenu + offset, idcmdfirst + offset, label).is_err() {
+        if model.rows.is_empty() {
+            return S_OK;
+        }
+        let submenu = match unsafe { CreatePopupMenu() } {
+            Ok(menu) => menu,
+            Err(_) => return E_FAIL,
+        };
+        let mut next_id = idcmdfirst;
+        let mut position = 0u32;
+        for row in &model.rows {
+            let result = match row {
+                MenuRow::Separator => insert_separator(submenu, position),
+                MenuRow::Command { action: _, label } => {
+                    let inserted = insert_string(submenu, position, next_id, label);
+                    if inserted.is_ok() {
+                        next_id = next_id.saturating_add(1);
+                    }
+                    inserted
+                }
+            };
+            if result.is_err() {
+                let _ = unsafe { DestroyMenu(submenu) };
                 return E_FAIL;
             }
+            position = position.saturating_add(1);
         }
-        // MAKE_HRESULT(SEVERITY_SUCCESS, FACILITY_NULL, count)
-        HRESULT(i32::try_from(labels.len()).unwrap_or(1))
+        if insert_submenu(hmenu, indexmenu, submenu, "ShellZip").is_err() {
+            let _ = unsafe { DestroyMenu(submenu) };
+            return E_FAIL;
+        }
+        // MAKE_HRESULT(SEVERITY_SUCCESS, FACILITY_NULL, command count)
+        let count = next_id.saturating_sub(idcmdfirst);
+        HRESULT(i32::try_from(count).unwrap_or(1))
     }
 
     fn InvokeCommand(&self, pici: *const CMINVOKECOMMANDINFO) -> WinResult<()> {
         let info = unsafe { pici.as_ref() }.ok_or(E_POINTER)?;
         let index = info.lpVerb.0 as usize;
         // When the high word is zero, lpVerb is a command-id offset.
-        let action = match index {
-            0 => MenuAction::Open,
-            1 => MenuAction::ExtractTo,
-            2 => MenuAction::ExtractHere,
-            3 => MenuAction::ExtractHereNamed,
-            _ => return Err(E_INVALIDARG.into()),
-        };
         let files = self.files.lock().map(|g| g.clone()).unwrap_or_default();
-        launch_shellzip(action, &files)
+        let model = menu_for_selection(&files);
+        let action = action_at(&model.rows, index).ok_or(E_INVALIDARG)?;
+        let paths = paths_for_action(&model, action);
+        if paths.is_empty() {
+            return Err(E_INVALIDARG.into());
+        }
+        launch_shellzip(action, paths)
     }
 
     fn GetCommandString(
@@ -153,17 +177,20 @@ impl IContextMenu_Impl for Ext_Impl {
         pszname: windows::core::PSTR,
         cchmax: u32,
     ) -> WinResult<()> {
-        let action = match idcmd {
-            0 => MenuAction::Open,
-            1 => MenuAction::ExtractTo,
-            2 => MenuAction::ExtractHere,
-            3 => MenuAction::ExtractHereNamed,
-            _ => return Err(E_INVALIDARG.into()),
-        };
-        if utype != GCS_HELPTEXTA && utype != GCS_VERBA {
+        let files = self.files.lock().map(|g| g.clone()).unwrap_or_default();
+        let model = menu_for_selection(&files);
+        let action = action_at(&model.rows, idcmd).ok_or(E_INVALIDARG)?;
+        let text = if utype == GCS_VERBA {
+            action_verb(action)
+        } else if utype == GCS_HELPTEXTA {
+            match model.rows.iter().filter_map(command_label).nth(idcmd) {
+                Some(label) => label.as_str(),
+                None => return Err(E_INVALIDARG.into()),
+            }
+        } else {
             return Err(E_NOTIMPL.into());
-        }
-        write_ansi(pszname.0, cchmax, action_label(action))
+        };
+        write_ansi(pszname.0, cchmax, text)
     }
 }
 
@@ -273,6 +300,12 @@ fn launch_shellzip(action: MenuAction, files: &[PathBuf]) -> WinResult<()> {
 }
 
 fn shellzip_exe() -> Option<PathBuf> {
+    // Prefer the path written by `--integrate`. The DLL is copied to
+    // `%LOCALAPPDATA%\ShellZip`, so a sibling `shellzip.exe` is usually absent,
+    // and Explorer's PATH rarely includes cargo or the install folder.
+    if let Some(path) = registered_host_exe() {
+        return Some(path);
+    }
     let mut buf = vec![0u16; 520];
     let len = unsafe { GetModuleFileNameW(Some(MODULE.into()), &mut buf) } as usize;
     if len == 0 {
@@ -299,14 +332,59 @@ fn which(name: &str) -> Option<PathBuf> {
     None
 }
 
+fn action_at(rows: &[MenuRow], index: usize) -> Option<MenuAction> {
+    rows.iter()
+        .filter_map(|row| match row {
+            MenuRow::Command { action, .. } => Some(*action),
+            MenuRow::Separator => None,
+        })
+        .nth(index)
+}
+
+fn command_label(row: &MenuRow) -> Option<&String> {
+    match row {
+        MenuRow::Command { label, .. } => Some(label),
+        MenuRow::Separator => None,
+    }
+}
+
 fn insert_string(hmenu: HMENU, position: u32, id: u32, text: &str) -> WinResult<()> {
     let wide = wide_null(text);
     let info = MENUITEMINFOW {
         cbSize: u32::try_from(std::mem::size_of::<MENUITEMINFOW>()).unwrap_or(0),
-        fMask: MIIM_ID | MIIM_STRING | MIIM_FTYPE,
+        fMask: MIIM_ID | MIIM_STRING | MIIM_FTYPE | MIIM_STATE,
         fType: MFT_STRING,
         fState: MFS_ENABLED,
         wID: id,
+        dwTypeData: PWSTR(wide.as_ptr() as *mut u16),
+        cch: u32::try_from(text.encode_utf16().count()).unwrap_or(0),
+        ..Default::default()
+    };
+    let result = unsafe { InsertMenuItemW(hmenu, position, true, &info) };
+    drop(wide);
+    result?;
+    Ok(())
+}
+
+fn insert_separator(hmenu: HMENU, position: u32) -> WinResult<()> {
+    let info = MENUITEMINFOW {
+        cbSize: u32::try_from(std::mem::size_of::<MENUITEMINFOW>()).unwrap_or(0),
+        fMask: MIIM_FTYPE,
+        fType: MFT_SEPARATOR,
+        ..Default::default()
+    };
+    unsafe { InsertMenuItemW(hmenu, position, true, &info) }?;
+    Ok(())
+}
+
+fn insert_submenu(hmenu: HMENU, position: u32, submenu: HMENU, text: &str) -> WinResult<()> {
+    let wide = wide_null(text);
+    let info = MENUITEMINFOW {
+        cbSize: u32::try_from(std::mem::size_of::<MENUITEMINFOW>()).unwrap_or(0),
+        fMask: MIIM_STRING | MIIM_FTYPE | MIIM_STATE | MIIM_SUBMENU,
+        fType: MFT_STRING,
+        fState: MFS_ENABLED,
+        hSubMenu: submenu,
         dwTypeData: PWSTR(wide.as_ptr() as *mut u16),
         cch: u32::try_from(text.encode_utf16().count()).unwrap_or(0),
         ..Default::default()

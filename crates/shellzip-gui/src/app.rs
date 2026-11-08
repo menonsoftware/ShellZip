@@ -5,9 +5,11 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use shellzip_core::{
-    CompressOpts, ConflictChoice, Entry, Error, ExtractOpts, ListOpts, Password, SfxDirection,
-    UpdateMode, add, add_prompted, add_sfx, convert, delete, extract, list_with, test,
+    CompressOpts, ConflictChoice, Entry, Error, ExtractOpts, ListOpts, Password, SevenZOpts,
+    SfxDirection, SfxPayload, UpdateMode, add, add_prompted, add_sfx, convert, delete, extract,
+    list_with, test,
 };
+use shellzip_integrate::{selection_dir, suggested_archive_path};
 
 use crate::about;
 use crate::add_dialog::{self, AddAction, AddRequest, AskPrompt, AskReply};
@@ -154,6 +156,10 @@ pub struct ShellZipApp {
     shell_queue: Vec<(PathBuf, PathBuf, bool)>,
     /// Remaining archives for a multi-file **Extract to…** after the dialog.
     shell_extract_to: Vec<PathBuf>,
+    /// True when this window was opened only for a shell context-menu verb.
+    shell_verb: bool,
+    /// Close the window on the next frame after a shell verb finishes.
+    close_after_shell: bool,
 }
 
 impl ShellZipApp {
@@ -165,7 +171,10 @@ impl ShellZipApp {
         let (tx, rx) = mpsc::channel();
         let open_path = match &launch {
             LaunchAction::Open(path) if path.exists() => Some(path.clone()),
-            LaunchAction::ExtractTo(paths)
+            LaunchAction::Add(paths)
+            | LaunchAction::AddZip(paths)
+            | LaunchAction::Add7z(paths)
+            | LaunchAction::ExtractTo(paths)
             | LaunchAction::ExtractHere(paths)
             | LaunchAction::ExtractHereNamed(paths) => paths.first().cloned(),
             _ => None,
@@ -239,6 +248,8 @@ impl ShellZipApp {
             rx,
             shell_queue: Vec::new(),
             shell_extract_to: Vec::new(),
+            shell_verb: false,
+            close_after_shell: false,
         };
         app.rebuild_view();
         app.apply_launch(launch);
@@ -251,8 +262,24 @@ impl ShellZipApp {
             LaunchAction::Open(path) if path.is_file() => self.start_list(path),
             LaunchAction::Open(path) if path.is_dir() => self.open_folder(path),
             LaunchAction::Open(_) => {}
-            LaunchAction::ExtractTo(paths) => self.begin_shell_extract_to(paths),
+            LaunchAction::Add(paths) => {
+                self.shell_verb = true;
+                self.begin_shell_add_dialog(paths);
+            }
+            LaunchAction::AddZip(paths) => {
+                self.shell_verb = true;
+                self.begin_shell_quick_add(paths, "zip");
+            }
+            LaunchAction::Add7z(paths) => {
+                self.shell_verb = true;
+                self.begin_shell_quick_add(paths, "7z");
+            }
+            LaunchAction::ExtractTo(paths) => {
+                self.shell_verb = true;
+                self.begin_shell_extract_to(paths);
+            }
             LaunchAction::ExtractHere(paths) => {
+                self.shell_verb = true;
                 let jobs = paths
                     .into_iter()
                     .map(|archive| {
@@ -263,6 +290,7 @@ impl ShellZipApp {
                 self.enqueue_shell_extracts(jobs);
             }
             LaunchAction::ExtractHereNamed(paths) => {
+                self.shell_verb = true;
                 let jobs = paths
                     .into_iter()
                     .map(|archive| {
@@ -273,6 +301,68 @@ impl ShellZipApp {
                 self.enqueue_shell_extracts(jobs);
             }
         }
+    }
+
+    /// Close after a shell-menu add/extract once nothing else is pending.
+    ///
+    /// Errors keep the window open so the message stays visible.
+    fn maybe_close_shell_verb(&mut self) {
+        if !self.shell_verb || self.close_after_shell {
+            return;
+        }
+        if self.error.is_some()
+            || self.operation.is_some()
+            || !self.shell_queue.is_empty()
+            || self.add_dialog.is_some()
+            || self.extract_dialog.is_some()
+            || self.password_ask.is_some()
+            || self.ask.is_some()
+            || self.pending_archive_delete.is_some()
+        {
+            return;
+        }
+        self.close_after_shell = true;
+    }
+
+    fn begin_shell_add_dialog(&mut self, files: Vec<PathBuf>) {
+        if self.refuse_operation() || files.is_empty() || self.add_dialog.is_some() {
+            return;
+        }
+        let dir = selection_dir(&files);
+        self.add_dialog = Some(add_dialog::AddDialog::prepare(&dir, files, &self.options));
+    }
+
+    fn begin_shell_quick_add(&mut self, files: Vec<PathBuf>, extension: &str) {
+        if self.refuse_operation() || files.is_empty() {
+            return;
+        }
+        let dest = suggested_archive_path(&files, extension);
+        if quick_add_needs_dialog(&files, &dest, extension) {
+            self.begin_shell_add_dialog(files);
+            return;
+        }
+        let request = AddRequest {
+            dest,
+            inputs: files,
+            level: self.options.level.min(5),
+            method: self.options.method,
+            update: UpdateMode::Add,
+            sfx: false,
+            password: String::new(),
+            sevenz: SevenZOpts {
+                method: self.options.sevenz_method,
+                solid: self.options.solid,
+                encrypt_headers: false,
+            },
+            sfx_payload: if extension.eq_ignore_ascii_case("7z") {
+                SfxPayload::SevenZ
+            } else {
+                SfxPayload::Zip
+            },
+            comment: None,
+            background: self.options.background,
+        };
+        self.start_add(request);
     }
 
     fn begin_shell_extract_to(&mut self, mut paths: Vec<PathBuf>) {
@@ -1403,6 +1493,9 @@ impl ShellZipApp {
                             self.test_dialog = None;
                         }
                         self.status = summary;
+                        if matches!(kind, Some(OpKind::Add | OpKind::Extract)) {
+                            self.maybe_close_shell_verb();
+                        }
                     } else if self.browse_job == Some(token.id) {
                         self.browse_job = None;
                         self.listing = false;
@@ -1446,6 +1539,7 @@ impl ShellZipApp {
                             });
                         }
                     }
+                    self.maybe_close_shell_verb();
                 }
                 Outcome::Tested { token, report } => {
                     if self.operation.as_ref().is_some_and(|op| op.id == token.id) {
@@ -1598,7 +1692,10 @@ impl ShellZipApp {
             ListedEffect::Finish { kind, open } => {
                 self.clear_operation();
                 self.ask = None;
-                if open {
+                if self.shell_verb && kind == OpKind::Add {
+                    self.status = format!("created {}", path.display());
+                    self.maybe_close_shell_verb();
+                } else if open {
                     self.apply_archive(path, format, entries);
                 } else if kind == OpKind::Add {
                     self.status = format!("created {}", path.display());
@@ -1704,6 +1801,10 @@ impl ShellZipApp {
             if matches!(job, Some(PasswordJob::View { .. })) {
                 self.view_job = None;
                 self.status.clear();
+            }
+            if matches!(job, Some(PasswordJob::Extract(_))) {
+                self.shell_queue.clear();
+                self.maybe_close_shell_verb();
             }
             return;
         }
@@ -2759,6 +2860,7 @@ impl eframe::App for ShellZipApp {
             Some(ExtractAction::Close) => {
                 self.extract_dialog = None;
                 self.shell_extract_to.clear();
+                self.maybe_close_shell_verb();
             }
             None => {}
         }
@@ -2789,8 +2891,10 @@ impl eframe::App for ShellZipApp {
             if confirmed {
                 self.pending_archive_delete = None;
                 self.remove_archive(&path, recycle);
+                self.maybe_close_shell_verb();
             } else if !still_open {
                 self.pending_archive_delete = None;
+                self.maybe_close_shell_verb();
             }
         }
         let add_action = self
@@ -2802,7 +2906,10 @@ impl eframe::App for ShellZipApp {
                 self.add_dialog = None;
                 self.start_add(request);
             }
-            Some(AddAction::Close) => self.add_dialog = None,
+            Some(AddAction::Close) => {
+                self.add_dialog = None;
+                self.maybe_close_shell_verb();
+            }
             None => {}
         }
         let pending_ask = self
@@ -2842,6 +2949,9 @@ impl eframe::App for ShellZipApp {
         }
         if !submitted && !self.dialog_blocks_shell() {
             self.shortcuts(ctx);
+        }
+        if self.close_after_shell {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 }
@@ -2969,6 +3079,21 @@ fn spawn_directory(tx: Sender<Outcome>, path: PathBuf, generation: u64) {
     });
 }
 
+/// True when a one-click shell add should open the dialog instead of packing.
+///
+/// That covers packing a file into itself, and overwriting a non-archive path.
+fn quick_add_needs_dialog(inputs: &[PathBuf], dest: &Path, extension: &str) -> bool {
+    if inputs.iter().any(|path| path == dest) {
+        return true;
+    }
+    if !dest.exists() {
+        return false;
+    }
+    !dest
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case(extension))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3002,6 +3127,26 @@ mod tests {
                 kind: OpKind::Add,
                 open: true
             }
+        ));
+    }
+
+    #[test]
+    fn quick_add_opens_dialog_for_self_or_foreign_file() {
+        let notes = PathBuf::from("notes.zip");
+        assert!(quick_add_needs_dialog(
+            std::slice::from_ref(&notes),
+            &notes,
+            "zip"
+        ));
+        assert!(quick_add_needs_dialog(
+            &[PathBuf::from("a.txt")],
+            Path::new("a.txt"),
+            "zip"
+        ));
+        assert!(!quick_add_needs_dialog(
+            &[PathBuf::from("a.txt")],
+            Path::new("missing.zip"),
+            "zip"
         ));
     }
 
