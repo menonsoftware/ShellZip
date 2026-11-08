@@ -180,10 +180,12 @@ velopack-stage: release
 velopack-pack: velopack-stage
 	$(CARGO) run -p xtask -- velopack-pack $(VELOPACK_CHANNEL)
 
-# Windows-only: release binaries + unsigned Store MSIX under dist/msix/.
+# Windows-only: release binaries, pack MSIX, self-sign with a local
+# developer cert, and sideload with Add-AppxPackage. CI calls
+# `xtask msix-pack` without --install so Partner Center can re-sign.
 msix: release
 ifeq ($(OS),Windows_NT)
-	$(CARGO) run -p xtask -- msix-pack
+	$(CARGO) run -p xtask -- msix-pack --install
 else
 	@echo msix is Windows-only
 endif
@@ -219,5 +221,5 @@ help:
 	@echo   make bench            Release ZIP timings into docs/BENCH.md
 	@echo   make velopack-stage   Stage binaries + icons under dist/velopack/
 	@echo   make velopack-pack    Stage then run vpk pack (GPG when env set)
-	@echo   make msix             Windows: pack unsigned Store MSIX under dist/msix/
+	@echo   make msix             Windows: pack, self-sign, and sideload Store MSIX
 	@echo   make clean            cargo clean

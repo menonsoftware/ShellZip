@@ -33,7 +33,7 @@ Release CI stages `shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, `shellzip_shel
 
 ## Microsoft Store MSIX
 
-Release CI also packs `ShellZip-<tag>-x64.msix` (`make msix` locally). The package includes `shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, and `shellzip_shell.dll`. Archive types and static Extract verbs are declared in `AppxManifest.xml`. The same DLL is registered as an STA `com:SurrogateServer` (`{B8D4F6C2-5E3A-4B02-AF7D-9C2E1F3A4B56}`) under `desktop4:FileExplorerContextMenus` for `*`, `Directory`, and `Directory\Background`, so Windows 11 shows the cascaded **ShellZip** menu on the compact context menu. Settings live under `%LOCALAPPDATA%\ShellZip\settings.toml`. The Store build skips Velopack hooks and the Integrate menu; updates come from the Store.
+Release CI packs an unsigned `ShellZip-<tag>-x64.msix` for Partner Center. Locally, `make msix` packs the same layout, self-signs with `dist/msix/ShellZipDev.pfx`, and sideloads via `Add-AppxPackage` (Developer Mode may be required). The package includes `shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, and `shellzip_shell.dll`. Archive types and static Extract verbs are declared in `AppxManifest.xml`. The same DLL is registered as an STA `com:SurrogateServer` (`{B8D4F6C2-5E3A-4B02-AF7D-9C2E1F3A4B56}`) under `desktop4:FileExplorerContextMenus` for `*`, `Directory`, and `Directory\Background`, so Windows 11 shows the cascaded **ShellZip** menu on the compact context menu. Settings live under `%LOCALAPPDATA%\ShellZip\settings.toml`. The Store build skips Velopack hooks and the Integrate menu; updates come from the Store.
 
 Use either the Store package or the Velopack Setup, not both, so associations are not registered twice. See [docs/BUILDING.md](../../docs/BUILDING.md) for Partner Center secrets.
 
@@ -43,4 +43,4 @@ The Velopack Setup and portable zip are **unsigned**. SmartScreen flags an unkno
 
 ## Windows 11 sparse package
 
-[msix/ShellZipSparse.md](msix/ShellZipSparse.md) describes a future sparse MSIX so Velopack / portable installs can also show `IExplorerCommand` items on the compact context menu. The classic `IContextMenu` handler already appears under **Show more options** (and on Windows 10) after `--integrate`. The Store package already ships the surrogate `IExplorerCommand` cascade.
+[msix/ShellZipSparse.md](msix/ShellZipSparse.md) describes a future sparse MSIX so Velopack / portable installs can also show `IExplorerCommand` items on the compact context menu. The classic `IContextMenu` handler already appears under **Show more options** (and on Windows 10) after `--integrate`. The Store package ships the surrogate `IExplorerCommand` cascade for Windows 11. Windows 10 1809 and Windows Server 2019 ignore that registration, so `make msix` also registers the classic in-proc menu for the packaged binaries.

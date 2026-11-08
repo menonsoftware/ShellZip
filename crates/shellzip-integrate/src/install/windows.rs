@@ -16,6 +16,10 @@ const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Shell Extensi
 /// Where integrate stores the GUI path for the shell extension to launch.
 const HOST_EXE_KEY: &str = r"Software\ShellZip";
 const HOST_EXE_VALUE: &str = "ExePath";
+/// Packaged app user model id (`FamilyName!AppId`) when `ExePath` is under WindowsApps.
+const HOST_AUMID_VALUE: &str = "Aumid";
+/// Application Id from the Store MSIX manifest.
+const PACKAGE_APP_ID: &str = "ShellZip";
 /// Files, filesystem folders, and the Folder class (drives and namespace folders).
 const MENU_HANDLER_KEYS: &[&str] = &[
     r"*\shellex\ContextMenuHandlers\ShellZip",
@@ -162,7 +166,36 @@ fn write_host_exe(exe: &str) -> Result<(), IntegrateError> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let key = hkcu.create_subkey(HOST_EXE_KEY)?.0;
     key.set_value(HOST_EXE_VALUE, &exe)?;
+    if let Some(aumid) = aumid_from_windowsapps_path(Path::new(exe)) {
+        key.set_value(HOST_AUMID_VALUE, &aumid)?;
+    } else {
+        let _ = key.delete_value(HOST_AUMID_VALUE);
+    }
     Ok(())
+}
+
+/// Absolute packaged AUMID stored by the last Windows `--integrate`, if any.
+pub(crate) fn registered_aumid() -> Option<String> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let key = hkcu.open_subkey(HOST_EXE_KEY).ok()?;
+    let value: String = key.get_value(HOST_AUMID_VALUE).ok()?;
+    (!value.is_empty()).then_some(value)
+}
+
+/// Derive `Name_PublisherHash!ShellZip` from a WindowsApps install path.
+pub(crate) fn aumid_from_windowsapps_path(exe: &Path) -> Option<String> {
+    let parent = exe.parent()?;
+    let under_apps = parent.components().any(|c| c.as_os_str() == "WindowsApps");
+    if !under_apps {
+        return None;
+    }
+    let folder = parent.file_name()?.to_str()?;
+    let (left, publisher) = folder.rsplit_once('_')?;
+    let name = left.split('_').next()?;
+    if name.is_empty() || publisher.is_empty() {
+        return None;
+    }
+    Some(format!("{name}_{publisher}!{PACKAGE_APP_ID}"))
 }
 
 fn icons_install_dir() -> Result<PathBuf, IntegrateError> {
@@ -371,5 +404,17 @@ mod tests {
             registered.contains("shellzip") || registered.contains("deps"),
             "unexpected path: {registered}"
         );
+    }
+
+    #[test]
+    fn aumid_from_store_install_path() {
+        let exe = Path::new(
+            r"C:\Program Files\WindowsApps\ShellZip_0.1.12.0_x64__g9p8warn4kjs0\shellzip.exe",
+        );
+        assert_eq!(
+            aumid_from_windowsapps_path(exe).as_deref(),
+            Some("ShellZip_g9p8warn4kjs0!ShellZip")
+        );
+        assert!(aumid_from_windowsapps_path(Path::new(r"C:\Tools\shellzip.exe")).is_none());
     }
 }

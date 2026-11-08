@@ -83,6 +83,18 @@ pub fn registered_host_exe() -> Option<PathBuf> {
     windows::registered_host_exe()
 }
 
+/// Packaged AUMID stored by the last Windows `--integrate`, if any.
+#[cfg(windows)]
+pub fn registered_aumid() -> Option<String> {
+    windows::registered_aumid()
+}
+
+/// Derive `Name_PublisherHash!ShellZip` from a WindowsApps install path.
+#[cfg(windows)]
+pub fn aumid_from_windowsapps_path(exe: &std::path::Path) -> Option<String> {
+    windows::aumid_from_windowsapps_path(exe)
+}
+
 /// Install per-user associations, icons, and menus for this OS.
 pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
     #[cfg(windows)]

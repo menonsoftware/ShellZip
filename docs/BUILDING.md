@@ -35,7 +35,7 @@ libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 | `make bench` | Release ZIP timings into `docs/BENCH.md` |
 | `make velopack-stage` | Stage GUI/CLI/SFX (+ shell DLL) and icons under `dist/velopack/` |
 | `make velopack-pack` | Stage then run `vpk pack` (GPG on Linux when env is set) |
-| `make msix` | Windows: build release binaries and pack an unsigned Store MSIX under `dist/msix/` |
+| `make msix` | Windows: build, pack, self-sign with a local developer cert, and sideload the Store MSIX |
 | `make doc` | `cargo doc --workspace --no-deps --open` |
 | `make clean` | `cargo clean` |
 
@@ -172,7 +172,7 @@ Tag releases still upload portable `ShellZip-<tag>-<target>.zip|.tar.gz` archive
 
 ### Windows Store MSIX
 
-`make msix` (or the Windows leg of `release.yml`) runs `xtask msix-pack`. The package is full-trust desktop (`shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, `shellzip_shell.dll`), declares archive file associations, static Extract verbs, and a Windows 11 `IExplorerCommand` surrogate for the cascaded Explorer menu, and stays **unsigned** on GitHub Releases. Partner Center re-signs it after `msstore publish`.
+`make msix` runs `xtask msix-pack --install`: packs the full-trust desktop package (`shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, `shellzip_shell.dll`), creates or reuses a self-signed developer certificate under `dist/msix/ShellZipDev.pfx` whose subject matches the package Publisher (`CN=ShellZip` by default), signs with SignTool, imports the cert into **LocalMachine TrustedPeople** (UAC elevation on first run; AppX ignores CurrentUser stores), and sideloads with `Add-AppxPackage`. On Windows 10 1809 and Windows Server 2019 the package manifest's `IExplorerCommand` is not activated (those builds have no Packaged COM), so the install also registers the classic Explorer menu for the packaged binaries and may prompt for administrator approval. Turn on Developer Mode if install still fails. Release CI calls `xtask msix-pack` without `--install` so the GitHub Releases artifact stays **unsigned**; Partner Center re-signs after `msstore publish`.
 
 | Env / secret | Purpose |
 |---|---|

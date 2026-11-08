@@ -45,6 +45,14 @@ pub fn quote_command_line(program: &str, args: &[&str]) -> String {
     parts.join(" ")
 }
 
+/// Quote arguments only (no program). Used with `ActivateApplication`.
+pub fn quote_args(args: &[&str]) -> String {
+    args.iter()
+        .map(|arg| quote_arg(arg))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,6 +68,10 @@ mod tests {
                 &["--extract-here", r"D:\a b.zip"]
             ),
             r#""C:\Program Files\shellzip.exe" --extract-here "D:\a b.zip""#
+        );
+        assert_eq!(
+            quote_args(&["--add", r"D:\a b.txt"]),
+            r#"--add "D:\a b.txt""#
         );
     }
 }

@@ -1,31 +1,50 @@
 //! Store / MSIX `IExplorerCommand` cascade for the Windows 11 compact menu.
+//!
+//! Explorer may activate a fresh COM object for `EnumSubCommands`, so the root
+//! never relies on a cached selection. It always enumerates a fixed child set;
+//! each child reads the live `IShellItemArray` in `GetTitle` / `GetState` /
+//! `Invoke`.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use shellzip_integrate::{
-    ExplorerCommand, MenuAction, action_flag, explorer_commands, menu_for_selection,
-    paths_for_action, quote_command_line,
+    ExplorerCommand, MenuAction, action_flag, action_label, explorer_commands, menu_for_selection,
+    paths_for_action, quote_args, quote_command_line,
 };
 use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, E_NOTIMPL, S_FALSE, S_OK};
 use windows::Win32::System::Com::{CoTaskMemFree, IBindCtx, IClassFactory, IClassFactory_Impl};
 use windows::Win32::UI::Shell::{
     ECF_HASSUBCOMMANDS, ECF_SEPARATORBEFORE, ECS_ENABLED, ECS_HIDDEN, IEnumExplorerCommand,
     IEnumExplorerCommand_Impl, IExplorerCommand, IExplorerCommand_Impl, IShellItemArray, SHStrDupW,
-    SIGDN_FILESYSPATH,
+    SIGDN, SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_FILESYSPATH,
 };
 use windows::core::{
     BOOL, GUID, HRESULT, IUnknown, Interface, PCWSTR, Result as WinResult, implement,
 };
 
-use crate::windows_ext::{lock_server, module_instance, sibling_shellzip_exe};
+use crate::windows_ext::{
+    activate_packaged_shellzip, launch_aumid_for, lock_server, module_instance,
+    sibling_shellzip_exe,
+};
 
 /// Surrogate CLSID registered in the Store AppxManifest (not the classic in-proc menu).
 pub const CLSID_EXPLORER_COMMAND: GUID = GUID::from_u128(0xB8D4_F6C2_5E3A_4B02_AF7D_9C2E_1F3A_4B56);
 
 /// CreateProcessW limit is 32 767 UTF-16 units; leave headroom for the NUL.
 const MAX_CMDLINE_UNITS: usize = 32_000;
+
+/// Every child the cascade can expose. Visibility is decided per-selection in
+/// [`ChildCommand`]'s `GetState`, not when enumerating.
+const ALL_ACTIONS: &[MenuAction] = &[
+    MenuAction::Add,
+    MenuAction::AddZip,
+    MenuAction::Add7z,
+    MenuAction::Open,
+    MenuAction::ExtractTo,
+    MenuAction::ExtractHere,
+    MenuAction::ExtractHereNamed,
+];
 
 #[implement(IClassFactory)]
 pub struct ExplorerCommandFactory;
@@ -40,7 +59,7 @@ impl IClassFactory_Impl for ExplorerCommandFactory_Impl {
         if !punkouter.is_null() {
             return Err(windows::Win32::Foundation::CLASS_E_NOAGGREGATION.into());
         }
-        let root: IUnknown = RootCommand::new().into();
+        let root: IUnknown = RootCommand.into();
         let hr = unsafe { root.query(riid, ppvobject) };
         if hr.is_ok() { Ok(()) } else { Err(hr.into()) }
     }
@@ -52,35 +71,13 @@ impl IClassFactory_Impl for ExplorerCommandFactory_Impl {
 }
 
 #[implement(IExplorerCommand)]
-struct RootCommand {
-    paths: Mutex<Vec<PathBuf>>,
-}
-
-impl RootCommand {
-    fn new() -> Self {
-        Self {
-            paths: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn cache_paths(&self, items: windows::core::Ref<'_, IShellItemArray>) {
-        let paths = paths_from_items(items).unwrap_or_default();
-        if let Ok(mut guard) = self.paths.lock() {
-            *guard = paths;
-        }
-    }
-
-    fn cached_paths(&self) -> Vec<PathBuf> {
-        self.paths.lock().map(|g| g.clone()).unwrap_or_default()
-    }
-}
+struct RootCommand;
 
 impl IExplorerCommand_Impl for RootCommand_Impl {
     fn GetTitle(
         &self,
-        psiitemarray: windows::core::Ref<'_, IShellItemArray>,
+        _psiitemarray: windows::core::Ref<'_, IShellItemArray>,
     ) -> WinResult<windows::core::PWSTR> {
-        self.cache_paths(psiitemarray);
         alloc_title("ShellZip")
     }
 
@@ -99,7 +96,7 @@ impl IExplorerCommand_Impl for RootCommand_Impl {
     }
 
     fn GetCanonicalName(&self) -> WinResult<GUID> {
-        Ok(CLSID_EXPLORER_COMMAND)
+        Ok(GUID::zeroed())
     }
 
     fn GetState(
@@ -107,8 +104,17 @@ impl IExplorerCommand_Impl for RootCommand_Impl {
         psiitemarray: windows::core::Ref<'_, IShellItemArray>,
         _foktobeslow: BOOL,
     ) -> WinResult<u32> {
-        self.cache_paths(psiitemarray);
-        let paths = self.cached_paths();
+        // Never hide solely because path extraction failed — children decide.
+        // A null array is common for folder background; still show the cascade.
+        if psiitemarray.as_ref().is_none() {
+            return Ok(ECS_ENABLED.0 as u32);
+        }
+        let paths = paths_from_items(psiitemarray).unwrap_or_default();
+        if paths.is_empty() {
+            // Empty array with a non-null pointer: keep enabled so EnumSubCommands
+            // still runs (background / odd shell namespaces).
+            return Ok(ECS_ENABLED.0 as u32);
+        }
         let model = menu_for_selection(&paths);
         if explorer_commands(&model).is_empty() {
             Ok(ECS_HIDDEN.0 as u32)
@@ -122,7 +128,6 @@ impl IExplorerCommand_Impl for RootCommand_Impl {
         _psiitemarray: windows::core::Ref<'_, IShellItemArray>,
         _pbc: windows::core::Ref<'_, IBindCtx>,
     ) -> WinResult<()> {
-        // Root is a flyout parent; Explorer only invokes children.
         Ok(())
     }
 
@@ -131,9 +136,20 @@ impl IExplorerCommand_Impl for RootCommand_Impl {
     }
 
     fn EnumSubCommands(&self) -> WinResult<IEnumExplorerCommand> {
-        let paths = self.cached_paths();
-        let model = menu_for_selection(&paths);
-        let commands = explorer_commands(&model);
+        let commands: Vec<ExplorerCommand> = ALL_ACTIONS
+            .iter()
+            .map(|action| ExplorerCommand {
+                title: action_label(*action).to_string(),
+                action: *action,
+                separator_before: matches!(
+                    action,
+                    MenuAction::Open
+                        | MenuAction::ExtractTo
+                        | MenuAction::ExtractHere
+                        | MenuAction::ExtractHereNamed
+                ) && *action == MenuAction::Open,
+            })
+            .collect();
         let enumerator: IEnumExplorerCommand = CommandEnum::new(commands).into();
         Ok(enumerator)
     }
@@ -141,27 +157,32 @@ impl IExplorerCommand_Impl for RootCommand_Impl {
 
 #[implement(IExplorerCommand)]
 struct ChildCommand {
-    title: String,
     action: MenuAction,
-    separator_before: bool,
 }
 
 impl ChildCommand {
-    fn from_spec(spec: ExplorerCommand) -> Self {
-        Self {
-            title: spec.title,
-            action: spec.action,
-            separator_before: spec.separator_before,
-        }
+    fn new(action: MenuAction) -> Self {
+        Self { action }
+    }
+
+    fn spec_for(&self, paths: &[PathBuf]) -> Option<ExplorerCommand> {
+        explorer_commands(&menu_for_selection(paths))
+            .into_iter()
+            .find(|cmd| cmd.action == self.action)
     }
 }
 
 impl IExplorerCommand_Impl for ChildCommand_Impl {
     fn GetTitle(
         &self,
-        _psiitemarray: windows::core::Ref<'_, IShellItemArray>,
+        psiitemarray: windows::core::Ref<'_, IShellItemArray>,
     ) -> WinResult<windows::core::PWSTR> {
-        alloc_title(&self.title)
+        let paths = paths_from_items(psiitemarray).unwrap_or_default();
+        let title = self
+            .spec_for(&paths)
+            .map(|spec| spec.title)
+            .unwrap_or_else(|| action_label(self.action).to_string());
+        alloc_title(&title)
     }
 
     fn GetIcon(
@@ -184,10 +205,23 @@ impl IExplorerCommand_Impl for ChildCommand_Impl {
 
     fn GetState(
         &self,
-        _psiitemarray: windows::core::Ref<'_, IShellItemArray>,
+        psiitemarray: windows::core::Ref<'_, IShellItemArray>,
         _foktobeslow: BOOL,
     ) -> WinResult<u32> {
-        Ok(ECS_ENABLED.0 as u32)
+        let paths = paths_from_items(psiitemarray).unwrap_or_default();
+        if self.spec_for(&paths).is_some() {
+            Ok(ECS_ENABLED.0 as u32)
+        } else if paths.is_empty()
+            && matches!(
+                self.action,
+                MenuAction::Add | MenuAction::AddZip | MenuAction::Add7z
+            )
+        {
+            // Folder background often yields an empty array; still offer Add.
+            Ok(ECS_ENABLED.0 as u32)
+        } else {
+            Ok(ECS_HIDDEN.0 as u32)
+        }
     }
 
     fn Invoke(
@@ -208,7 +242,7 @@ impl IExplorerCommand_Impl for ChildCommand_Impl {
     }
 
     fn GetFlags(&self) -> WinResult<u32> {
-        if self.separator_before {
+        if self.action == MenuAction::Open {
             Ok(ECF_SEPARATORBEFORE.0 as u32)
         } else {
             Ok(0)
@@ -254,7 +288,7 @@ impl IEnumExplorerCommand_Impl for CommandEnum_Impl {
             }
             return S_FALSE;
         }
-        let child: IExplorerCommand = ChildCommand::from_spec(self.commands[index].clone()).into();
+        let child: IExplorerCommand = ChildCommand::new(self.commands[index].action).into();
         unsafe {
             *puicommand = Some(child);
             if !pceltfetched.is_null() {
@@ -295,20 +329,38 @@ fn paths_from_items(items: windows::core::Ref<'_, IShellItemArray>) -> WinResult
     let Some(array) = items.as_ref() else {
         return Ok(Vec::new());
     };
-    let count = unsafe { array.GetCount()? };
+    let count = unsafe { array.GetCount().unwrap_or(0) };
     let mut paths = Vec::with_capacity(count as usize);
     for index in 0..count {
-        let item = unsafe { array.GetItemAt(index)? };
-        let name = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };
-        let text = unsafe { name.to_string() }.map_err(|_| E_FAIL)?;
-        unsafe {
-            CoTaskMemFree(Some(name.0 as *const _));
-        }
-        if !text.is_empty() {
-            paths.push(PathBuf::from(text));
+        let Ok(item) = (unsafe { array.GetItemAt(index) }) else {
+            continue;
+        };
+        if let Some(path) = display_path(&item) {
+            paths.push(path);
         }
     }
     Ok(paths)
+}
+
+fn display_path(item: &windows::Win32::UI::Shell::IShellItem) -> Option<PathBuf> {
+    for sigdn in [SIGDN_FILESYSPATH, SIGDN_DESKTOPABSOLUTEPARSING] {
+        if let Some(path) = display_path_with(item, sigdn) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn display_path_with(
+    item: &windows::Win32::UI::Shell::IShellItem,
+    sigdn: SIGDN,
+) -> Option<PathBuf> {
+    let name = unsafe { item.GetDisplayName(sigdn).ok()? };
+    let text = unsafe { name.to_string().ok() };
+    unsafe {
+        CoTaskMemFree(Some(name.0 as *const _));
+    }
+    text.filter(|s| !s.is_empty()).map(PathBuf::from)
 }
 
 fn alloc_title(title: &str) -> WinResult<windows::core::PWSTR> {
@@ -330,6 +382,13 @@ fn launch_package_shellzip(action: MenuAction, files: &[PathBuf]) -> WinResult<(
     let cmdline = quote_command_line(&exe.to_string_lossy(), &arg_refs);
     if cmdline.encode_utf16().count() > MAX_CMDLINE_UNITS {
         return Err(E_FAIL.into());
+    }
+    if let Some(aumid) = launch_aumid_for(&exe) {
+        let args_line = quote_args(&arg_refs);
+        if args_line.encode_utf16().count() > MAX_CMDLINE_UNITS {
+            return Err(E_FAIL.into());
+        }
+        return activate_packaged_shellzip(&aumid, &arg_refs);
     }
     let mut command = std::process::Command::new(&exe);
     if !flag.is_empty() {
@@ -367,7 +426,13 @@ mod tests {
 
     #[test]
     fn sibling_exe_absent_before_dll_attach() {
-        // Unit tests load as an rlib; DllMain never ran, so MODULE is null.
         assert!(sibling_shellzip_exe().is_none());
+    }
+
+    #[test]
+    fn cascade_enumerates_every_action() {
+        assert_eq!(ALL_ACTIONS.len(), 7);
+        assert_eq!(ALL_ACTIONS[0], MenuAction::Add);
+        assert_eq!(ALL_ACTIONS[3], MenuAction::Open);
     }
 }

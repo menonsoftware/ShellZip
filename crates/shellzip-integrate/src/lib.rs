@@ -12,14 +12,14 @@ mod menu;
 mod stem;
 mod writers;
 
-pub use argv::{quote_arg, quote_command_line};
+pub use argv::{quote_arg, quote_args, quote_command_line};
 pub use formats::{
     ArchiveKind, EXTENSIONS, FormatIcon, MIME_TYPES, icon_for_extension, icon_for_path,
     kind_for_path,
 };
-#[cfg(windows)]
-pub use install::registered_host_exe;
 pub use install::{IntegrateError, IntegratePaths, integrate, unintegrate};
+#[cfg(windows)]
+pub use install::{aumid_from_windowsapps_path, registered_aumid, registered_host_exe};
 pub use menu::{
     ExplorerCommand, MenuAction, MenuModel, MenuRow, action_flag, action_label, action_verb,
     explorer_commands, is_registered_archive, linux_named_label, menu_for_selection,

@@ -21,10 +21,11 @@ fn main() {
         "velopack-stage" => velopack_stage(),
         "velopack-pack" => velopack_pack(),
         "msix-pack" => msix_pack(),
+        "msix-register-shell" => register_shell_from_args(),
         "gpg-sign-release" => gpg_sign_release(),
         _ => {
             eprintln!(
-                "usage: xtask bench | build-fixtures | package-stubs [stub] | gen-file-icons | velopack-stage | velopack-pack | msix-pack | gpg-sign-release <dir>"
+                "usage: xtask bench | build-fixtures | package-stubs [stub] | gen-file-icons | velopack-stage | velopack-pack | msix-pack [--install] | msix-register-shell <exe> <dll> <icons> | gpg-sign-release <dir>"
             );
             std::process::exit(2);
         }
@@ -260,7 +261,15 @@ fn env_nonempty(name: &str) -> Option<String> {
     })
 }
 
-/// Build an unsigned Store MSIX from the release Windows exes.
+/// Password for the local self-signed MSIX cert (dev sideload only).
+#[cfg(windows)]
+const MSIX_DEV_CERT_PASSWORD: &str = "ShellZip-Dev";
+
+/// Build a Store MSIX from the release Windows exes.
+///
+/// Pass `--install` to self-sign with a local developer certificate and
+/// sideload via `Add-AppxPackage`. Release CI omits that flag so Partner
+/// Center can re-sign the unsigned package.
 fn msix_pack() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(not(windows))]
     {
@@ -268,12 +277,17 @@ fn msix_pack() -> Result<(), Box<dyn std::error::Error>> {
     }
     #[cfg(windows)]
     {
-        msix_pack_windows()
+        let install = std::env::args().skip(2).any(|arg| arg == "--install");
+        let (out_msix, publisher) = msix_pack_windows()?;
+        if install {
+            msix_sign_and_install(&out_msix, &publisher)?;
+        }
+        Ok(())
     }
 }
 
 #[cfg(windows)]
-fn msix_pack_windows() -> Result<(), Box<dyn std::error::Error>> {
+fn msix_pack_windows() -> Result<(PathBuf, String), Box<dyn std::error::Error>> {
     let version = std::env::var("VELOPACK_VERSION")
         .or_else(|_| workspace_version().map_err(|e| e.to_string()))
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
@@ -297,8 +311,21 @@ fn msix_pack_windows() -> Result<(), Box<dyn std::error::Error>> {
 
     let root = PathBuf::from("dist").join("msix");
     let payload = root.join("payload");
-    if root.exists() {
-        fs::remove_dir_all(&root)?;
+    // Refresh the payload and previous .msix files, but keep ShellZipDev.*
+    // certificates so `msix-pack --install` can reuse them.
+    if payload.exists() {
+        fs::remove_dir_all(&payload)?;
+    }
+    if root.is_dir() {
+        for entry in fs::read_dir(&root)? {
+            let path = entry?.path();
+            if path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("msix"))
+            {
+                fs::remove_file(&path)?;
+            }
+        }
     }
     let assets = payload.join("Assets");
     fs::create_dir_all(&assets)?;
@@ -350,7 +377,7 @@ fn msix_pack_windows() -> Result<(), Box<dyn std::error::Error>> {
         format!("v{version}")
     };
     let out_msix = root.join(format!("ShellZip-{tag}-x64.msix"));
-    let makeappx = find_makeappx()?;
+    let makeappx = find_sdk_tool("makeappx.exe")?;
     let status = Command::new(&makeappx)
         .args([
             "pack",
@@ -366,7 +393,399 @@ fn msix_pack_windows() -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("makeappx pack failed with {status}").into());
     }
     println!("packed {}", out_msix.display());
+    Ok((out_msix, publisher))
+}
+
+/// Create (or reuse) a self-signed cert, sign the MSIX, and sideload it.
+#[cfg(windows)]
+fn msix_sign_and_install(msix: &Path, publisher: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let cert_dir = msix
+        .parent()
+        .ok_or("msix path has no parent directory")?
+        .to_path_buf();
+    let (pfx, cer) = ensure_msix_dev_certificate(publisher, &cert_dir)?;
+    trust_msix_dev_certificate(&cer)?;
+    sign_msix(msix, &pfx)?;
+    add_appx_package(msix)?;
+    // Server 2019 / Windows 10 1809 have no PackagedCom, so the manifest's
+    // IExplorerCommand never reaches Explorer. Register the classic menu.
+    stop_explorer();
+    if let Err(err) = register_classic_explorer_menu() {
+        start_explorer();
+        return Err(err);
+    }
+    start_explorer();
+    println!("installed {}", msix.display());
     Ok(())
+}
+
+/// Register the classic `IContextMenu` against the installed package binaries.
+#[cfg(windows)]
+fn register_classic_explorer_menu() -> Result<(), Box<dyn std::error::Error>> {
+    let install = installed_package_dir()?;
+    let exe = install.join("shellzip.exe");
+    let dll = install.join("shellzip_shell.dll");
+    let icons = std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("grx")
+        .join("shellzip_file_icons");
+    if !exe.is_file() || !dll.is_file() {
+        return Err(format!(
+            "installed package is missing shellzip.exe or shellzip_shell.dll under {}",
+            install.display()
+        )
+        .into());
+    }
+    match register_shell_at(&exe, &dll, &icons) {
+        Ok(()) => Ok(()),
+        Err(err) if err.to_lowercase().contains("administrator") => {
+            elevate_shell_registration(&exe, &dll, &icons)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// `msix-register-shell <exe> <dll> <icons>` — elevated half of menu registration.
+fn register_shell_from_args() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(not(windows))]
+    {
+        return Err("msix-register-shell is Windows-only".into());
+    }
+    #[cfg(windows)]
+    {
+        let exe = std::env::args()
+            .nth(2)
+            .ok_or("usage: xtask msix-register-shell <exe> <dll> <icons>")?;
+        let dll = std::env::args()
+            .nth(3)
+            .ok_or("usage: xtask msix-register-shell <exe> <dll> <icons>")?;
+        let icons = std::env::args()
+            .nth(4)
+            .ok_or("usage: xtask msix-register-shell <exe> <dll> <icons>")?;
+        register_shell_at(Path::new(&exe), Path::new(&dll), Path::new(&icons))?;
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn register_shell_at(exe: &Path, dll: &Path, icons: &Path) -> Result<(), String> {
+    let paths = shellzip_integrate::IntegratePaths {
+        exe: exe.to_path_buf(),
+        icons_source: icons.to_path_buf(),
+        shell_dll: Some(dll.to_path_buf()),
+    };
+    shellzip_integrate::integrate(&paths).map_err(|err| err.to_string())?;
+    println!("registered classic Explorer menu for {}", exe.display());
+    Ok(())
+}
+
+#[cfg(windows)]
+fn elevate_shell_registration(
+    exe: &Path,
+    dll: &Path,
+    icons: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let xtask = std::env::current_exe()?;
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+$p = Start-Process -FilePath {xtask} -Verb RunAs -Wait -PassThru -ArgumentList @(
+  'msix-register-shell',
+  {exe},
+  {dll},
+  {icons}
+)
+if ($null -eq $p -or $p.ExitCode -ne 0) {{
+  throw 'could not register the Explorer menu (approve the UAC prompt)'
+}}
+"#,
+        xtask = ps_single_quoted(&xtask.to_string_lossy()),
+        exe = ps_single_quoted(&exe.to_string_lossy()),
+        dll = ps_single_quoted(&dll.to_string_lossy()),
+        icons = ps_single_quoted(&icons.to_string_lossy()),
+    );
+    run_powershell(&script).map_err(|err| -> Box<dyn std::error::Error> {
+        format!("classic Explorer menu registration failed ({err})").into()
+    })?;
+    println!("registered classic Explorer menu for {}", exe.display());
+    Ok(())
+}
+
+#[cfg(windows)]
+fn installed_package_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let identity = env_nonempty("STORE_IDENTITY_NAME").unwrap_or_else(|| "ShellZip".into());
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+$identity = {identity}
+$pkg = Get-AppxPackage | Where-Object {{ $_.Name -eq $identity }} | Select-Object -First 1
+if (-not $pkg) {{ throw "package $identity is not installed" }}
+Write-Output $pkg.InstallLocation
+"#,
+        identity = ps_single_quoted(&identity),
+    );
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+        ])
+        .arg(script)
+        .output()?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("could not locate installed package ({detail})").into());
+    }
+    let location = String::from_utf8_lossy(&output.stdout);
+    let location = location.lines().last().unwrap_or("").trim();
+    if location.is_empty() {
+        return Err("installed package location was empty".into());
+    }
+    Ok(PathBuf::from(location))
+}
+
+/// Stop Explorer so it releases `shellzip_shell.dll` before we replace it.
+#[cfg(windows)]
+fn stop_explorer() {
+    let _ = run_powershell(
+        r#"
+$ErrorActionPreference = 'SilentlyContinue'
+Stop-Process -Name explorer -Force
+"#,
+    );
+}
+
+/// Start Explorer after the classic menu registration is in place.
+#[cfg(windows)]
+fn start_explorer() {
+    if let Err(err) = run_powershell(
+        r#"
+$ErrorActionPreference = 'SilentlyContinue'
+Start-Process explorer.exe
+"#,
+    ) {
+        eprintln!("xtask: warning: could not start Explorer ({err}); start it from Task Manager");
+    } else {
+        println!("restarted Explorer");
+    }
+}
+
+/// Ensure `ShellZipDev.pfx` / `.cer` exist for `publisher` under `dir`.
+#[cfg(windows)]
+fn ensure_msix_dev_certificate(
+    publisher: &str,
+    dir: &Path,
+) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+    fs::create_dir_all(dir)?;
+    let pfx = dir.join("ShellZipDev.pfx");
+    let cer = dir.join("ShellZipDev.cer");
+    let subject_file = dir.join("ShellZipDev.subject");
+    let reuse = pfx.is_file()
+        && cer.is_file()
+        && subject_file
+            .is_file()
+            .then(|| fs::read_to_string(&subject_file).ok())
+            .flatten()
+            .is_some_and(|saved| saved.trim() == publisher);
+    if reuse {
+        println!("reusing {}", pfx.display());
+        return Ok((pfx, cer));
+    }
+
+    // Subject must match AppxManifest Identity Publisher exactly.
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+$subject = {subject}
+$password = ConvertTo-SecureString -String {password} -Force -AsPlainText
+$pfx = {pfx}
+$cer = {cer}
+Get-ChildItem Cert:\CurrentUser\My |
+  Where-Object {{ $_.Subject -eq $subject -and $_.FriendlyName -eq 'ShellZip Dev' }} |
+  Remove-Item -Force -ErrorAction SilentlyContinue
+$cert = New-SelfSignedCertificate `
+  -Type Custom `
+  -Subject $subject `
+  -KeyUsage DigitalSignature `
+  -FriendlyName 'ShellZip Dev' `
+  -CertStoreLocation 'Cert:\CurrentUser\My' `
+  -TextExtension @(
+    '2.5.29.37={{text}}1.3.6.1.5.5.7.3.3',
+    '2.5.29.19={{text}}'
+  )
+Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $password | Out-Null
+Export-Certificate -Cert $cert -FilePath $cer | Out-Null
+"#,
+        subject = ps_single_quoted(publisher),
+        password = ps_single_quoted(MSIX_DEV_CERT_PASSWORD),
+        pfx = ps_single_quoted(&pfx.to_string_lossy()),
+        cer = ps_single_quoted(&cer.to_string_lossy()),
+    );
+    run_powershell(&script).map_err(|err| {
+        format!("failed to create MSIX developer certificate ({err}). Enable PowerShell script execution for this user.")
+    })?;
+    fs::write(&subject_file, publisher)?;
+    println!("created {}", pfx.display());
+    Ok((pfx, cer))
+}
+
+/// Import the public cert into LocalMachine TrustedPeople for sideloading.
+///
+/// AppX deployment validates package signatures against the machine store, so
+/// CurrentUser TrustedPeople is not enough (HRESULT 0x800B0109). Elevates via
+/// UAC when the current process cannot write LocalMachine.
+#[cfg(windows)]
+fn trust_msix_dev_certificate(cer: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let cer = absolute_path(cer)?;
+    let cer_lit = ps_single_quoted(&cer.to_string_lossy());
+    // Elevated child must be a single -Command string; embed the path literally.
+    let elevated = format!(
+        "$ErrorActionPreference='Stop'; Import-Certificate -FilePath {cer_lit} -CertStoreLocation Cert:\\LocalMachine\\TrustedPeople | Out-Null"
+    );
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+$cer = {cer_lit}
+$store = 'Cert:\LocalMachine\TrustedPeople'
+$leaf = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 $cer
+$existing = Get-ChildItem $store -ErrorAction SilentlyContinue |
+  Where-Object {{ $_.Thumbprint -eq $leaf.Thumbprint }}
+if ($existing) {{
+  Write-Output 'certificate already trusted'
+  exit 0
+}}
+try {{
+  Import-Certificate -FilePath $cer -CertStoreLocation $store | Out-Null
+}} catch {{
+  $p = Start-Process -FilePath powershell.exe -Verb RunAs -Wait -PassThru -ArgumentList @(
+    '-NoProfile',
+    '-ExecutionPolicy', 'Bypass',
+    '-Command',
+    {elevated}
+  )
+  if ($null -eq $p -or $p.ExitCode -ne 0) {{
+    throw 'could not import into LocalMachine\TrustedPeople (approve the UAC prompt, or run make msix from an elevated shell)'
+  }}
+}}
+"#,
+        cer_lit = cer_lit,
+        elevated = ps_single_quoted(&elevated),
+    );
+    run_powershell(&script).map_err(|err| {
+        format!("failed to trust MSIX developer certificate in LocalMachine\\TrustedPeople ({err})")
+    })?;
+    println!("trusted {}", cer.display());
+    Ok(())
+}
+
+/// Sign `msix` with SignTool using the local developer PFX.
+#[cfg(windows)]
+fn sign_msix(msix: &Path, pfx: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let msix = absolute_path(msix)?;
+    let pfx = absolute_path(pfx)?;
+    let signtool = find_sdk_tool("signtool.exe")?;
+    let status = Command::new(&signtool)
+        .args([
+            "sign",
+            "/fd",
+            "SHA256",
+            "/f",
+            &pfx.to_string_lossy(),
+            "/p",
+            MSIX_DEV_CERT_PASSWORD,
+            "/v",
+        ])
+        .arg(&msix)
+        .status()
+        .map_err(|err| format!("signtool failed to start ({err})"))?;
+    if !status.success() {
+        return Err(format!("signtool sign failed with {status}").into());
+    }
+    println!("signed {}", msix.display());
+    Ok(())
+}
+
+/// Sideload a signed MSIX with Add-AppxPackage.
+///
+/// Same-version packages with different content are rejected (0x80073CFB), so
+/// remove any existing ShellZip Appx package for this user first.
+#[cfg(windows)]
+fn add_appx_package(msix: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let msix = absolute_path(msix)?;
+    let identity = env_nonempty("STORE_IDENTITY_NAME").unwrap_or_else(|| "ShellZip".into());
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+$identity = {identity}
+Get-AppxPackage |
+  Where-Object {{ $_.Name -eq $identity -or $_.Name -like ($identity + '_*') -or $_.Name -like ('*' + $identity + '*') }} |
+  ForEach-Object {{
+    Write-Output ('removing ' + $_.PackageFullName)
+    Remove-AppxPackage -Package $_.PackageFullName
+  }}
+Add-AppxPackage -Path {msix} -ForceUpdateFromAnyVersion -ForceApplicationShutdown
+"#,
+        identity = ps_single_quoted(&identity),
+        msix = ps_single_quoted(&msix.to_string_lossy()),
+    );
+    run_powershell(&script).map_err(|err| {
+        format!(
+            "Add-AppxPackage failed ({err}). Ensure the developer certificate is in LocalMachine\\TrustedPeople and Developer Mode (or sideloading) is enabled."
+        )
+    })?;
+    Ok(())
+}
+
+/// Absolute path without the Win32 `\\?\` prefix (PowerShell rejects it).
+#[cfg(windows)]
+fn absolute_path(path: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let absolute =
+        fs::canonicalize(path).map_err(|err| format!("canonicalize {}: {err}", path.display()))?;
+    let text = absolute.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        Ok(PathBuf::from(rest))
+    } else {
+        Ok(absolute)
+    }
+}
+
+/// Quote a string for PowerShell single-quoted literals.
+#[cfg(windows)]
+fn ps_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+/// Run a PowerShell script and surface stdout/stderr on failure.
+#[cfg(windows)]
+fn run_powershell(script: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+        ])
+        .arg(script)
+        .output()
+        .map_err(|err| format!("powershell failed to start ({err})"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = [stderr.trim(), stdout.trim()]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if detail.is_empty() {
+        Err(format!("powershell exited with {}", output.status).into())
+    } else {
+        Err(detail.into())
+    }
 }
 
 /// `1.2.3` → `1.2.3.0` for the Appx Identity Version attribute.
@@ -442,7 +861,7 @@ fn build_appx_manifest(
         r#"
         <com:Extension Category="windows.comServer">
           <com:ComServer>
-            <com:SurrogateServer DisplayName="ShellZip">
+            <com:SurrogateServer AppId="{clsid}" DisplayName="ShellZip">
               <com:Class Id="{clsid}" Path="shellzip_shell.dll" ThreadingModel="STA" />
             </com:SurrogateServer>
           </com:ComServer>
@@ -450,13 +869,13 @@ fn build_appx_manifest(
         <desktop4:Extension Category="windows.fileExplorerContextMenus">
           <desktop4:FileExplorerContextMenus>
             <desktop5:ItemType Type="*">
-              <desktop5:Verb Id="ShellZip" Clsid="{clsid}" />
+              <desktop5:Verb Id="0ShellZipFile" Clsid="{clsid}" />
             </desktop5:ItemType>
             <desktop5:ItemType Type="Directory">
-              <desktop5:Verb Id="ShellZip" Clsid="{clsid}" />
+              <desktop5:Verb Id="0ShellZipDir" Clsid="{clsid}" />
             </desktop5:ItemType>
             <desktop5:ItemType Type="Directory\Background">
-              <desktop5:Verb Id="ShellZip" Clsid="{clsid}" />
+              <desktop5:Verb Id="0ShellZipBackground" Clsid="{clsid}" />
             </desktop5:ItemType>
           </desktop4:FileExplorerContextMenus>
         </desktop4:Extension>"#,
@@ -539,9 +958,10 @@ fn build_appx_manifest(
     )
 }
 
+/// Locate `makeappx.exe` / `signtool.exe` on PATH or under the Windows Kits.
 #[cfg(windows)]
-fn find_makeappx() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Ok(path) = which_on_path("makeappx.exe") {
+fn find_sdk_tool(name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Ok(path) = which_on_path(name) {
         return Ok(path);
     }
     let kits = PathBuf::from(r"C:\Program Files (x86)\Windows Kits\10\bin");
@@ -554,13 +974,13 @@ fn find_makeappx() -> Result<PathBuf, Box<dyn std::error::Error>> {
         versions.sort();
         versions.reverse();
         for version in versions {
-            let candidate = version.join("x64").join("makeappx.exe");
+            let candidate = version.join("x64").join(name);
             if candidate.is_file() {
                 return Ok(candidate);
             }
         }
     }
-    Err("makeappx.exe not found; install the Windows 10 SDK".into())
+    Err(format!("{name} not found; install the Windows 10 SDK").into())
 }
 
 #[cfg(windows)]
@@ -1412,6 +1832,13 @@ version = "should-not-win"
         assert_eq!(msix_version("v0.1.9").unwrap(), "0.1.9.0");
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn powershell_single_quotes_escape_apostrophes() {
+        assert_eq!(super::ps_single_quoted("CN=ShellZip"), "'CN=ShellZip'");
+        assert_eq!(super::ps_single_quoted("O'Reilly"), "'O''Reilly'");
+    }
+
     #[test]
     fn appx_manifest_lists_every_extension_and_verbs() {
         let xml = build_appx_manifest("ShellZip", "CN=ShellZip", "ShellZip", "0.1.9.0");
@@ -1432,6 +1859,13 @@ version = "should-not-win"
         assert!(xml.contains(r#"Type="*""#));
         assert!(xml.contains(r#"Type="Directory""#));
         assert!(xml.contains(r#"Type="Directory\Background""#));
+        assert!(xml.contains(r#"Id="0ShellZipFile""#));
+        assert!(xml.contains(r#"Id="0ShellZipDir""#));
+        assert!(xml.contains(r#"Id="0ShellZipBackground""#));
+        assert!(xml.contains(&format!(
+            r#"AppId="{clsid}""#,
+            clsid = super::EXPLORER_COMMAND_CLSID
+        )));
         assert!(
             xml.contains("IgnorableNamespaces=\"uap uap2 uap3 uap5 com desktop4 desktop5 rescap\"")
         );

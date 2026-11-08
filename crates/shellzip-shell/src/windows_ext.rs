@@ -6,16 +6,17 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use shellzip_integrate::{
-    MenuAction, MenuRow, action_flag, action_verb, icon_for_path, menu_for_selection,
-    paths_for_action, quote_command_line, registered_host_exe,
+    MenuAction, MenuRow, action_flag, action_verb, aumid_from_windowsapps_path, icon_for_path,
+    menu_for_selection, paths_for_action, quote_args, quote_command_line, registered_aumid,
+    registered_host_exe,
 };
 use windows::Win32::Foundation::{
     CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_FAIL, E_INVALIDARG, E_NOTIMPL, E_POINTER,
     HINSTANCE, S_FALSE, S_OK,
 };
 use windows::Win32::System::Com::{
-    IClassFactory, IClassFactory_Impl, IDataObject, IPersist_Impl, IPersistFile, IPersistFile_Impl,
-    STGM,
+    CLSCTX_ALL, CoCreateInstance, IClassFactory, IClassFactory_Impl, IDataObject, IPersist_Impl,
+    IPersistFile, IPersistFile_Impl, STGM,
 };
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
@@ -23,8 +24,9 @@ use windows::Win32::System::Registry::HKEY;
 use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
-    CMINVOKECOMMANDINFO, DROPFILES, GCS_HELPTEXTA, GCS_VERBA, IContextMenu, IContextMenu_Impl,
-    IExtractIconW, IExtractIconW_Impl, IShellExtInit, IShellExtInit_Impl,
+    AO_NONE, ApplicationActivationManager, CMINVOKECOMMANDINFO, DROPFILES, GCS_HELPTEXTA,
+    GCS_VERBA, IApplicationActivationManager, IContextMenu, IContextMenu_Impl, IExtractIconW,
+    IExtractIconW_Impl, IShellExtInit, IShellExtInit_Impl,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, DestroyMenu, HMENU, InsertMenuItemW, MENUITEMINFOW, MFS_ENABLED,
@@ -306,13 +308,6 @@ fn icon_file_for(path: &Path) -> Option<PathBuf> {
 fn launch_shellzip(action: MenuAction, files: &[PathBuf]) -> WinResult<()> {
     let exe = shellzip_exe().ok_or(E_FAIL)?;
     let flag = action_flag(action);
-    let mut command = std::process::Command::new(&exe);
-    if !flag.is_empty() {
-        command.arg(flag);
-    }
-    for file in files {
-        command.arg(file);
-    }
     let arg_refs: Vec<&str> = if flag.is_empty() {
         files.iter().map(|p| p.to_str().unwrap_or("")).collect()
     } else {
@@ -320,10 +315,43 @@ fn launch_shellzip(action: MenuAction, files: &[PathBuf]) -> WinResult<()> {
             .chain(files.iter().map(|p| p.to_str().unwrap_or("")))
             .collect()
     };
+    // Packaged installs refuse CreateProcess on the WindowsApps path
+    // (Access Denied). Activate by AUMID instead.
+    if let Some(aumid) = launch_aumid_for(&exe) {
+        let _ = quote_command_line(&exe.to_string_lossy(), &arg_refs);
+        return activate_packaged_shellzip(&aumid, &arg_refs);
+    }
     let _ = quote_command_line(&exe.to_string_lossy(), &arg_refs);
+    let mut command = std::process::Command::new(&exe);
+    if !flag.is_empty() {
+        command.arg(flag);
+    }
+    for file in files {
+        command.arg(file);
+    }
     command
         .spawn()
         .map_err(|_| windows::core::Error::from(E_FAIL))?;
+    Ok(())
+}
+
+pub(crate) fn launch_aumid_for(exe: &Path) -> Option<String> {
+    aumid_from_windowsapps_path(exe).or_else(registered_aumid)
+}
+
+pub(crate) fn activate_packaged_shellzip(aumid: &str, args: &[&str]) -> WinResult<()> {
+    let arguments = quote_args(args);
+    let aumid_wide = wide_null(aumid);
+    let args_wide = wide_null(&arguments);
+    unsafe {
+        let activator: IApplicationActivationManager =
+            CoCreateInstance(&ApplicationActivationManager, None, CLSCTX_ALL)?;
+        activator.ActivateApplication(
+            PCWSTR(aumid_wide.as_ptr()),
+            PCWSTR(args_wide.as_ptr()),
+            AO_NONE,
+        )?;
+    }
     Ok(())
 }
 
