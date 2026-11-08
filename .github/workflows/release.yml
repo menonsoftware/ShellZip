@@ -9,6 +9,11 @@ on:
         description: Release tag name (for example v0.1.2)
         required: true
         type: string
+      sha:
+        description: Commit to build when the tag ref is not available yet
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -38,7 +43,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          # Prefer an explicit SHA from auto-release so packaging can proceed
+          # even when creating the tag ref is delayed or blocked.
+          ref: ${{ inputs.sha || inputs.tag || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
