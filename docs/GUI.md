@@ -105,7 +105,7 @@ Settings persist in `settings.toml` (see [FAQ.md](FAQ.md#where-does-the-gui-stor
 
 Velopack install/update/uninstall FastCallbacks run integrate automatically on Windows; on Linux and macOS, first launch and post-update restart do so (there is no Velopack uninstall hook when the AppImage / `.app` is deleted). **Options → Remove file manager integration** asks for confirmation before clearing those registrations.
 
-A Microsoft Store install hides those menu items: archive associations and static Extract verbs are declared in the MSIX. Prefer one Windows installer (Store or Velopack), not both.
+A Microsoft Store install hides those menu items: archive associations, static Extract verbs, and the Windows 11 cascaded Explorer menu are declared in the MSIX. Prefer one Windows installer (Store or Velopack), not both.
 
 Shell verbs:
 

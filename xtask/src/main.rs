@@ -306,6 +306,7 @@ fn msix_pack_windows() -> Result<(), Box<dyn std::error::Error>> {
     for (src_dir, name) in [
         (&release_dir, "shellzip.exe"),
         (&release_dir, "szip.exe"),
+        (&release_dir, "shellzip_shell.dll"),
         (&minisize_dir, "shellzip-sfx.exe"),
     ] {
         let src = src_dir.join(name);
@@ -400,6 +401,9 @@ fn xml_escape(value: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Store-package `IExplorerCommand` CLSID (must match `shellzip-shell`).
+const EXPLORER_COMMAND_CLSID: &str = "B8D4F6C2-5E3A-4B02-AF7D-9C2E1F3A4B56";
+
 /// Generate `AppxManifest.xml` for the full-trust desktop package.
 fn build_appx_manifest(
     identity_name: &str,
@@ -434,6 +438,31 @@ fn build_appx_manifest(
         ));
     }
 
+    let context_menus = format!(
+        r#"
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer DisplayName="ShellZip">
+              <com:Class Id="{clsid}" Path="shellzip_shell.dll" ThreadingModel="STA" />
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <desktop5:ItemType Type="*">
+              <desktop5:Verb Id="ShellZip" Clsid="{clsid}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type="Directory">
+              <desktop5:Verb Id="ShellZip" Clsid="{clsid}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type="Directory\Background">
+              <desktop5:Verb Id="ShellZip" Clsid="{clsid}" />
+            </desktop5:ItemType>
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>"#,
+        clsid = EXPLORER_COMMAND_CLSID,
+    );
+
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <Package
@@ -442,8 +471,11 @@ fn build_appx_manifest(
   xmlns:uap2="http://schemas.microsoft.com/appx/manifest/uap/windows10/2"
   xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
   xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap uap2 uap3 uap5 rescap">
+  IgnorableNamespaces="uap uap2 uap3 uap5 com desktop4 desktop5 rescap">
   <Identity
     Name="{identity}"
     Publisher="{publisher}"
@@ -474,7 +506,7 @@ fn build_appx_manifest(
           <uap5:AppExecutionAlias>
             <uap5:ExecutionAlias Alias="shellzip.exe" />
           </uap5:AppExecutionAlias>
-        </uap5:Extension>{associations}
+        </uap5:Extension>{associations}{context_menus}
       </Extensions>
     </Application>
     <Application Id="Szip" Executable="szip.exe" EntryPoint="Windows.FullTrustApplication">
@@ -503,6 +535,7 @@ fn build_appx_manifest(
         publisher_display = xml_escape(publisher_display),
         version = version,
         associations = associations,
+        context_menus = context_menus,
     )
 }
 
@@ -1393,6 +1426,15 @@ version = "should-not-win"
         assert!(xml.contains("--extract-here"));
         assert!(xml.contains("--extract-here-named"));
         assert!(xml.contains("runFullTrust"));
-        assert!(!xml.contains("shellzip_shell.dll"));
+        assert!(xml.contains("shellzip_shell.dll"));
+        assert!(xml.contains("com:SurrogateServer"));
+        assert!(xml.contains(super::EXPLORER_COMMAND_CLSID));
+        assert!(xml.contains(r#"Type="*""#));
+        assert!(xml.contains(r#"Type="Directory""#));
+        assert!(xml.contains(r#"Type="Directory\Background""#));
+        assert!(
+            xml.contains("IgnorableNamespaces=\"uap uap2 uap3 uap5 com desktop4 desktop5 rescap\"")
+        );
+        assert!(!xml.contains("A7C3E5B1-4D2F-4A91-9E6C-8B1F0D2E3A45"));
     }
 }

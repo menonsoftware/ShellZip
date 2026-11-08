@@ -172,7 +172,7 @@ Tag releases still upload portable `ShellZip-<tag>-<target>.zip|.tar.gz` archive
 
 ### Windows Store MSIX
 
-`make msix` (or the Windows leg of `release.yml`) runs `xtask msix-pack`. The package is full-trust desktop (`shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`), declares archive file associations and static Extract verbs, and stays **unsigned** on GitHub Releases. Partner Center re-signs it after `msstore publish`.
+`make msix` (or the Windows leg of `release.yml`) runs `xtask msix-pack`. The package is full-trust desktop (`shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, `shellzip_shell.dll`), declares archive file associations, static Extract verbs, and a Windows 11 `IExplorerCommand` surrogate for the cascaded Explorer menu, and stays **unsigned** on GitHub Releases. Partner Center re-signs it after `msstore publish`.
 
 | Env / secret | Purpose |
 |---|---|
@@ -205,7 +205,7 @@ Velopack packs an `.app` on `macos-latest`, but Apple Developer ID signing and n
 
 ## Platform notes
 
-- **Windows** — GUI and SFX are `windows_subsystem = "windows"`. Icons and manifests come from `winresource` build scripts. `--om` writes `Zone.Identifier`. Build `shellzip-shell` for the Explorer menu on Velopack / portable installs. Store installs use the MSIX associations instead.
+- **Windows** — GUI and SFX are `windows_subsystem = "windows"`. Icons and manifests come from `winresource` build scripts. `--om` writes `Zone.Identifier`. Build `shellzip-shell` for the Explorer menu on Velopack / portable installs (`IContextMenu` via `--integrate`) and for the Store MSIX (`IExplorerCommand` surrogate declared in `AppxManifest.xml`).
 - **Linux** — install the apt packages above before `make gui`. `shellzip --integrate` installs the desktop file, hicolor MIME icons, and KDE/Nemo/Thunar actions. Distribution is a Velopack AppImage (`chmod +x`); verify with GPG when signatures are published.
 - **macOS** — release matrix builds `aarch64-apple-darwin`. Bundle document types and the Finder Sync sources under `platform/macos/`. Notarization is deferred.
 

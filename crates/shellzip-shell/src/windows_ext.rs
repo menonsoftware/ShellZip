@@ -44,6 +44,38 @@ const CMF_DEFAULTONLY: u32 = 0x0000_0001;
 static LOCKS: AtomicU32 = AtomicU32::new(0);
 static mut MODULE: HINSTANCE = HINSTANCE(std::ptr::null_mut());
 
+/// Bump or drop the DLL lock count used by [`DllCanUnloadNow`].
+pub(crate) fn lock_server(lock: bool) {
+    if lock {
+        LOCKS.fetch_add(1, Ordering::SeqCst);
+    } else {
+        LOCKS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// `HINSTANCE` captured in [`DllMain`], or null before attach.
+pub(crate) fn module_instance() -> HINSTANCE {
+    unsafe { MODULE }
+}
+
+/// `shellzip.exe` sitting next to this DLL (Store / sidecar layout).
+pub(crate) fn sibling_shellzip_exe() -> Option<PathBuf> {
+    let module = module_instance();
+    if module.0.is_null() {
+        return None;
+    }
+    let mut buf = vec![0u16; 520];
+    let len = unsafe { GetModuleFileNameW(Some(module.into()), &mut buf) } as usize;
+    if len == 0 {
+        return None;
+    }
+    buf.truncate(len);
+    let dll = PathBuf::from(OsString::from_wide(&buf));
+    let dir = dll.parent()?;
+    let candidate = dir.join("shellzip.exe");
+    candidate.is_file().then_some(candidate)
+}
+
 #[implement(IClassFactory)]
 struct ClassFactory;
 
@@ -63,11 +95,7 @@ impl IClassFactory_Impl for ClassFactory_Impl {
     }
 
     fn LockServer(&self, flock: BOOL) -> WinResult<()> {
-        if flock.as_bool() {
-            LOCKS.fetch_add(1, Ordering::SeqCst);
-        } else {
-            LOCKS.fetch_sub(1, Ordering::SeqCst);
-        }
+        lock_server(flock.as_bool());
         Ok(())
     }
 }
@@ -306,19 +334,7 @@ fn shellzip_exe() -> Option<PathBuf> {
     if let Some(path) = registered_host_exe() {
         return Some(path);
     }
-    let mut buf = vec![0u16; 520];
-    let len = unsafe { GetModuleFileNameW(Some(MODULE.into()), &mut buf) } as usize;
-    if len == 0 {
-        return None;
-    }
-    buf.truncate(len);
-    let dll = PathBuf::from(OsString::from_wide(&buf));
-    let dir = dll.parent()?;
-    let candidate = dir.join("shellzip.exe");
-    if candidate.is_file() {
-        return Some(candidate);
-    }
-    which("shellzip.exe").or_else(|| which("shellzip"))
+    sibling_shellzip_exe().or_else(|| which("shellzip.exe").or_else(|| which("shellzip")))
 }
 
 fn which(name: &str) -> Option<PathBuf> {
@@ -491,10 +507,17 @@ extern "system" fn DllGetClassObject(
     riid: *const GUID,
     ppv: *mut *mut core::ffi::c_void,
 ) -> HRESULT {
-    if rclsid.is_null() || unsafe { *rclsid } != CLSID_SHELLZIP {
+    if rclsid.is_null() {
         return CLASS_E_CLASSNOTAVAILABLE;
     }
-    let factory: IClassFactory = ClassFactory.into();
+    let clsid = unsafe { *rclsid };
+    let factory: IClassFactory = if clsid == CLSID_SHELLZIP {
+        ClassFactory.into()
+    } else if clsid == crate::explorer_command::CLSID_EXPLORER_COMMAND {
+        crate::explorer_command::ExplorerCommandFactory.into()
+    } else {
+        return CLASS_E_CLASSNOTAVAILABLE;
+    };
     unsafe { factory.query(riid, ppv) }
 }
 

@@ -209,6 +209,40 @@ pub fn action_verb(action: MenuAction) -> &'static str {
     }
 }
 
+/// One clickable child under an `IExplorerCommand` cascade.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplorerCommand {
+    /// Caption shown in the compact menu.
+    pub title: String,
+    /// Verb to invoke when the child is clicked.
+    pub action: MenuAction,
+    /// True for the first command after a [`MenuRow::Separator`].
+    pub separator_before: bool,
+}
+
+/// Flatten [`MenuModel::rows`] into `IExplorerCommand` children.
+///
+/// Separators become `separator_before` on the following command. An empty
+/// model (no selection) yields no children.
+pub fn explorer_commands(model: &MenuModel) -> Vec<ExplorerCommand> {
+    let mut commands = Vec::new();
+    let mut separator_before = false;
+    for row in &model.rows {
+        match row {
+            MenuRow::Separator => separator_before = true,
+            MenuRow::Command { action, label } => {
+                commands.push(ExplorerCommand {
+                    title: label.clone(),
+                    action: *action,
+                    separator_before,
+                });
+                separator_before = false;
+            }
+        }
+    }
+    commands
+}
+
 fn named_extract_caption(archives: &[PathBuf]) -> (String, bool) {
     match archives {
         [] => ("Extract Here (folder)".to_string(), false),
@@ -338,5 +372,41 @@ mod tests {
             action_verb(MenuAction::ExtractHereNamed),
             "shellzip.extractto"
         );
+    }
+
+    #[test]
+    fn explorer_commands_empty_when_no_selection() {
+        let empty: &[PathBuf] = &[];
+        let model = menu_for_selection(empty);
+        assert!(explorer_commands(&model).is_empty());
+    }
+
+    #[test]
+    fn explorer_commands_marks_separator_before_extract() {
+        let model = menu_for_selection(&[PathBuf::from("report.zip")]);
+        let commands = explorer_commands(&model);
+        assert_eq!(commands.len(), 7);
+        assert!(!commands[0].separator_before);
+        assert_eq!(commands[0].action, MenuAction::Add);
+        assert_eq!(commands[2].action, MenuAction::Add7z);
+        assert!(!commands[2].separator_before);
+        assert_eq!(commands[3].action, MenuAction::Open);
+        assert!(commands[3].separator_before);
+        assert_eq!(commands[3].title, "Open");
+        assert!(!commands[4].separator_before);
+        assert_eq!(commands[6].title, "Extract to \"report\\\"");
+    }
+
+    #[test]
+    fn explorer_commands_add_only_for_plain_file() {
+        let notes = PathBuf::from("docs").join("notes.txt");
+        let commands = explorer_commands(&menu_for_selection(&[notes]));
+        assert_eq!(commands.len(), 3);
+        assert!(commands.iter().all(|cmd| !cmd.separator_before));
+        assert_eq!(commands[1].title, "Add to notes.zip");
+        assert!(commands.iter().all(|cmd| matches!(
+            cmd.action,
+            MenuAction::Add | MenuAction::AddZip | MenuAction::Add7z
+        )));
     }
 }

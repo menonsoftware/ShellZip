@@ -97,7 +97,7 @@ On Windows, an older build that wrote `%APPDATA%\ShellZip\shellzip\config\settin
 Yes for Velopack / portable installs. **Options → Integrate with the file manager** (or `shellzip --integrate`) registers per-user associations and menus. The ShellZip submenu offers Open, Extract to…, Extract Here, and Extract Here (name). Handlers start `shellzip`; they do not extract inside the file manager. Remove with **Remove integration** or `shellzip --unintegrate`.
 
 - **Windows (Velopack / portable)** — `shellzip_shell.dll` (`IContextMenu`, icon handler). Place the DLL next to `shellzip.exe`. See [platform/windows/README.md](../platform/windows/README.md).
-- **Windows (Microsoft Store)** — archive types and static Extract verbs come from the MSIX manifest. The Integrate menu is hidden; the cascaded ShellZip submenu is not part of the Store package yet.
+- **Windows (Microsoft Store)** — archive types, static Extract verbs, and a Windows 11 `IExplorerCommand` cascade come from the MSIX manifest (`shellzip_shell.dll` as an STA surrogate). The Integrate menu is hidden.
 - **Linux** — desktop actions, KDE service menu, Nemo actions, Thunar snippet; optional GPL Nautilus script under [platform/linux/nautilus/](../platform/linux/nautilus/).
 - **macOS** — document types and a Finder Sync Swift source under [platform/macos/](../platform/macos/).
 
