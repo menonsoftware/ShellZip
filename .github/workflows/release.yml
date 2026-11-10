@@ -19,6 +19,8 @@ permissions:
   contents: write
 
 jobs:
+  # Build every platform first. Nothing is uploaded to GitHub Releases or the
+  # Store from this job — a failed matrix leg must not leave a partial release.
   build:
     strategy:
       fail-fast: false
@@ -83,13 +85,15 @@ jobs:
             cp "target/${target}/release/shellzip_shell.dll" "$name/"
           fi
           cp "$sfx_src" "$sfx_asset"
+          mkdir -p dist/portable
           if [ "$RUNNER_OS" = "Windows" ]; then
-            7z a "$name.zip" "$name"
-            7z l "$name.zip" | tee package-listing.txt
+            7z a "dist/portable/$name.zip" "$name"
+            7z l "dist/portable/$name.zip" | tee package-listing.txt
           else
-            tar czf "$name.tar.gz" "$name"
-            tar tzf "$name.tar.gz" | tee package-listing.txt
+            tar czf "dist/portable/$name.tar.gz" "$name"
+            tar tzf "dist/portable/$name.tar.gz" | tee package-listing.txt
           fi
+          cp "$sfx_asset" "dist/portable/"
           grep -F "shellzip-sfx${ext}" package-listing.txt
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -135,25 +139,6 @@ jobs:
             printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --import
           fi
           cargo run -p xtask -- velopack-pack ${{ matrix.channel }}
-      - name: Upload Velopack to GitHub Releases
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VPK_OUTPUT_DIR: dist/velopack/Releases-${{ matrix.channel }}
-        run: |
-          set -euo pipefail
-          export PATH="$PATH:$HOME/.dotnet/tools"
-          VERSION="${RELEASE_TAG#v}"
-          vpk upload github \
-            --repoUrl "https://github.com/${{ github.repository }}" \
-            --token "$GITHUB_TOKEN" \
-            --channel "${{ matrix.channel }}" \
-            --outputDir "$VPK_OUTPUT_DIR" \
-            --tag "$RELEASE_TAG" \
-            --releaseName "ShellZip $VERSION" \
-            --publish \
-            --merge
       - name: Pack Store MSIX
         if: runner.os == 'Windows'
         shell: bash
@@ -168,57 +153,178 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           export VELOPACK_VERSION="$VERSION"
           cargo run -p xtask -- msix-pack
-      - name: Upload Store MSIX to GitHub Releases
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-${{ matrix.channel }}
+          path: dist/portable/
+          if-no-files-found: error
+      - name: Upload Velopack artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: velopack-${{ matrix.channel }}
+          path: dist/velopack/Releases-${{ matrix.channel }}/
+          if-no-files-found: error
+      - name: Upload Store MSIX artifact
         if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: msix
+          path: dist/msix/ShellZip-*-x64.msix
+          if-no-files-found: error
+
+  # Runs only when every matrix leg of `build` succeeded. Publishes GitHub
+  # Release assets and Velopack feeds in one place so a failed OS cannot ship.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || inputs.tag || github.ref }}
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Install vpk
+        run: dotnet tool update -g vpk
+      - name: Collect release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          cp artifacts/portable-win/* dist/release/
+          cp artifacts/portable-linux/* dist/release/
+          cp artifacts/portable-osx/* dist/release/
+          if [ -d artifacts/msix ]; then
+            cp artifacts/msix/*.msix dist/release/
+          fi
+          mkdir -p dist/velopack
+          for channel in win linux osx; do
+            src="artifacts/velopack-${channel}"
+            test -d "$src"
+            mkdir -p "dist/velopack/Releases-${channel}"
+            cp -a "$src"/. "dist/velopack/Releases-${channel}/"
+          done
+          if [ -f dist/velopack/Releases-linux/SHA256SUMS ]; then
+            cp dist/velopack/Releases-linux/SHA256SUMS dist/release/
+          fi
+          shopt -s nullglob
+          for asc in dist/velopack/Releases-linux/*.asc; do
+            cp "$asc" dist/release/
+          done
+          ls -la dist/release
+      - name: Create GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
-          files: dist/msix/ShellZip-*-x64.msix
+          files: dist/release/*
+          generate_release_notes: true
           fail_on_unmatched_files: true
-      - name: Setup Microsoft Store CLI
-        if: runner.os == 'Windows'
-        uses: microsoft/microsoft-store-apppublisher@v1.2
-      - name: Publish MSIX to Microsoft Store
-        if: runner.os == 'Windows'
+      - name: Upload Velopack feeds
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          VERSION="${RELEASE_TAG#v}"
+          for channel in win linux osx; do
+            vpk upload github \
+              --repoUrl "https://github.com/${{ github.repository }}" \
+              --token "$GITHUB_TOKEN" \
+              --channel "$channel" \
+              --outputDir "dist/velopack/Releases-${channel}" \
+              --tag "$RELEASE_TAG" \
+              --releaseName "ShellZip $VERSION" \
+              --publish \
+              --merge
+          done
+
+  # Store submission is Windows-only and still gated on every platform build.
+  store:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - name: Download Store MSIX artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: msix
+          path: dist/msix
+      - name: Setup Microsoft Store CLI
+        uses: microsoft/microsoft-store-apppublisher@v1.2
+      - name: Publish MSIX to Microsoft Store
+        # PowerShell on purpose: msstore is on that PATH. Use --flag="$env:VAR"
+        # so a client secret that starts with "-" stays one argument.
+        shell: pwsh
+        env:
           STORE_APP_ID: ${{ secrets.STORE_APP_ID }}
           STORE_TENANT_ID: ${{ secrets.STORE_TENANT_ID }}
           STORE_SELLER_ID: ${{ secrets.STORE_SELLER_ID }}
           STORE_CLIENT_ID: ${{ secrets.STORE_CLIENT_ID }}
           STORE_CLIENT_SECRET: ${{ secrets.STORE_CLIENT_SECRET }}
         run: |
-          set -euo pipefail
-          required=(STORE_APP_ID STORE_TENANT_ID STORE_SELLER_ID STORE_CLIENT_ID STORE_CLIENT_SECRET)
-          for name in "${required[@]}"; do
-            if [ -z "${!name:-}" ]; then
-              echo "Skipping Store publish: $name is empty"
-              exit 0
-            fi
-          done
-          MSIX=$(ls dist/msix/ShellZip-*-x64.msix | head -n 1)
-          test -f "$MSIX"
-          msstore reconfigure \
-            --tenantId "$STORE_TENANT_ID" \
-            --sellerId "$STORE_SELLER_ID" \
-            --clientId "$STORE_CLIENT_ID" \
-            --clientSecret "$STORE_CLIENT_SECRET"
-          msstore publish "$MSIX" -id "$STORE_APP_ID"
-      - name: Upload GPG signatures
-        if: runner.os == 'Linux'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          files: |
-            dist/velopack/Releases-linux/SHA256SUMS
-            dist/velopack/Releases-linux/*.asc
-          fail_on_unmatched_files: false
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          files: |
-            ShellZip-*
-            shellzip-sfx-*
-          generate_release_notes: true
-          fail_on_unmatched_files: true
+          $required = @(
+            'STORE_APP_ID',
+            'STORE_TENANT_ID',
+            'STORE_SELLER_ID',
+            'STORE_CLIENT_ID',
+            'STORE_CLIENT_SECRET'
+          )
+          $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
+          if ($missing.Count -gt 0) {
+            Write-Host "Skipping Store publish: $($missing -join ', ') empty"
+            exit 0
+          }
+
+          # Partner Center Product ID (Store ID), usually 12 chars starting with 9
+          # (for example 9NXXXXXXXXXX). Not the package Identity Name, not the
+          # Azure AD application (client) id, and not the seller id.
+          $appId = $env:STORE_APP_ID.Trim()
+          if ($appId -notmatch '^[0-9A-Za-z]{12}$') {
+            Write-Error @"
+          STORE_APP_ID='$appId' does not look like a Partner Center Product ID.
+          Open Partner Center → the ShellZip app → Product identity → Store ID
+          (also called Product ID). It is typically 12 characters and starts with 9.
+          Do not use STORE_IDENTITY_NAME, STORE_CLIENT_ID, or STORE_SELLER_ID here.
+          "@
+            exit 1
+          }
+
+          $msix = Get-ChildItem -Path dist/msix -Filter 'ShellZip-*-x64.msix' |
+            Select-Object -First 1
+          if (-not $msix) {
+            Write-Error 'No ShellZip-*-x64.msix artifact under dist/msix'
+            exit 1
+          }
+
+          msstore reconfigure `
+            --tenantId="$env:STORE_TENANT_ID" `
+            --sellerId="$env:STORE_SELLER_ID" `
+            --clientId="$env:STORE_CLIENT_ID" `
+            --clientSecret="$env:STORE_CLIENT_SECRET"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          Write-Host "Listing apps visible to this Entra credential (expect Store ID $appId):"
+          msstore apps list --output-stream stdout
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error 'msstore apps list failed — check STORE_TENANT_ID / SELLER_ID / CLIENT_ID / CLIENT_SECRET and that the Entra app has Manager (Windows) in Partner Center.'
+            exit $LASTEXITCODE
+          }
+
+          # Prefer --appId= over -id: -id can be confused with -i (--inputDirectory).
+          msstore publish $msix.FullName --appId="$appId" --output-stream stdout
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error @"
+          msstore publish could not retrieve application '$appId'.
+          Confirm STORE_APP_ID matches a Product ID shown by 'msstore apps list' above.
+          If the list is empty or missing ShellZip, grant the Entra app Manager access
+          to this product in Partner Center (Users → the Azure AD application).
+          "@
+            exit $LASTEXITCODE
+          }

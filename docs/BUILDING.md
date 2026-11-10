@@ -179,10 +179,12 @@ Tag releases still upload portable `ShellZip-<tag>-<target>.zip|.tar.gz` archive
 | `STORE_IDENTITY_NAME` | Package Identity `Name` (must match Partner Center) |
 | `STORE_PUBLISHER` | Package Identity `Publisher` (`CN=…` exactly as Partner Center shows) |
 | `STORE_PUBLISHER_DISPLAY_NAME` | Must match Partner Center publisher display name (for example `Menonsoftware`) |
-| `STORE_APP_ID` | Store product id for `msstore publish` |
-| `STORE_TENANT_ID` / `STORE_SELLER_ID` / `STORE_CLIENT_ID` / `STORE_CLIENT_SECRET` | Entra app that Partner Center granted Manager rights |
+| `STORE_APP_ID` | Partner Center **Product ID / Store ID** (usually 12 characters, starts with `9`, e.g. `9NXXXXXXXXXX`). Not the package Identity `Name`, not `STORE_CLIENT_ID`, not the seller id. |
+| `STORE_TENANT_ID` / `STORE_SELLER_ID` / `STORE_CLIENT_ID` / `STORE_CLIENT_SECRET` | Entra app that Partner Center granted **Manager (Windows)** rights |
 
 Upload only the `.msix` from `dist/msix/` (not the `payload/` folder). Partner Center re-signs it. Local defaults (`CN=ShellZip` / display name `ShellZip`) are for layout checks only — a Store submission must be packed with the real identity env vars set. `runFullTrust` needs a restricted-capability note / approval in Partner Center the first time.
+
+`msstore publish` fails with “Could not retrieve your application… AppId” when `STORE_APP_ID` is wrong **or** when the Entra app cannot see that product. After `msstore reconfigure`, CI runs `msstore apps list`; the Product ID must appear there. Fix: Partner Center → app → **Product identity** → copy Store ID into `STORE_APP_ID`, and under Partner Center users give the Azure AD application Manager access.
 
 If any publish secret is empty, CI skips the Store upload and still ships Velopack. Reserve the app name and complete the first listing in Partner Center before the CLI can publish updates.
 

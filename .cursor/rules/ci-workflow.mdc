@@ -26,6 +26,8 @@ alwaysApply: false
 
 - CLI/GUI: `cargo build --release --locked`. SFX stub: `cargo build --profile minisize --locked`. Upload `szip`, `shellzip`, and `shellzip-sfx` per OS.
 - Never `--allow-dirty` or skip `--locked` in release jobs.
+- `release.yml` splits **build** (matrix → Actions artifacts only) from **publish** / **store** (`needs: build`). If any OS fails, GitHub Release assets, Velopack feeds, and Store submission are skipped — no partial binary release.
+- Store submit: `STORE_APP_ID` must be the Partner Center **Product ID / Store ID** (≈12 chars, usually starts with `9`). CI uses `msstore publish --appId=…` (not `-id`) and probes `msstore apps list` after `reconfigure`. “Could not retrieve your application” means a wrong Product ID or an Entra app without Manager access to that product.
 - Every push to `master` runs `auto-release.yml`: bump the workspace patch in root `Cargo.toml`, commit `chore: release vX.Y.Z`, push tag `vX.Y.Z`, then call reusable `release.yml` (needed because `GITHUB_TOKEN` pushes do not re-trigger workflows).
 - Manual `v*` tag pushes still run `release.yml` directly.
 - Auto-release skips commits whose message starts with `chore: release ` so a retrigger cannot loop.
