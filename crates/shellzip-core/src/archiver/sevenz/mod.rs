@@ -13,6 +13,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+#[cfg(not(windows))]
 use zesven::ownership::{UnixOwnership, encode_ownership_attributes};
 use zesven::write::EntryMeta as SevenMeta;
 use zesven::{ArchivePath, Timestamp, Writer};
@@ -213,13 +214,39 @@ fn seven_meta(meta: &EntryMeta, directory: bool, symlink: bool) -> SevenMeta {
     if let Some(time) = meta.modified.and_then(filetime) {
         seven = seven.modification_time(time);
     }
-    let mut attributes = encode_ownership_attributes(&UnixOwnership::default(), Some(meta.mode));
-    if symlink {
-        // Bit 31 marks the Unix mode. The low 16 bits carry the Windows
-        // reparse flag so a reader treats the payload as a link target.
-        attributes |= 0x400;
+    seven.attributes(archive_attributes(meta.mode, directory, symlink))
+}
+
+/// Platform-correct attribute word for 7z members.
+///
+/// On Windows we store FAT/NT attributes only so Info → Host OS reads
+/// `Windows`. Unix builds keep the ownership/mode encoding with bit 31 set.
+fn archive_attributes(mode: u32, directory: bool, symlink: bool) -> u32 {
+    #[cfg(windows)]
+    {
+        let _ = mode;
+        // Keep a non-zero low word so the property is serialized; a zero
+        // attributes field is dropped by zesven and Info then shows no host.
+        let mut attributes = 0x20; // FILE_ATTRIBUTE_ARCHIVE
+        if directory {
+            attributes |= 0x10; // FILE_ATTRIBUTE_DIRECTORY
+        }
+        if symlink {
+            attributes |= 0x400; // FILE_ATTRIBUTE_REPARSE_POINT
+        }
+        attributes
     }
-    seven.attributes(attributes)
+    #[cfg(not(windows))]
+    {
+        let _ = directory;
+        let mut attributes = encode_ownership_attributes(&UnixOwnership::default(), Some(mode));
+        if symlink {
+            // Bit 31 marks the Unix mode. The low 16 bits carry the Windows
+            // reparse flag so a reader treats the payload as a link target.
+            attributes |= 0x400;
+        }
+        attributes
+    }
 }
 
 fn filetime(time: SystemTime) -> Option<u64> {

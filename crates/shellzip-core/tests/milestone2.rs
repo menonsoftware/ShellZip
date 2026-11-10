@@ -183,6 +183,9 @@ fn technical_list_fills_blake2sp() {
         "050dc5786037ea72cb9ed9d0324afcab03c97ec02e8c47368fc5dfb4cf49d8c9"
     );
     assert!(file.crc32.is_some());
+    #[cfg(windows)]
+    assert_eq!(file.host_os.as_deref(), Some("DOS"));
+    #[cfg(not(windows))]
     assert_eq!(file.host_os.as_deref(), Some("Unix"));
 }
 

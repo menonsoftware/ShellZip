@@ -238,7 +238,7 @@ fn apply_comment(
                 "ZIP comment is longer than 65535 bytes".to_string(),
             ));
         }
-        writer.set_comment(text.as_str());
+        writer.set_comment(text.as_str())?;
         return Ok(());
     }
     if let Some(kept) = kept.filter(|bytes| !bytes.is_empty()) {
@@ -247,7 +247,7 @@ fn apply_comment(
                 "existing ZIP comment is longer than 65535 bytes".to_string(),
             ));
         }
-        writer.set_raw_comment(kept.to_vec().into_boxed_slice());
+        writer.set_raw_comment(kept.to_vec().into_boxed_slice())?;
     }
     Ok(())
 }

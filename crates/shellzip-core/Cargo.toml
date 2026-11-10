@@ -18,7 +18,14 @@ tar = "0.4"
 thiserror = "2"
 tracing = "0.1"
 walkdir = "2"
-zip = { version = "2", default-features = false, features = ["deflate", "zstd", "time", "aes-crypto"] }
+# Prefer `deflate-flate2-zlib-rs` (not the umbrella `deflate`, which also pulls Zopfli).
+# Zip 8 stamps host OS from the build target (DOS on Windows, Unix elsewhere).
+zip = { version = "8", default-features = false, features = [
+    "deflate-flate2-zlib-rs",
+    "zstd",
+    "time",
+    "aes-crypto",
+] }
 zstd = { version = "0.13", features = ["zstdmt"] }
 zeroize = "1"
 rayon = "1.12.0"
