@@ -138,7 +138,7 @@ impl ArchiveWriter for ZipArchiver {
         }
         let mut copied = HashSet::new();
         for index in 0..archive.len() {
-            let entry = archive.by_index(index)?;
+            let entry = archive.by_index_raw(index)?;
             let key = crate::entry::member_key(entry.name());
             if key.is_empty() || replacing.contains(&key) {
                 continue;
@@ -264,7 +264,7 @@ impl ZipArchiver {
     ) -> Result<(), Error> {
         let mut archive = ZipArchive::new(reader)?;
         let file = archive
-            .by_index(0)
+            .by_index_raw(0)
             .map_err(|err| Error::Archive(format!("compressed piece: {err}")))?;
         self.writer()?.raw_copy_file(file).map_err(Error::from)
     }

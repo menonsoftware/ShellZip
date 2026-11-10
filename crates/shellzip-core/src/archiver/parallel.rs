@@ -7,7 +7,7 @@
 //! pieces exist at once.
 
 use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Cursor, Seek, SeekFrom, Write};
+use std::io::{Cursor, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -153,22 +153,21 @@ fn compress_file(
     }
     let path = piece_path(&item.rel);
     let built = (|| -> Result<File, Error> {
+        // ZipWriter seeks back to patch local headers. Do not wrap the piece
+        // file in BufWriter — seeking through a buffer corrupts large deflate
+        // members and later surfaces as "incomplete deflate stream".
         let out = OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
             .open(&path)
             .map_err(|err| Error::io(format!("create {}", path.display()), err))?;
-        let mut writer = ZipWriter::new(BufWriter::new(out));
+        let mut writer = ZipWriter::new(out);
         writer.start_file(name, options)?;
         copy_in(&mut reader, &mut writer, &mut buf)?;
-        let mut inner = writer.finish()?;
-        inner
-            .flush()
+        let mut file = writer.finish()?;
+        file.flush()
             .map_err(|err| Error::io(format!("flush {}", path.display()), err))?;
-        let mut file = inner
-            .into_inner()
-            .map_err(|err| Error::io(format!("flush {}", path.display()), err.into_error()))?;
         file.seek(SeekFrom::Start(0))
             .map_err(|err| Error::io(format!("rewind {}", path.display()), err))?;
         Ok(file)

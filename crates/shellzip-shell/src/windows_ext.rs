@@ -1,8 +1,9 @@
 //! Win32 COM shell extension: context menu and compound-extension icons.
 
 use std::ffi::OsString;
-use std::os::windows::ffi::OsStringExt;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use shellzip_integrate::{
@@ -14,6 +15,10 @@ use windows::Win32::Foundation::{
     CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, E_FAIL, E_INVALIDARG, E_NOTIMPL, E_POINTER,
     HINSTANCE, S_FALSE, S_OK,
 };
+use windows::Win32::Graphics::Gdi::{
+    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS,
+    DeleteDC, DeleteObject, HBITMAP, HGDIOBJ, SelectObject,
+};
 use windows::Win32::System::Com::{
     CLSCTX_ALL, CoCreateInstance, IClassFactory, IClassFactory_Impl, IDataObject, IPersist_Impl,
     IPersistFile, IPersistFile_Impl, STGM,
@@ -24,13 +29,14 @@ use windows::Win32::System::Registry::HKEY;
 use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
-    AO_NONE, ApplicationActivationManager, CMINVOKECOMMANDINFO, DROPFILES, GCS_HELPTEXTA,
-    GCS_VERBA, IApplicationActivationManager, IContextMenu, IContextMenu_Impl, IExtractIconW,
-    IExtractIconW_Impl, IShellExtInit, IShellExtInit_Impl,
+    AO_NONE, ApplicationActivationManager, CMINVOKECOMMANDINFO, DROPFILES, ExtractIconExW,
+    GCS_HELPTEXTA, GCS_VERBA, IApplicationActivationManager, IContextMenu, IContextMenu_Impl,
+    IExtractIconW, IExtractIconW_Impl, IShellExtInit, IShellExtInit_Impl,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreatePopupMenu, DestroyMenu, HMENU, InsertMenuItemW, MENUITEMINFOW, MFS_ENABLED,
-    MFT_SEPARATOR, MFT_STRING, MIIM_FTYPE, MIIM_ID, MIIM_STATE, MIIM_STRING, MIIM_SUBMENU,
+    CreatePopupMenu, DI_NORMAL, DestroyIcon, DestroyMenu, DrawIconEx, GetSystemMetrics, HICON,
+    HMENU, InsertMenuItemW, MENUITEMINFOW, MFS_ENABLED, MFT_SEPARATOR, MFT_STRING, MIIM_BITMAP,
+    MIIM_FTYPE, MIIM_ID, MIIM_STATE, MIIM_STRING, MIIM_SUBMENU, SM_CXSMICON,
 };
 use windows::core::{
     BOOL, GUID, HRESULT, IUnknown, Interface, PCWSTR, PWSTR, Ref, Result as WinResult, implement,
@@ -355,7 +361,8 @@ pub(crate) fn activate_packaged_shellzip(aumid: &str, args: &[&str]) -> WinResul
     Ok(())
 }
 
-fn shellzip_exe() -> Option<PathBuf> {
+/// Host `shellzip.exe` for launch and brand-icon resolution.
+pub(crate) fn shellzip_exe() -> Option<PathBuf> {
     // Prefer the path written by `--integrate`. The DLL is copied to
     // `%LOCALAPPDATA%\ShellZip`, so a sibling `shellzip.exe` is usually absent,
     // and Explorer's PATH rarely includes cargo or the install folder.
@@ -363,6 +370,97 @@ fn shellzip_exe() -> Option<PathBuf> {
         return Some(path);
     }
     sibling_shellzip_exe().or_else(|| which("shellzip.exe").or_else(|| which("shellzip")))
+}
+
+/// `IExplorerCommand::GetIcon` / shell verb form: `{path\to\shellzip.exe},0`.
+pub(crate) fn brand_icon_spec() -> Option<String> {
+    let exe = shellzip_exe()?;
+    Some(format!("{},0", exe.display()))
+}
+
+/// Cached PARGB bitmap for the classic cascade parent (`MIIM_BITMAP`).
+fn brand_menu_bitmap() -> Option<HBITMAP> {
+    static CACHE: OnceLock<isize> = OnceLock::new();
+    let raw = *CACHE.get_or_init(|| match create_brand_menu_bitmap() {
+        Some(bitmap) => bitmap.0 as isize,
+        None => 0,
+    });
+    if raw == 0 {
+        None
+    } else {
+        Some(HBITMAP(raw as *mut core::ffi::c_void))
+    }
+}
+
+fn create_brand_menu_bitmap() -> Option<HBITMAP> {
+    let exe = shellzip_exe()?;
+    let wide: Vec<u16> = exe
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let size = unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16);
+    let mut icon = HICON::default();
+    let count = unsafe { ExtractIconExW(PCWSTR(wide.as_ptr()), 0, None, Some(&mut icon), 1) };
+    if count == 0 || icon.0.is_null() {
+        return None;
+    }
+    let bitmap = icon_to_pargb_bitmap(icon, size);
+    let _ = unsafe { DestroyIcon(icon) };
+    bitmap
+}
+
+fn icon_to_pargb_bitmap(icon: HICON, size: i32) -> Option<HBITMAP> {
+    unsafe {
+        let hdc = CreateCompatibleDC(None);
+        if hdc.0.is_null() {
+            return None;
+        }
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: u32::try_from(std::mem::size_of::<BITMAPINFOHEADER>()).unwrap_or(0),
+                biWidth: size,
+                biHeight: -size,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
+        let bitmap = match CreateDIBSection(
+            Some(hdc),
+            &info as *const BITMAPINFO,
+            DIB_RGB_COLORS,
+            &mut bits,
+            None,
+            0,
+        ) {
+            Ok(bitmap) if !bitmap.0.is_null() && !bits.is_null() => bitmap,
+            _ => {
+                let _ = DeleteDC(hdc);
+                return None;
+            }
+        };
+        let previous = SelectObject(hdc, HGDIOBJ(bitmap.0));
+        let drawn = DrawIconEx(hdc, 0, 0, icon, size, size, 0, None, DI_NORMAL);
+        SelectObject(hdc, previous);
+        let _ = DeleteDC(hdc);
+        if drawn.is_err() {
+            let _ = DeleteObject(HGDIOBJ(bitmap.0));
+            return None;
+        }
+        // DrawIconEx often leaves alpha at 0; mark opaque pixels for menus.
+        let pixels = std::slice::from_raw_parts_mut(bits as *mut u32, (size * size) as usize);
+        for pixel in pixels {
+            let rgb = *pixel & 0x00FF_FFFF;
+            if rgb != 0 && (*pixel >> 24) == 0 {
+                *pixel |= 0xFF00_0000;
+            }
+        }
+        Some(bitmap)
+    }
 }
 
 fn which(name: &str) -> Option<PathBuf> {
@@ -423,14 +521,20 @@ fn insert_separator(hmenu: HMENU, position: u32) -> WinResult<()> {
 
 fn insert_submenu(hmenu: HMENU, position: u32, submenu: HMENU, text: &str) -> WinResult<()> {
     let wide = wide_null(text);
+    let bitmap = brand_menu_bitmap();
+    let mut mask = MIIM_STRING | MIIM_FTYPE | MIIM_STATE | MIIM_SUBMENU;
+    if bitmap.is_some() {
+        mask |= MIIM_BITMAP;
+    }
     let info = MENUITEMINFOW {
         cbSize: u32::try_from(std::mem::size_of::<MENUITEMINFOW>()).unwrap_or(0),
-        fMask: MIIM_STRING | MIIM_FTYPE | MIIM_STATE | MIIM_SUBMENU,
+        fMask: mask,
         fType: MFT_STRING,
         fState: MFS_ENABLED,
         hSubMenu: submenu,
         dwTypeData: PWSTR(wide.as_ptr() as *mut u16),
         cch: u32::try_from(text.encode_utf16().count()).unwrap_or(0),
+        hbmpItem: bitmap.unwrap_or_default(),
         ..Default::default()
     };
     let result = unsafe { InsertMenuItemW(hmenu, position, true, &info) };

@@ -24,7 +24,7 @@ use windows::core::{
 };
 
 use crate::windows_ext::{
-    activate_packaged_shellzip, launch_aumid_for, lock_server, module_instance,
+    activate_packaged_shellzip, brand_icon_spec, launch_aumid_for, lock_server, module_instance,
     sibling_shellzip_exe,
 };
 
@@ -85,7 +85,8 @@ impl IExplorerCommand_Impl for RootCommand_Impl {
         &self,
         _psiitemarray: windows::core::Ref<'_, IShellItemArray>,
     ) -> WinResult<windows::core::PWSTR> {
-        Err(E_NOTIMPL.into())
+        let spec = brand_icon_spec().ok_or(E_FAIL)?;
+        alloc_title(&spec)
     }
 
     fn GetToolTip(

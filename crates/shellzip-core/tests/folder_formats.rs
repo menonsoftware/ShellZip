@@ -216,6 +216,26 @@ fn parallel_zip_round_trips_a_folder_of_spilled_files() {
 }
 
 #[test]
+fn parallel_zip_deflates_a_large_incompressible_file() {
+    // Spilled pieces (>= 1 MiB) must survive deflate + raw merge without
+    // truncating the stream ("incomplete deflate stream" on test/extract).
+    const SIZE: usize = 4 * 1024 * 1024;
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("blob.bin");
+    let mut bytes = vec![0u8; SIZE];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = (index.wrapping_mul(1103515245).wrapping_add(12345) >> 16) as u8;
+    }
+    fs::write(&source, &bytes).unwrap();
+    let archive = tmp.path().join("blob.zip");
+    add(&archive, &[source], &opts(4), &NopProgress).unwrap_or_else(|err| panic!("zip: {err}"));
+    test(&archive, None, &NopProgress).unwrap_or_else(|err| panic!("test: {err}"));
+    let out = tmp.path().join("out");
+    extract_all(&archive, &out);
+    assert_eq!(fs::read(out.join("blob.bin")).unwrap(), bytes);
+}
+
+#[test]
 fn update_adds_an_earlier_name_beside_a_kept_member() {
     for case in cases().into_iter().filter(|case| case.can_update) {
         let tmp = tempfile::tempdir().unwrap();
