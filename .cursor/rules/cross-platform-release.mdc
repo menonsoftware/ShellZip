@@ -1,0 +1,25 @@
+---
+description: Cross-platform clippy hygiene before master commits — catch Windows-only dead code and needless_return stubs that pass on Windows CI but fail Linux release
+alwaysApply: true
+---
+
+# Cross-platform release gate
+
+CI and release run `cargo clippy --workspace --all-targets -- -D warnings` on **both** Windows and Linux. A change that is green only on this Windows machine can still break `master` / the Linux release job.
+
+## Before committing to `master` (or finishing any Rust change that touches `cfg`)
+
+1. Run the full quality gate from `rust-workflow` (`fmt`, `clippy -D warnings`, `test --workspace`).
+2. Mentally compile the **non-Windows** view of every file you touched:
+   - Helpers used only inside `#[cfg(windows)]` blocks must themselves be `#[cfg(windows)]` (otherwise Linux reports `dead_code`).
+   - `#[cfg(not(windows))]` stubs that are the last expression in a block must not use `return` (`clippy::needless_return`). Prefer `Err("…".into())` as the block value.
+3. Prefer `#[cfg(windows)]` on whole functions over `#[allow(dead_code)]`. Do not silence platform-only dead code.
+
+## Typical failure modes (already hit release)
+
+| Symptom on Linux | Cause | Fix |
+|---|---|---|
+| `function … is never used` / `-D dead-code` | Windows-only helper not cfg-gated | `#[cfg(windows)]` on the helper |
+| `unneeded return statement` / `needless_return` | `return Err(…)` in a `#[cfg(not(windows))]` block | drop `return`; make `Err(…)` the value |
+
+`xtask` MSIX / shell-registration paths are the usual source: they exist on every OS for the CLI surface, but most of the body is Windows-only.

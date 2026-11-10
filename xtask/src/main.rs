@@ -273,7 +273,7 @@ const MSIX_DEV_CERT_PASSWORD: &str = "ShellZip-Dev";
 fn msix_pack() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(not(windows))]
     {
-        return Err("msix-pack is Windows-only".into());
+        Err("msix-pack is Windows-only".into())
     }
     #[cfg(windows)]
     {
@@ -449,7 +449,7 @@ fn register_classic_explorer_menu() -> Result<(), Box<dyn std::error::Error>> {
 fn register_shell_from_args() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(not(windows))]
     {
-        return Err("msix-register-shell is Windows-only".into());
+        Err("msix-register-shell is Windows-only".into())
     }
     #[cfg(windows)]
     {
@@ -805,6 +805,7 @@ fn msix_version(semver: &str) -> Result<String, Box<dyn std::error::Error>> {
     Ok(format!("{major}.{minor}.{patch}.0"))
 }
 
+#[cfg(windows)]
 fn write_resized_png(src: &Path, dest: &Path, size: u32) -> Result<(), Box<dyn std::error::Error>> {
     let image = image::open(src)?;
     let resized = image.resize_exact(size, size, image::imageops::FilterType::Lanczos3);

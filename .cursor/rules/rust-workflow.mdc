@@ -19,6 +19,7 @@ cargo test --workspace
 
 - Warnings are errors. Fix the cause; `#[allow(...)]` needs a same-line comment saying why.
 - Iterate on one crate with `-p shellzip-core`, finish with `--workspace`.
+- Before committing to `master`, also apply `cross-platform-release`: Windows-only helpers need `#[cfg(windows)]`, and non-Windows stubs must not use needless `return` (Linux clippy fails otherwise).
 
 ## Dependencies
 
