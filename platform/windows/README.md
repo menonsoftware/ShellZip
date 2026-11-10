@@ -35,6 +35,11 @@ Release CI stages `shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, `shellzip_shel
 
 Release CI packs an unsigned `ShellZip-<tag>-x64.msix` for Partner Center. Locally, `make msix` packs the same layout, self-signs with `dist/msix/ShellZipDev.pfx`, and sideloads via `Add-AppxPackage` (Developer Mode may be required). The package includes `shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, and `shellzip_shell.dll`. Archive types and static Extract verbs are declared in `AppxManifest.xml`. The same DLL is registered as an STA `com:SurrogateServer` (`{B8D4F6C2-5E3A-4B02-AF7D-9C2E1F3A4B56}`) under `desktop4:FileExplorerContextMenus` for `*`, `Directory`, and `Directory\Background`, so Windows 11 shows the cascaded **ShellZip** menu on the compact context menu. Settings live under `%LOCALAPPDATA%\ShellZip\settings.toml`. The Store build skips Velopack hooks and the Integrate menu; updates come from the Store.
 
+On Windows 10 1809 / Server 2019, `make msix` also registers the classic in-proc menu into the real HKCU/HKLM hives (PackagedCom is unavailable). That write is outside the package, so uninstall must clear it:
+
+- `make msix-uninstall` (or `cargo run -p xtask -- msix-uninstall`) stops Explorer, runs the same cleanup as `--unintegrate`, removes the Appx package, and refreshes associations.
+- Sideload registration also installs a per-user scheduled task (`ShellZipMsixShellCleanup`) that runs when AppX reports a successful Remove for this package family, so **Settings → Apps → Uninstall** clears the classic cascade icon, ProgID icons, CLSID, Approved entry, DLL, and `%LOCALAPPDATA%\ShellZip\icons`. Partner Center `msix-pack` builds without `--install` never register that task.
+
 Use either the Store package or the Velopack Setup, not both, so associations are not registered twice. See [docs/BUILDING.md](../../docs/BUILDING.md) for Partner Center secrets.
 
 ## SmartScreen and Defender

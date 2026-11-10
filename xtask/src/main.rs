@@ -7,6 +7,7 @@ use std::process::Command;
 use std::time::Instant;
 
 use shellzip_core::{CompressOpts, NopProgress, add};
+#[cfg(any(windows, test))]
 use shellzip_integrate::EXTENSIONS;
 
 fn main() {
@@ -22,10 +23,12 @@ fn main() {
         "velopack-pack" => velopack_pack(),
         "msix-pack" => msix_pack(),
         "msix-register-shell" => register_shell_from_args(),
+        "msix-unregister-shell" => unregister_shell_from_args(),
+        "msix-uninstall" => msix_uninstall(),
         "gpg-sign-release" => gpg_sign_release(),
         _ => {
             eprintln!(
-                "usage: xtask bench | build-fixtures | package-stubs [stub] | gen-file-icons | velopack-stage | velopack-pack | msix-pack [--install] | msix-register-shell <exe> <dll> <icons> | gpg-sign-release <dir>"
+                "usage: xtask bench | build-fixtures | package-stubs [stub] | gen-file-icons | velopack-stage | velopack-pack | msix-pack [--install] | msix-register-shell <exe> <dll> <icons> | msix-unregister-shell | msix-uninstall | gpg-sign-release <dir>"
             );
             std::process::exit(2);
         }
@@ -419,6 +422,27 @@ fn msix_sign_and_install(msix: &Path, publisher: &str) -> Result<(), Box<dyn std
     Ok(())
 }
 
+/// Remove classic Explorer registration and the sideloaded Appx package.
+fn msix_uninstall() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(not(windows))]
+    {
+        Err("msix-uninstall is Windows-only".into())
+    }
+    #[cfg(windows)]
+    {
+        stop_explorer();
+        let unregister = unregister_classic_explorer_menu();
+        start_explorer();
+        unregister?;
+        remove_appx_package()?;
+        let _ = std::process::Command::new("ie4uinit.exe")
+            .arg("-show")
+            .status();
+        println!("uninstalled ShellZip MSIX shell registration");
+        Ok(())
+    }
+}
+
 /// Register the classic `IContextMenu` against the installed package binaries.
 #[cfg(windows)]
 fn register_classic_explorer_menu() -> Result<(), Box<dyn std::error::Error>> {
@@ -437,10 +461,25 @@ fn register_classic_explorer_menu() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
     match register_shell_at(&exe, &dll, &icons) {
-        Ok(()) => Ok(()),
-        Err(err) if err.to_lowercase().contains("administrator") => {
-            elevate_shell_registration(&exe, &dll, &icons)
+        Ok(()) => {
+            register_msix_cleanup_task()?;
+            Ok(())
         }
+        Err(err) if err.to_lowercase().contains("administrator") => {
+            elevate_shell_registration(&exe, &dll, &icons)?;
+            register_msix_cleanup_task()?;
+            Ok(())
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// Clear classic HKCU/HKLM shell registration left by a prior sideload.
+#[cfg(windows)]
+fn unregister_classic_explorer_menu() -> Result<(), Box<dyn std::error::Error>> {
+    match unregister_shell() {
+        Ok(()) => Ok(()),
+        Err(err) if err.to_lowercase().contains("administrator") => elevate_shell_unregistration(),
         Err(err) => Err(err.into()),
     }
 }
@@ -467,6 +506,18 @@ fn register_shell_from_args() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+/// `msix-unregister-shell` — elevated half of classic menu removal.
+fn unregister_shell_from_args() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(not(windows))]
+    {
+        Err("msix-unregister-shell is Windows-only".into())
+    }
+    #[cfg(windows)]
+    {
+        unregister_shell().map_err(|err| err.into())
+    }
+}
+
 #[cfg(windows)]
 fn register_shell_at(exe: &Path, dll: &Path, icons: &Path) -> Result<(), String> {
     let paths = shellzip_integrate::IntegratePaths {
@@ -476,6 +527,28 @@ fn register_shell_at(exe: &Path, dll: &Path, icons: &Path) -> Result<(), String>
     };
     shellzip_integrate::integrate(&paths).map_err(|err| err.to_string())?;
     println!("registered classic Explorer menu for {}", exe.display());
+    Ok(())
+}
+
+#[cfg(windows)]
+fn unregister_shell() -> Result<(), String> {
+    // Paths are unused on Windows unintegrate; supply placeholders.
+    let paths = shellzip_integrate::IntegratePaths {
+        exe: PathBuf::from("shellzip.exe"),
+        icons_source: PathBuf::from("."),
+        shell_dll: None,
+    };
+    shellzip_integrate::unintegrate(&paths).map_err(|err| err.to_string())?;
+    println!("unregistered classic Explorer menu");
+    Ok(())
+}
+
+#[cfg(windows)]
+fn register_msix_cleanup_task() -> Result<(), Box<dyn std::error::Error>> {
+    let identity = env_nonempty("STORE_IDENTITY_NAME").unwrap_or_else(|| "ShellZip".into());
+    shellzip_integrate::register_msix_uninstall_cleanup(&identity)
+        .map_err(|err| -> Box<dyn std::error::Error> { err.to_string().into() })?;
+    println!("registered MSIX shell cleanup task for {identity}");
     Ok(())
 }
 
@@ -508,6 +581,28 @@ if ($null -eq $p -or $p.ExitCode -ne 0) {{
         format!("classic Explorer menu registration failed ({err})").into()
     })?;
     println!("registered classic Explorer menu for {}", exe.display());
+    Ok(())
+}
+
+#[cfg(windows)]
+fn elevate_shell_unregistration() -> Result<(), Box<dyn std::error::Error>> {
+    let xtask = std::env::current_exe()?;
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+$p = Start-Process -FilePath {xtask} -Verb RunAs -Wait -PassThru -ArgumentList @(
+  'msix-unregister-shell'
+)
+if ($null -eq $p -or $p.ExitCode -ne 0) {{
+  throw 'could not unregister the Explorer menu (approve the UAC prompt)'
+}}
+"#,
+        xtask = ps_single_quoted(&xtask.to_string_lossy()),
+    );
+    run_powershell(&script).map_err(|err| -> Box<dyn std::error::Error> {
+        format!("classic Explorer menu unregistration failed ({err})").into()
+    })?;
+    println!("unregistered classic Explorer menu");
     Ok(())
 }
 
@@ -553,6 +648,12 @@ fn stop_explorer() {
         r#"
 $ErrorActionPreference = 'SilentlyContinue'
 Stop-Process -Name explorer -Force
+$deadline = (Get-Date).AddSeconds(5)
+while ((Get-Date) -lt $deadline) {
+  if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) { break }
+  Start-Sleep -Milliseconds 200
+}
+Start-Sleep -Milliseconds 300
 "#,
     );
 }
@@ -714,20 +815,20 @@ fn sign_msix(msix: &Path, pfx: &Path) -> Result<(), Box<dyn std::error::Error>> 
 #[cfg(windows)]
 fn add_appx_package(msix: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let msix = absolute_path(msix)?;
-    let identity = env_nonempty("STORE_IDENTITY_NAME").unwrap_or_else(|| "ShellZip".into());
+    // Drop classic keys before Remove-AppxPackage so a replaced sideload does
+    // not keep stale icons pointing at the previous LocalAppData copy.
+    stop_explorer();
+    let unregister = unregister_classic_explorer_menu();
+    start_explorer();
+    if let Err(err) = unregister {
+        eprintln!("xtask: warning: could not clear prior classic Explorer menu ({err})");
+    }
+    remove_appx_package()?;
     let script = format!(
         r#"
 $ErrorActionPreference = 'Stop'
-$identity = {identity}
-Get-AppxPackage |
-  Where-Object {{ $_.Name -eq $identity -or $_.Name -like ($identity + '_*') -or $_.Name -like ('*' + $identity + '*') }} |
-  ForEach-Object {{
-    Write-Output ('removing ' + $_.PackageFullName)
-    Remove-AppxPackage -Package $_.PackageFullName
-  }}
 Add-AppxPackage -Path {msix} -ForceUpdateFromAnyVersion -ForceApplicationShutdown
 "#,
-        identity = ps_single_quoted(&identity),
         msix = ps_single_quoted(&msix.to_string_lossy()),
     );
     run_powershell(&script).map_err(|err| {
@@ -735,6 +836,31 @@ Add-AppxPackage -Path {msix} -ForceUpdateFromAnyVersion -ForceApplicationShutdow
             "Add-AppxPackage failed ({err}). Ensure the developer certificate is in LocalMachine\\TrustedPeople and Developer Mode (or sideloading) is enabled."
         )
     })?;
+    Ok(())
+}
+
+/// Remove any installed ShellZip Appx package for this user.
+#[cfg(windows)]
+fn remove_appx_package() -> Result<(), Box<dyn std::error::Error>> {
+    let identity = env_nonempty("STORE_IDENTITY_NAME").unwrap_or_else(|| "ShellZip".into());
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+$identity = {identity}
+$packages = @(Get-AppxPackage |
+  Where-Object {{ $_.Name -eq $identity -or $_.Name -like ($identity + '_*') -or $_.Name -like ('*' + $identity + '*') }})
+if ($packages.Count -eq 0) {{
+  Write-Output 'no ShellZip Appx package installed'
+  exit 0
+}}
+foreach ($pkg in $packages) {{
+  Write-Output ('removing ' + $pkg.PackageFullName)
+  Remove-AppxPackage -Package $pkg.PackageFullName
+}}
+"#,
+        identity = ps_single_quoted(&identity),
+    );
+    run_powershell(&script).map_err(|err| format!("Remove-AppxPackage failed ({err})"))?;
     Ok(())
 }
 
@@ -789,6 +915,7 @@ fn run_powershell(script: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// `1.2.3` → `1.2.3.0` for the Appx Identity Version attribute.
+#[cfg(any(windows, test))]
 fn msix_version(semver: &str) -> Result<String, Box<dyn std::error::Error>> {
     let trimmed = semver.trim().trim_start_matches('v');
     let mut parts = trimmed.split('.');
@@ -813,6 +940,7 @@ fn write_resized_png(src: &Path, dest: &Path, size: u32) -> Result<(), Box<dyn s
     Ok(())
 }
 
+#[cfg(any(windows, test))]
 fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -822,9 +950,11 @@ fn xml_escape(value: &str) -> String {
 }
 
 /// Store-package `IExplorerCommand` CLSID (must match `shellzip-shell`).
+#[cfg(any(windows, test))]
 const EXPLORER_COMMAND_CLSID: &str = "B8D4F6C2-5E3A-4B02-AF7D-9C2E1F3A4B56";
 
 /// Generate `AppxManifest.xml` for the full-trust desktop package.
+#[cfg(any(windows, test))]
 fn build_appx_manifest(
     identity_name: &str,
     publisher: &str,

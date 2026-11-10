@@ -17,9 +17,14 @@ pub use formats::{
     ArchiveKind, EXTENSIONS, FormatIcon, MIME_TYPES, icon_for_extension, icon_for_path,
     kind_for_path,
 };
-pub use install::{IntegrateError, IntegratePaths, integrate, unintegrate};
 #[cfg(windows)]
-pub use install::{aumid_from_windowsapps_path, registered_aumid, registered_host_exe};
+pub use install::{
+    ICON_HANDLER_EXTENSIONS, MENU_HANDLER_KEYS, RegistrationKeyPlan, SHELL_CLSID,
+    aumid_from_windowsapps_path, msix_cleanup_script, register_msix_uninstall_cleanup,
+    registered_aumid, registered_host_exe, registration_key_plan,
+    unregister_msix_uninstall_cleanup,
+};
+pub use install::{IntegrateError, IntegratePaths, integrate, unintegrate};
 pub use menu::{
     ExplorerCommand, MenuAction, MenuModel, MenuRow, action_flag, action_label, action_verb,
     explorer_commands, is_registered_archive, linux_named_label, menu_for_selection,

@@ -95,6 +95,13 @@ pub fn aumid_from_windowsapps_path(exe: &std::path::Path) -> Option<String> {
     windows::aumid_from_windowsapps_path(exe)
 }
 
+#[cfg(windows)]
+pub use windows::{
+    ICON_HANDLER_EXTENSIONS, MENU_HANDLER_KEYS, RegistrationKeyPlan, SHELL_CLSID,
+    msix_cleanup_script, register_msix_uninstall_cleanup, registration_key_plan,
+    unregister_msix_uninstall_cleanup,
+};
+
 /// Install per-user associations, icons, and menus for this OS.
 pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
     #[cfg(windows)]

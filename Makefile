@@ -41,7 +41,7 @@ endif
 	test test-cli test-core test-sfx build-sfx \
 	check clippy lint fmt fmt-check doc deny \
 	clean ci install install-gui install-shell \
-	gen-file-icons bench velopack-stage velopack-pack msix help
+	gen-file-icons bench velopack-stage velopack-pack msix msix-uninstall help
 
 # Velopack channel for this host (win / osx / linux).
 ifeq ($(OS),Windows_NT)
@@ -190,6 +190,15 @@ else
 	@echo msix is Windows-only
 endif
 
+# Windows-only: clear classic Explorer registration and remove the sideloaded
+# ShellZip Appx package (Settings uninstall uses the cleanup scheduled task).
+msix-uninstall:
+ifeq ($(OS),Windows_NT)
+	$(CARGO) run -p xtask -- msix-uninstall
+else
+	@echo msix-uninstall is Windows-only
+endif
+
 help:
 	@echo ShellZip Makefile
 	@echo   make / make build     Debug workspace build
@@ -222,4 +231,5 @@ help:
 	@echo   make velopack-stage   Stage binaries + icons under dist/velopack/
 	@echo   make velopack-pack    Stage then run vpk pack (GPG when env set)
 	@echo   make msix             Windows: pack, self-sign, and sideload Store MSIX
+	@echo   make msix-uninstall   Windows: clear classic menu keys and remove Appx
 	@echo   make clean            cargo clean

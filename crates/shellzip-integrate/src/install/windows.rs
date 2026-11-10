@@ -1,6 +1,7 @@
 //! Per-user Windows ProgIDs, icons, and shell-extension registration.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -11,7 +12,8 @@ use super::{IntegrateError, IntegratePaths};
 use crate::formats::EXTENSIONS;
 use crate::writers::windows_registry_plan;
 
-const SHELL_CLSID: &str = "{A7C3E5B1-4D2F-4A91-9E6C-8B1F0D2E3A45}";
+/// Classic in-proc `IContextMenu` CLSID (must match `shellzip-shell`).
+pub const SHELL_CLSID: &str = "{A7C3E5B1-4D2F-4A91-9E6C-8B1F0D2E3A45}";
 const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Approved";
 /// Where integrate stores the GUI path for the shell extension to launch.
 const HOST_EXE_KEY: &str = r"Software\ShellZip";
@@ -20,12 +22,25 @@ const HOST_EXE_VALUE: &str = "ExePath";
 const HOST_AUMID_VALUE: &str = "Aumid";
 /// Application Id from the Store MSIX manifest.
 const PACKAGE_APP_ID: &str = "ShellZip";
+/// Scheduled task that cleans classic keys after Settings removes the MSIX.
+const CLEANUP_TASK_NAME: &str = "ShellZipMsixShellCleanup";
+const CLEANUP_SCRIPT_NAME: &str = "msix-shell-cleanup.ps1";
+/// AppX deployment log channel on Windows 10 1809+.
+const APPX_EVENT_LOG: &str = "Microsoft-Windows-AppXDeploymentServer/Operational";
+/// `DeploymentOperation` value for Remove (see event 400 / 603).
+const APPX_REMOVE_OPERATION: &str = "2";
+/// Event fired when an AppX Remove finishes successfully.
+const APPX_REMOVE_FINISHED_EVENT_ID: u32 = 400;
+
 /// Files, filesystem folders, and the Folder class (drives and namespace folders).
-const MENU_HANDLER_KEYS: &[&str] = &[
+pub const MENU_HANDLER_KEYS: &[&str] = &[
     r"*\shellex\ContextMenuHandlers\ShellZip",
     r"Directory\shellex\ContextMenuHandlers\ShellZip",
     r"Folder\shellex\ContextMenuHandlers\ShellZip",
 ];
+
+/// Compound-archive ProgIDs that register an `IconHandler`.
+pub const ICON_HANDLER_EXTENSIONS: &[&str] = &["gz", "bz2", "xz", "zst"];
 
 /// Install associations and copy format icons into LocalAppData.
 pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
@@ -74,7 +89,7 @@ pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
         let _ = classes.delete_subkey_all(&legacy);
 
         // Compound archives end in .gz / .bz2 / .xz / .zst; IconHandler picks tar.*.ico.
-        if matches!(kind.extension, "gz" | "bz2" | "xz" | "zst") {
+        if ICON_HANDLER_EXTENSIONS.contains(&kind.extension) {
             let icon_handler = format!("{prog}\\shellex\\IconHandler", prog = kind.prog_id);
             classes
                 .create_subkey(&icon_handler)?
@@ -97,57 +112,63 @@ pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
 }
 
 /// Remove ProgIDs, OpenWith entries, icons, and the shell-extension CLSID.
+///
+/// # Errors
+///
+/// Returns when HKLM deletion is denied so the caller can elevate and retry.
 pub fn unintegrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let classes = match hkcu.open_subkey_with_flags("Software\\Classes", KEY_ALL_ACCESS) {
-        Ok(key) => key,
-        Err(_) => {
-            remove_machine_registration();
-            if let Ok(dll) = shell_dll_dest() {
-                let _ = fs::remove_file(dll);
-            }
-            return Ok(());
-        }
+        Ok(key) => Some(key),
+        Err(err) if is_not_found(&err) => None,
+        Err(err) => return Err(err.into()),
     };
 
-    for kind in EXTENSIONS {
-        let _ = classes.delete_subkey_all(kind.prog_id);
-        let ext_key = format!(".{}", kind.extension);
-        if let Ok(open_with) =
-            classes.open_subkey_with_flags(format!("{ext_key}\\OpenWithProgids"), KEY_ALL_ACCESS)
-        {
-            let _ = open_with.delete_value(kind.prog_id);
+    if let Some(classes) = classes.as_ref() {
+        for kind in EXTENSIONS {
+            let _ = classes.delete_subkey_all(kind.prog_id);
+            let ext_key = format!(".{}", kind.extension);
+            if let Ok(open_with) = classes
+                .open_subkey_with_flags(format!("{ext_key}\\OpenWithProgids"), KEY_ALL_ACCESS)
+            {
+                let _ = open_with.delete_value(kind.prog_id);
+            }
+            let assoc = format!(
+                "SystemFileAssociations\\.{ext}\\shellex\\ContextMenuHandlers\\ShellZip",
+                ext = kind.extension
+            );
+            let _ = classes.delete_subkey_all(&assoc);
+            if let Ok(ext) = classes.open_subkey_with_flags(&ext_key, KEY_ALL_ACCESS)
+                && let Ok(current) = ext.get_value::<String, _>("")
+                && current == kind.prog_id
+            {
+                let _ = ext.delete_value("");
+            }
         }
-        let assoc = format!(
-            "SystemFileAssociations\\.{ext}\\shellex\\ContextMenuHandlers\\ShellZip",
-            ext = kind.extension
-        );
-        let _ = classes.delete_subkey_all(&assoc);
-        if let Ok(ext) = classes.open_subkey_with_flags(&ext_key, KEY_ALL_ACCESS)
-            && let Ok(current) = ext.get_value::<String, _>("")
-            && current == kind.prog_id
-        {
-            let _ = ext.delete_value("");
+
+        for key in MENU_HANDLER_KEYS {
+            delete_subkey_all_ok(classes, key)?;
         }
     }
 
-    for key in MENU_HANDLER_KEYS {
-        let _ = classes.delete_subkey_all(key);
-    }
-
-    let _ = hkcu.delete_subkey_all(format!(r"Software\Classes\CLSID\{SHELL_CLSID}"));
+    delete_subkey_all_ok(&hkcu, &format!(r"Software\Classes\CLSID\{SHELL_CLSID}"))?;
     if let Ok(approved) = hkcu.open_subkey_with_flags(APPROVED, KEY_ALL_ACCESS) {
         let _ = approved.delete_value(SHELL_CLSID);
     }
-    remove_machine_registration();
+    remove_machine_registration()?;
     let _ = hkcu.delete_subkey_all(HOST_EXE_KEY);
     if let Ok(dll) = shell_dll_dest() {
-        let _ = fs::remove_file(dll);
+        remove_file_with_retry(&dll);
     }
 
     if let Ok(dir) = icons_install_dir() {
-        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(&dir);
+        if let Some(parent) = dir.parent() {
+            // Leave settings.toml alone; remove the folder only when empty of shell bits.
+            let _ = fs::remove_dir(parent);
+        }
     }
+    let _ = unregister_msix_uninstall_cleanup();
     let _ = paths;
     let _ = notify_assoc_changed();
     Ok(())
@@ -317,17 +338,67 @@ fn write_com_server(hive: RegistryHive, dll: &str) -> Result<(), IntegrateError>
     Ok(())
 }
 
-fn remove_machine_registration() {
+fn remove_machine_registration() -> Result<(), IntegrateError> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    if let Ok(classes) = hklm.open_subkey_with_flags("Software\\Classes", KEY_ALL_ACCESS) {
-        for key in MENU_HANDLER_KEYS {
-            let _ = classes.delete_subkey_all(key);
+    match hklm.open_subkey_with_flags("Software\\Classes", KEY_ALL_ACCESS) {
+        Ok(classes) => {
+            for key in MENU_HANDLER_KEYS {
+                delete_subkey_all_ok(&classes, key)?;
+            }
         }
+        Err(err) if is_not_found(&err) => {}
+        Err(err) if is_access_denied(&err) => {
+            return Err(machine_access_denied(err));
+        }
+        Err(err) => return Err(err.into()),
     }
-    let _ = hklm.delete_subkey_all(format!(r"Software\Classes\CLSID\{SHELL_CLSID}"));
-    if let Ok(approved) = hklm.open_subkey_with_flags(APPROVED, KEY_ALL_ACCESS) {
-        let _ = approved.delete_value(SHELL_CLSID);
+    match hklm.delete_subkey_all(format!(r"Software\Classes\CLSID\{SHELL_CLSID}")) {
+        Ok(()) => {}
+        Err(err) if is_not_found(&err) => {}
+        Err(err) if is_access_denied(&err) => {
+            return Err(machine_access_denied(err));
+        }
+        Err(err) => return Err(err.into()),
     }
+    match hklm.open_subkey_with_flags(APPROVED, KEY_ALL_ACCESS) {
+        Ok(approved) => match approved.delete_value(SHELL_CLSID) {
+            Ok(()) => {}
+            Err(err) if is_not_found(&err) => {}
+            Err(err) if is_access_denied(&err) => {
+                return Err(machine_access_denied(err));
+            }
+            Err(err) => return Err(err.into()),
+        },
+        Err(err) if is_not_found(&err) => {}
+        Err(err) if is_access_denied(&err) => {
+            return Err(machine_access_denied(err));
+        }
+        Err(err) => return Err(err.into()),
+    }
+    Ok(())
+}
+
+fn delete_subkey_all_ok(root: &RegKey, path: &str) -> Result<(), IntegrateError> {
+    match root.delete_subkey_all(path) {
+        Ok(()) => Ok(()),
+        Err(err) if is_not_found(&err) => Ok(()),
+        Err(err) if is_access_denied(&err) => Err(machine_access_denied(err)),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn machine_access_denied(err: io::Error) -> IntegrateError {
+    IntegrateError::Message(format!(
+        "could not unregister the Explorer menu for this machine ({err}). Run ShellZip as administrator and unintegrate again"
+    ))
+}
+
+fn is_access_denied(err: &io::Error) -> bool {
+    err.raw_os_error() == Some(5)
+}
+
+fn is_not_found(err: &io::Error) -> bool {
+    err.kind() == io::ErrorKind::NotFound || matches!(err.raw_os_error(), Some(2) | Some(3))
 }
 
 fn shell_dll_dest() -> Result<PathBuf, IntegrateError> {
@@ -356,6 +427,321 @@ fn install_shell_dll(source: &Path) -> Result<PathBuf, IntegrateError> {
     }
 }
 
+/// ProgIDs, menu handler paths, and IconHandler paths written by [`integrate`].
+pub fn registration_key_plan() -> RegistrationKeyPlan {
+    let mut prog_ids = Vec::new();
+    let mut icon_handlers = Vec::new();
+    for kind in EXTENSIONS {
+        prog_ids.push(kind.prog_id.to_string());
+        if ICON_HANDLER_EXTENSIONS.contains(&kind.extension) {
+            icon_handlers.push(format!(r"{prog}\shellex\IconHandler", prog = kind.prog_id));
+        }
+    }
+    RegistrationKeyPlan {
+        menu_handlers: MENU_HANDLER_KEYS.iter().map(|s| (*s).to_string()).collect(),
+        prog_ids,
+        icon_handlers,
+        clsid: SHELL_CLSID.to_string(),
+        approved: APPROVED.to_string(),
+        host_exe_key: HOST_EXE_KEY.to_string(),
+    }
+}
+
+/// Snapshot of every registry path install writes so uninstall cannot drift.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistrationKeyPlan {
+    /// `ContextMenuHandlers\ShellZip` under `*`, `Directory`, and `Folder`.
+    pub menu_handlers: Vec<String>,
+    /// Per-format ProgIDs such as `ShellZip.zip`.
+    pub prog_ids: Vec<String>,
+    /// ProgID-relative `shellex\IconHandler` paths for compound archives.
+    pub icon_handlers: Vec<String>,
+    /// Classic shell-extension CLSID string including braces.
+    pub clsid: String,
+    /// Shell Extensions\Approved key under Software.
+    pub approved: String,
+    /// `Software\ShellZip` host path key.
+    pub host_exe_key: String,
+}
+
+/// Install a per-user task that clears classic registration after MSIX removal.
+///
+/// # Errors
+///
+/// Returns when `LOCALAPPDATA` is missing or `schtasks` fails.
+pub fn register_msix_uninstall_cleanup(identity_name: &str) -> Result<(), IntegrateError> {
+    let script_path = cleanup_script_path()?;
+    if let Some(parent) = script_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&script_path, msix_cleanup_script(identity_name))?;
+    let task_xml = msix_cleanup_task_xml(identity_name, &script_path)?;
+    let xml_path = script_path.with_extension("task.xml");
+    write_utf16_le_bom(&xml_path, &task_xml)?;
+    let status = Command::new("schtasks")
+        .args([
+            "/Create",
+            "/TN",
+            CLEANUP_TASK_NAME,
+            "/XML",
+            &xml_path.to_string_lossy(),
+            "/F",
+        ])
+        .status()
+        .map_err(|err| {
+            IntegrateError::Message(format!("could not create MSIX cleanup task ({err})"))
+        })?;
+    let _ = fs::remove_file(&xml_path);
+    if !status.success() {
+        return Err(IntegrateError::Message(format!(
+            "schtasks /Create failed with {status}"
+        )));
+    }
+    Ok(())
+}
+
+/// Delete the MSIX cleanup task and its script if they exist.
+pub fn unregister_msix_uninstall_cleanup() -> Result<(), IntegrateError> {
+    let _ = Command::new("schtasks")
+        .args(["/Delete", "/TN", CLEANUP_TASK_NAME, "/F"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    if let Ok(script) = cleanup_script_path() {
+        let _ = fs::remove_file(&script);
+        let _ = fs::remove_file(script.with_extension("task.xml"));
+    }
+    Ok(())
+}
+
+/// Explorer often keeps `shellzip_shell.dll` mapped briefly after Stop-Process.
+fn remove_file_with_retry(path: &Path) {
+    for attempt in 0..8 {
+        match fs::remove_file(path) {
+            Ok(()) => return,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return,
+            Err(_) if attempt + 1 < 8 => {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+            Err(_) => return,
+        }
+    }
+}
+
+fn cleanup_script_path() -> Result<PathBuf, IntegrateError> {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| IntegrateError::Message("LOCALAPPDATA is not set".into()))?;
+    Ok(base.join("ShellZip").join(CLEANUP_SCRIPT_NAME))
+}
+
+/// PowerShell body that mirrors [`unintegrate`] for Settings / Remove-AppxPackage.
+pub fn msix_cleanup_script(identity_name: &str) -> String {
+    let plan = registration_key_plan();
+    let handlers = plan
+        .menu_handlers
+        .iter()
+        .map(|k| format!("  '{}'", ps_single_quoted(k)))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let prog_ids = plan
+        .prog_ids
+        .iter()
+        .map(|k| format!("  '{}'", ps_single_quoted(k)))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let identity = ps_single_quoted(identity_name);
+    let clsid = ps_single_quoted(&plan.clsid);
+    let approved = ps_single_quoted(&plan.approved);
+    let host = ps_single_quoted(&plan.host_exe_key);
+    let task = ps_single_quoted(CLEANUP_TASK_NAME);
+    format!(
+        r#"param(
+  [Parameter(Mandatory = $false)]
+  [string]$PackageFullName = ''
+)
+$ErrorActionPreference = 'SilentlyContinue'
+$identity = '{identity}'
+if ([string]::IsNullOrWhiteSpace($PackageFullName) -or -not ($PackageFullName.StartsWith($identity + '_'))) {{
+  exit 0
+}}
+$stillInstalled = @(Get-AppxPackage | Where-Object {{
+  $_.Name -eq $identity -or $_.Name -like ($identity + '_*') -or $_.PackageFullName -like ($identity + '_*')
+}})
+if ($stillInstalled.Count -gt 0) {{
+  exit 0
+}}
+
+$menuHandlers = @(
+{handlers}
+)
+$progIds = @(
+{prog_ids}
+)
+$clsid = '{clsid}'
+$approved = '{approved}'
+$hostKey = '{host}'
+
+function Remove-Key([Microsoft.Win32.RegistryKey]$root, [string]$path) {{
+  try {{ $root.DeleteSubKeyTree($path, $false) }} catch {{ }}
+}}
+function Remove-Value([Microsoft.Win32.RegistryKey]$root, [string]$path, [string]$name) {{
+  try {{
+    $key = $root.OpenSubKey($path, $true)
+    if ($null -ne $key) {{ $key.DeleteValue($name, $false); $key.Close() }}
+  }} catch {{ }}
+}}
+
+$hkcu = [Microsoft.Win32.Registry]::CurrentUser
+$hklm = [Microsoft.Win32.Registry]::LocalMachine
+$classes = $hkcu.OpenSubKey('Software\Classes', $true)
+if ($null -ne $classes) {{
+  foreach ($prog in $progIds) {{ Remove-Key $classes $prog }}
+  foreach ($handler in $menuHandlers) {{ Remove-Key $classes $handler }}
+  foreach ($prog in $progIds) {{
+    $ext = '.' + ($prog -replace '^ShellZip\.', '')
+    Remove-Value $classes ($ext + '\OpenWithProgids') $prog
+    try {{
+      $extKey = $classes.OpenSubKey($ext, $true)
+      if ($null -ne $extKey) {{
+        $current = [string]$extKey.GetValue('')
+        if ($current -eq $prog) {{ $extKey.DeleteValue('', $false) }}
+        $extKey.Close()
+      }}
+    }} catch {{ }}
+  }}
+  $classes.Close()
+}}
+Remove-Key $hkcu ("Software\Classes\CLSID\" + $clsid)
+Remove-Value $hkcu $approved $clsid
+Remove-Key $hkcu $hostKey
+
+$machineClasses = $hklm.OpenSubKey('Software\Classes', $true)
+if ($null -ne $machineClasses) {{
+  foreach ($handler in $menuHandlers) {{ Remove-Key $machineClasses $handler }}
+  $machineClasses.Close()
+}}
+Remove-Key $hklm ("Software\Classes\CLSID\" + $clsid)
+Remove-Value $hklm $approved $clsid
+
+$root = Join-Path $env:LOCALAPPDATA 'ShellZip'
+$dll = Join-Path $root 'shellzip_shell.dll'
+$icons = Join-Path $root 'icons'
+$script = Join-Path $root '{script_name}'
+Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+$deadline = (Get-Date).AddSeconds(5)
+while ((Get-Date) -lt $deadline) {{
+  if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) {{ break }}
+  Start-Sleep -Milliseconds 200
+}}
+for ($i = 0; $i -lt 8; $i++) {{
+  if (-not (Test-Path -LiteralPath $dll)) {{ break }}
+  Remove-Item -LiteralPath $dll -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 250
+}}
+Remove-Item -LiteralPath $icons -Recurse -Force -ErrorAction SilentlyContinue
+Start-Process explorer.exe
+Start-Process -FilePath ie4uinit.exe -ArgumentList '-show' -WindowStyle Hidden -ErrorAction SilentlyContinue
+schtasks /Delete /TN '{task}' /F | Out-Null
+Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath ($script -replace '\.ps1$','.task.xml') -Force -ErrorAction SilentlyContinue
+"#,
+        identity = identity,
+        handlers = handlers,
+        prog_ids = prog_ids,
+        clsid = clsid,
+        approved = approved,
+        host = host,
+        task = task,
+        script_name = CLEANUP_SCRIPT_NAME,
+    )
+}
+
+fn msix_cleanup_task_xml(
+    _identity_name: &str,
+    script_path: &Path,
+) -> Result<String, IntegrateError> {
+    let script = xml_escape(&script_path.to_string_lossy());
+    // Event Viewer XPath on 1809 rejects starts-with/contains; filter Remove
+    // completion broadly and let the script match PackageFullName.
+    let query = xml_escape(&format!(
+        r"*[System[Provider[@Name='Microsoft-Windows-AppXDeployment-Server'] and EventID={event_id}]] and *[EventData[Data[@Name='DeploymentOperation']='{op}']]",
+        event_id = APPX_REMOVE_FINISHED_EVENT_ID,
+        op = APPX_REMOVE_OPERATION,
+    ));
+    Ok(format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Removes ShellZip classic Explorer registration after the MSIX package is uninstalled.</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <EventTrigger>
+      <Enabled>true</Enabled>
+      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="{log}"&gt;&lt;Select Path="{log}"&gt;{query}&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
+      <ValueQueries>
+        <Value name="PackageFullName">Event/EventData/Data[@Name='PackageFullName']</Value>
+      </ValueQueries>
+    </EventTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>true</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{script}" "$(PackageFullName)"</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"#,
+        log = APPX_EVENT_LOG,
+        query = query,
+        script = script,
+    ))
+}
+
+fn ps_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// `schtasks /Create /XML` expects Unicode (UTF-16 LE with BOM) on Windows 10.
+fn write_utf16_le_bom(path: &Path, text: &str) -> Result<(), IntegrateError> {
+    let mut bytes = Vec::with_capacity(2 + text.len() * 2);
+    bytes.extend_from_slice(&[0xFF, 0xFE]);
+    for unit in text.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    fs::write(path, bytes)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,6 +752,59 @@ mod tests {
         assert!(joined.contains(r"*\shellex\ContextMenuHandlers\ShellZip"));
         assert!(joined.contains(r"Directory\shellex\ContextMenuHandlers\ShellZip"));
         assert!(joined.contains(r"Folder\shellex\ContextMenuHandlers\ShellZip"));
+    }
+
+    #[test]
+    fn registration_plan_covers_install_writes() {
+        let plan = registration_key_plan();
+        assert_eq!(plan.menu_handlers.len(), MENU_HANDLER_KEYS.len());
+        for key in MENU_HANDLER_KEYS {
+            assert!(plan.menu_handlers.iter().any(|k| k == key));
+        }
+        assert_eq!(plan.prog_ids.len(), EXTENSIONS.len());
+        for kind in EXTENSIONS {
+            assert!(plan.prog_ids.iter().any(|p| p == kind.prog_id));
+        }
+        for ext in ICON_HANDLER_EXTENSIONS {
+            let expected = format!("ShellZip.{ext}\\shellex\\IconHandler");
+            assert!(
+                plan.icon_handlers.iter().any(|p| p == &expected),
+                "missing icon handler {expected}"
+            );
+        }
+        assert_eq!(plan.clsid, SHELL_CLSID);
+        assert_eq!(plan.approved, APPROVED);
+        assert_eq!(plan.host_exe_key, HOST_EXE_KEY);
+    }
+
+    #[test]
+    fn cleanup_script_lists_shared_keys() {
+        let script = msix_cleanup_script("ShellZip");
+        assert!(script.contains(r"*\shellex\ContextMenuHandlers\ShellZip"));
+        assert!(script.contains("ShellZip.zip"));
+        assert!(script.contains(SHELL_CLSID));
+        assert!(script.contains("Get-AppxPackage"));
+        assert!(script.contains(CLEANUP_TASK_NAME));
+    }
+
+    #[test]
+    fn cleanup_task_xml_targets_appx_remove_finished() {
+        let xml =
+            msix_cleanup_task_xml("ShellZip", Path::new(r"C:\Temp\cleanup.ps1")).expect("task xml");
+        assert!(xml.contains(&APPX_REMOVE_FINISHED_EVENT_ID.to_string()));
+        assert!(xml.contains(APPX_EVENT_LOG));
+        assert!(xml.contains("DeploymentOperation"));
+        assert!(xml.contains("PackageFullName"));
+        assert!(xml.contains(r#"$(PackageFullName)"#));
+        assert!(xml.contains(r"C:\Temp\cleanup.ps1"));
+        assert!(xml.contains("HighestAvailable"));
+    }
+
+    #[test]
+    fn cleanup_script_requires_matching_package_full_name() {
+        let script = msix_cleanup_script("ShellZip");
+        assert!(script.contains("PackageFullName.StartsWith($identity + '_')"));
+        assert!(script.contains("param("));
     }
 
     #[test]
