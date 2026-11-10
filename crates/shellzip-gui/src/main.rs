@@ -101,11 +101,11 @@ fn anstream_fallback(err: &eframe::Error) {
     eprintln!("shellzip: {err}");
 }
 
-/// Title-bar and taskbar icon. The Windows file icon is embedded by `build.rs`.
+/// Title-bar icon. The Windows file/taskbar icon is embedded by `build.rs`.
 fn window_icon() -> Option<egui::IconData> {
     let image = image::load_from_memory(include_bytes!("../assets/icon.png")).ok()?;
     let mut rgba = image.into_rgba8();
-    clear_white_margin(&mut rgba);
+    clear_icon_matte(&mut rgba);
     let (width, height) = rgba.dimensions();
     Some(egui::IconData {
         rgba: rgba.into_raw(),
@@ -114,9 +114,11 @@ fn window_icon() -> Option<egui::IconData> {
     })
 }
 
-/// The source tile is a rounded square on an opaque white matte. Flood-fill that
-/// matte from the edges so the title bar shows the window color instead of a white box.
-fn clear_white_margin(image: &mut image::RgbaImage) {
+/// Flood-fill edge mattes so only the nautilus remains on a transparent field.
+///
+/// Source art has shipped with a white studio matte and later a dark rounded
+/// plate; either reads as a square border on the title bar / taskbar.
+fn clear_icon_matte(image: &mut image::RgbaImage) {
     let width = image.width();
     let height = image.height();
     if width == 0 || height == 0 {
@@ -147,7 +149,7 @@ fn clear_white_margin(image: &mut image::RgbaImage) {
             continue;
         }
         seen[index] = true;
-        if !is_white_margin(*image.get_pixel(x, y)) {
+        if !is_icon_matte(*image.get_pixel(x, y)) {
             continue;
         }
         image.put_pixel(x, y, image::Rgba([0, 0, 0, 0]));
@@ -173,15 +175,29 @@ fn pixel_index(width: u32, x: u32, y: u32) -> Option<usize> {
         .checked_add(usize::try_from(x).ok()?)
 }
 
-/// Light, near-gray pixels are the white matte or its anti-aliased edge.
-fn is_white_margin(pixel: image::Rgba<u8>) -> bool {
+/// White studio matte, dark app-tile plate, or their anti-aliased edges.
+fn is_icon_matte(pixel: image::Rgba<u8>) -> bool {
     let [red, green, blue, alpha] = pixel.0;
     if alpha == 0 {
         return true;
     }
     let max = red.max(green).max(blue);
     let min = red.min(green).min(blue);
-    min >= 96 && max - min <= 18
+    let chroma = max - min;
+    // Copper nautilus — keep warm pixels even when dark.
+    if red >= green.saturating_add(8) && red >= blue.saturating_add(8) && red > 40 {
+        return false;
+    }
+    // Light gray / white matte.
+    if min >= 96 && chroma <= 18 {
+        return true;
+    }
+    // Dark rounded plate used by some icon exports.
+    if chroma <= 28 && max <= 110 {
+        return true;
+    }
+    // Semi-transparent fringe around either matte.
+    alpha < 140 && chroma <= 40 && max <= 120
 }
 
 #[cfg(test)]
@@ -205,7 +221,7 @@ mod tests {
         assert_eq!(alpha(0, 0), 0, "top-left matte");
         assert_eq!(alpha(icon.width - 1, 0), 0, "top-right matte");
         assert_eq!(alpha(0, icon.height - 1), 0, "bottom-left matte");
-        assert_eq!(alpha(8, 8), 0, "white padding");
+        assert_eq!(alpha(8, 8), 0, "matte padding");
         assert_eq!(alpha(icon.width / 2, icon.height / 2), 255, "shell");
     }
 
