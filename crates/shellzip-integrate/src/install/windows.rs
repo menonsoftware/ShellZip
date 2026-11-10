@@ -113,10 +113,24 @@ pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
 
 /// Remove ProgIDs, OpenWith entries, icons, and the shell-extension CLSID.
 ///
+/// Always drops the MSIX cleanup scheduled task, even when a registry delete
+/// fails (for example HKLM access denied), so elevated retry does not leave a
+/// stale task behind.
+///
 /// # Errors
 ///
 /// Returns when HKLM deletion is denied so the caller can elevate and retry.
 pub fn unintegrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
+    let result = unintegrate_registry_and_files();
+    // Task removal must not depend on registry success; elevation may retry
+    // the hive writes while the package is already gone.
+    let _ = unregister_msix_uninstall_cleanup();
+    let _ = notify_assoc_changed();
+    let _ = paths;
+    result
+}
+
+fn unintegrate_registry_and_files() -> Result<(), IntegrateError> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let classes = match hkcu.open_subkey_with_flags("Software\\Classes", KEY_ALL_ACCESS) {
         Ok(key) => Some(key),
@@ -168,9 +182,6 @@ pub fn unintegrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
             let _ = fs::remove_dir(parent);
         }
     }
-    let _ = unregister_msix_uninstall_cleanup();
-    let _ = paths;
-    let _ = notify_assoc_changed();
     Ok(())
 }
 
