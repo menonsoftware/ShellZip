@@ -79,8 +79,8 @@ pub fn stub_file_names() -> &'static [&'static str] {
     {
         &[
             "shellzip-sfx.exe",
-            "szip-sfx-x86_64-pc-windows-msvc.exe",
             "shellzip-sfx",
+            "szip-sfx-x86_64-pc-windows-msvc.exe",
             "szip-sfx-x86_64-unknown-linux-gnu",
         ]
     }
@@ -674,7 +674,17 @@ mod tests {
         let names = stub_file_names();
         assert!(!names.is_empty());
         #[cfg(windows)]
-        assert!(names[0].ends_with(".exe"), "{names:?}");
+        {
+            assert_eq!(
+                names,
+                &[
+                    "shellzip-sfx.exe",
+                    "shellzip-sfx",
+                    "szip-sfx-x86_64-pc-windows-msvc.exe",
+                    "szip-sfx-x86_64-unknown-linux-gnu",
+                ]
+            );
+        }
         #[cfg(not(windows))]
         {
             assert_eq!(names[0], "shellzip-sfx");

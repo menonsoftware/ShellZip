@@ -383,6 +383,24 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
 fi
 ";
 
+/// `postrm` runs after dpkg has deleted this package's files. The desktop and
+/// icon caches are shared and are not removed with the package, so they must
+/// be rebuilt or the uninstalled entry and icons stay registered. `upgrade`
+/// is left to the new package's `postinst`.
+const DEBIAN_POSTRM: &str = r#"#!/bin/sh
+set -e
+case "$1" in
+remove|purge|disappear|abort-install)
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database -q /usr/share/applications || true
+    fi
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+"#;
+
 #[cfg(target_os = "linux")]
 fn deb_pack_linux() -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt;
@@ -509,7 +527,7 @@ fn deb_pack_linux() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(&postinst, DEBIAN_POSTINST)?;
     fs::set_permissions(&postinst, fs::Permissions::from_mode(0o755))?;
     let postrm = debian.join("postrm");
-    fs::write(&postrm, DEBIAN_POSTINST)?;
+    fs::write(&postrm, DEBIAN_POSTRM)?;
     fs::set_permissions(&postrm, fs::Permissions::from_mode(0o755))?;
 
     let installed_size = dir_size_kib(&root.join("usr"))?;
@@ -2253,8 +2271,9 @@ fn write_icns(
 #[cfg(test)]
 mod tests {
     use super::{
-        DEB_HOMEPAGE, DEBIAN_POSTINST, build_appx_manifest, debian_arch, debian_changelog,
-        debian_control, debian_copyright, msix_version, version_from_workspace_toml,
+        DEB_HOMEPAGE, DEBIAN_POSTINST, DEBIAN_POSTRM, build_appx_manifest, debian_arch,
+        debian_changelog, debian_control, debian_copyright, msix_version,
+        version_from_workspace_toml,
     };
 
     #[test]
@@ -2340,6 +2359,31 @@ version = "should-not-win"
     fn debian_postinst_refreshes_desktop_and_icons() {
         assert!(DEBIAN_POSTINST.contains("update-desktop-database"));
         assert!(DEBIAN_POSTINST.contains("gtk-update-icon-cache"));
+        assert!(
+            !DEBIAN_POSTINST.contains("remove|purge"),
+            "postinst must keep registering caches; removal belongs in postrm"
+        );
+    }
+
+    #[test]
+    fn debian_postrm_rebuilds_caches_only_after_removal() {
+        assert_ne!(DEBIAN_POSTRM, DEBIAN_POSTINST);
+        let case = DEBIAN_POSTRM
+            .find("case \"$1\" in")
+            .expect("postrm branches on the maintainer-script action");
+        let tools = DEBIAN_POSTRM
+            .find("update-desktop-database")
+            .expect("postrm rebuilds the desktop cache");
+        assert!(
+            case < tools,
+            "cache cleanup must sit inside the removal case"
+        );
+        assert!(DEBIAN_POSTRM.contains("gtk-update-icon-cache"));
+        assert!(DEBIAN_POSTRM.contains("remove|purge|disappear|abort-install"));
+        assert!(
+            !DEBIAN_POSTRM.contains("upgrade)"),
+            "an upgrade must not rebuild caches from the old package"
+        );
     }
 
     #[test]
