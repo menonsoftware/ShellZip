@@ -80,9 +80,9 @@ Layout:
 [ shellzip-sfx stub ][ ZIP or 7z payload ][ 24-byte trailer ]
 ```
 
-The stub locates the trailer, then extracts the payload. A 7z SFX is limited to LZMA2 so the stub can open it. Create with `szip a --sfx` or **SFX** in the GUI; unwrap with `szip s`. The package must stay under 4 GiB so Windows can load the PE.
+The stub locates the trailer, then extracts the payload. A 7z SFX is limited to LZMA2 so the stub can open it. Create with `szip a --sfx` or **SFX** in the GUI; unwrap with `szip s`. The package must stay under 4 GiB so Windows can load the PE. The Linux stub is the same layout and extracts on its own.
 
-Stub switches: `-s` silent, `-y` replace, `-d DIR` destination. On Windows without a console, a setup window chooses the folder. Silent mode reads `SZIP_PASSWORD` and does not prompt.
+Stub switches: `-s` silent, `-y` replace, `-d DIR` destination. On Windows without a console, a setup window chooses the folder. On Linux without a terminal, zenity or kdialog chooses the folder; if neither is installed, files are written beside the program. Silent mode reads `SZIP_PASSWORD` and does not prompt.
 
 ## Detection versus extension
 

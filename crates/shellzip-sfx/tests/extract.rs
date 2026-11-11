@@ -212,6 +212,161 @@ fn run_stub(sfx: &std::path::Path, args: &[&str], envs: &[(&str, &str)]) -> Outp
     );
 }
 
+#[cfg(unix)]
+fn install_dialog(dir: &std::path::Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bin = dir.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let program = bin.join("zenity");
+    fs::write(
+        &program,
+        "\
+#!/bin/sh
+printf '%s\\n' \"$@\" >> \"$ZENITY_LOG\"
+if [ \"${SFX_TEST_CANCEL:-}\" = 1 ]; then
+    exit 1
+fi
+for arg in \"$@\"; do
+    case \"$arg\" in
+        --file-selection)
+            printf '%s\\n' \"$SFX_TEST_DEST\"
+            exit 0
+            ;;
+        --password)
+            printf '%s\\n' \"${SFX_TEST_PASSWORD:-}\"
+            exit 0
+            ;;
+    esac
+done
+exit 0
+",
+    )
+    .unwrap();
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+    bin
+}
+
+#[cfg(unix)]
+fn dialog_envs(
+    bin: &std::path::Path,
+    dest: &std::path::Path,
+    log: &std::path::Path,
+    password: Option<&str>,
+    cancel: bool,
+) -> Vec<(String, String)> {
+    let mut envs = vec![
+        ("SZIP_SFX_DIALOG".to_string(), "1".to_string()),
+        ("PATH".to_string(), bin.display().to_string()),
+        ("DISPLAY".to_string(), ":1".to_string()),
+        ("SFX_TEST_DEST".to_string(), dest.display().to_string()),
+        ("ZENITY_LOG".to_string(), log.display().to_string()),
+    ];
+    if let Some(password) = password {
+        envs.push(("SFX_TEST_PASSWORD".to_string(), password.to_string()));
+    }
+    if cancel {
+        envs.push(("SFX_TEST_CANCEL".to_string(), "1".to_string()));
+    }
+    envs
+}
+
+#[cfg(unix)]
+fn run_dialog(sfx: &std::path::Path, envs: &[(String, String)]) -> std::process::Output {
+    let borrowed: Vec<(&str, &str)> = envs
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+    run_stub(sfx, &[], &borrowed)
+}
+
+#[cfg(unix)]
+#[test]
+fn desktop_dialog_extracts_into_the_chosen_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("note.txt");
+    fs::write(&src, b"hello-sfx").unwrap();
+    let zip_path = tmp.path().join("in.zip");
+    add(
+        &zip_path,
+        &[src],
+        &CompressOpts {
+            level: 0,
+            threads: 1,
+            ..CompressOpts::default()
+        },
+        &NopProgress,
+    )
+    .unwrap();
+    let sfx = tmp.path().join("package.sfx");
+    build(&sfx, &stub_bin(), &zip_path, SfxPayload::Zip, &NopProgress).unwrap();
+    let bin = install_dialog(tmp.path());
+    let dest = tmp.path().join("out");
+    fs::create_dir(&dest).unwrap();
+    let log = tmp.path().join("zenity.log");
+    let envs = dialog_envs(&bin, &dest, &log, None, false);
+    let output = run_dialog(&sfx, &envs);
+    assert!(output.status.success(), "stub exit {}", output.status);
+    assert_eq!(fs::read(dest.join("note.txt")).unwrap(), b"hello-sfx");
+    let recorded = fs::read_to_string(&log).unwrap();
+    assert!(recorded.contains("--file-selection"), "{recorded}");
+    assert!(recorded.contains("--info"), "{recorded}");
+    assert!(!recorded.contains("--password"), "{recorded}");
+}
+
+#[cfg(unix)]
+#[test]
+fn desktop_dialog_cancel_writes_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("note.txt");
+    fs::write(&src, b"hello-sfx").unwrap();
+    let zip_path = tmp.path().join("in.zip");
+    add(
+        &zip_path,
+        std::slice::from_ref(&src),
+        &CompressOpts {
+            level: 0,
+            threads: 1,
+            ..CompressOpts::default()
+        },
+        &NopProgress,
+    )
+    .unwrap();
+    fs::remove_file(&src).unwrap();
+    let sfx = tmp.path().join("package.sfx");
+    build(&sfx, &stub_bin(), &zip_path, SfxPayload::Zip, &NopProgress).unwrap();
+    let bin = install_dialog(tmp.path());
+    let dest = tmp.path().join("out");
+    fs::create_dir(&dest).unwrap();
+    let log = tmp.path().join("zenity.log");
+    let envs = dialog_envs(&bin, &dest, &log, None, true);
+    let output = run_dialog(&sfx, &envs);
+    assert!(output.status.success(), "stub exit {}", output.status);
+    assert!(!src.exists());
+    assert!(!dest.join("note.txt").exists());
+    let recorded = fs::read_to_string(&log).unwrap();
+    assert!(recorded.contains("--file-selection"), "{recorded}");
+    assert!(!recorded.contains("--info"), "{recorded}");
+}
+
+#[cfg(unix)]
+#[test]
+fn desktop_dialog_asks_for_an_encrypted_archive() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sfx = encrypted_sfx(tmp.path());
+    let bin = install_dialog(tmp.path());
+    let dest = tmp.path().join("out");
+    fs::create_dir(&dest).unwrap();
+    let log = tmp.path().join("zenity.log");
+    let envs = dialog_envs(&bin, &dest, &log, Some("sfx-test-password"), false);
+    let output = run_dialog(&sfx, &envs);
+    assert!(output.status.success(), "stub exit {}", output.status);
+    assert_eq!(fs::read(dest.join("hello.txt")).unwrap(), b"secret-sfx");
+    let recorded = fs::read_to_string(&log).unwrap();
+    assert!(recorded.contains("--password"), "{recorded}");
+    assert!(!recorded.contains("sfx-test-password"), "{recorded}");
+}
+
 fn stub_bin() -> std::path::PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_shellzip_sfx") {
         return std::path::PathBuf::from(path);

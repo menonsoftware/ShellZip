@@ -70,13 +70,24 @@ impl SfxPayload {
 }
 
 /// Names searched beside `szip` when `--sfx-stub` and `SZIP_SFX_STUB` are unset.
+///
+/// Names for this operating system come first. A Linux search does not accept a
+/// Windows `.exe` stub, which cannot be executed there. Pass `--sfx-stub` to
+/// wrap with a stub for another system.
 pub fn stub_file_names() -> &'static [&'static str] {
-    &[
-        "shellzip-sfx.exe",
-        "shellzip-sfx",
-        "szip-sfx-x86_64-pc-windows-msvc.exe",
-        "szip-sfx-x86_64-unknown-linux-gnu",
-    ]
+    #[cfg(windows)]
+    {
+        &[
+            "shellzip-sfx.exe",
+            "szip-sfx-x86_64-pc-windows-msvc.exe",
+            "shellzip-sfx",
+            "szip-sfx-x86_64-unknown-linux-gnu",
+        ]
+    }
+    #[cfg(not(windows))]
+    {
+        &["shellzip-sfx", "szip-sfx-x86_64-unknown-linux-gnu"]
+    }
 }
 
 /// Tail of a self-extracting package.
@@ -175,7 +186,7 @@ pub fn locate(path: &Path) -> Result<Option<SfxTrailer>, Error> {
 /// # Errors
 ///
 /// Returns [`Error::Usage`] when `stub` or `archive` is empty, when the
-/// finished package would be [`MAX_PACKAGE_LEN`] bytes or larger, and
+/// finished package would be 4 GiB or larger, and
 /// [`Error::Io`] when a copy or rename fails.
 pub fn build(
     dest: &Path,
@@ -656,6 +667,22 @@ mod tests {
         writer.write_all(b"hello").unwrap();
         writer.finish().unwrap();
         cursor.into_inner()
+    }
+
+    #[test]
+    fn stub_names_match_this_operating_system() {
+        let names = stub_file_names();
+        assert!(!names.is_empty());
+        #[cfg(windows)]
+        assert!(names[0].ends_with(".exe"), "{names:?}");
+        #[cfg(not(windows))]
+        {
+            assert_eq!(names[0], "shellzip-sfx");
+            assert!(
+                names.iter().all(|name| !name.ends_with(".exe")),
+                "{names:?}"
+            );
+        }
     }
 
     #[test]

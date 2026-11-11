@@ -1,8 +1,9 @@
-//! `shellzip-sfx` — extract the ZIP appended to this executable.
+//! `shellzip-sfx` — extract the ZIP or 7z archive appended to this executable.
 //!
 //! Switches: `-s` silent, `-y` replace existing files, `-d <dir>` destination.
-//! Without a console on Windows, a setup window chooses the folder and a
-//! password dialog unlocks an encrypted archive.
+//! Without a console on Windows, a setup window chooses the folder. On Linux,
+//! zenity or kdialog asks for the folder. A password dialog unlocks an
+//! encrypted archive.
 
 #![cfg_attr(all(not(test), target_os = "windows"), windows_subsystem = "windows")]
 
@@ -13,6 +14,8 @@ use shellzip_core::{
     ConflictChoice, Error, ExtractOpts, NopProgress, Overwrite, Password, extract, list, locate,
 };
 
+#[cfg(unix)]
+mod linux_ui;
 mod prompt;
 #[cfg(any(windows, test))]
 mod setup;
@@ -24,6 +27,8 @@ fn main() {
     let code = match run() {
         Ok(code) => code,
         Err(err) => {
+            #[cfg(unix)]
+            linux_ui::tell(&err.to_string(), true);
             prompt::report(&err, prompt::gui_session());
             err.exit_code()
         }
@@ -45,12 +50,19 @@ fn run() -> Result<i32, Error> {
                 .to_string(),
         ));
     }
-    let dest = args.dest.unwrap_or(
-        std::env::current_dir().map_err(|err| Error::io("find the working directory", err))?,
-    );
+    let cwd =
+        std::env::current_dir().map_err(|err| Error::io("find the working directory", err))?;
+    let beside_exe = cfg!(unix) && !args.silent && !prompt::can_ask(false);
+    let dest = args
+        .dest
+        .unwrap_or_else(|| default_dest(&exe, &cwd, beside_exe));
     #[cfg(windows)]
     if gui && !args.silent {
         return setup::run(&exe, &dest, env_password()?);
+    }
+    #[cfg(unix)]
+    if !args.silent && linux_ui::should_ask() {
+        return linux_ui::run(&exe, &dest, env_password()?);
     }
     if !args.silent && !args.yes && prompt::can_ask(gui) {
         let start = prompt::ask(&format!("Extract to {}?", dest.display()), gui, false)?;
@@ -88,10 +100,15 @@ fn run() -> Result<i32, Error> {
         match result {
             Ok(report) => {
                 if !args.silent {
-                    prompt::notice(
-                        &format!("Extracted {} to {}", report.extracted, dest.display()),
-                        gui,
-                    );
+                    let message = format!("Extracted {} to {}", report.extracted, dest.display());
+                    if prompt::can_ask(gui) || gui {
+                        prompt::notice(&message, gui);
+                    } else {
+                        #[cfg(unix)]
+                        linux_ui::tell(&message, false);
+                        #[cfg(not(unix))]
+                        prompt::notice(&message, false);
+                    }
                 }
                 return Ok(0);
             }
@@ -159,6 +176,20 @@ fn required_password(gui: bool, text: &str) -> Result<Password, Error> {
     }
 }
 
+/// Folder used when `-d` is omitted.
+///
+/// A double-clicked Linux package has no terminal, so the files land beside
+/// the executable. A terminal session and `-s` keep the working directory.
+fn default_dest(exe: &Path, cwd: &Path, beside_exe: bool) -> PathBuf {
+    if beside_exe
+        && let Some(dir) = exe.parent()
+        && !dir.as_os_str().is_empty()
+    {
+        return dir.to_path_buf();
+    }
+    cwd.to_path_buf()
+}
+
 fn env_password() -> Result<Option<Password>, Error> {
     match std::env::var("SZIP_PASSWORD") {
         Ok(value) if value.is_empty() => Ok(None),
@@ -216,22 +247,33 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, Error> {
 fn print_help() {
     println!(
         "\
-shellzip-sfx — extract the ZIP stored in this executable
+shellzip-sfx — extract the archive stored in this executable
 
   -s, --silent     no prompts
   -y, --yes        replace existing files
   -d, --dest DIR   extract into DIR (default: the working directory)
   -h, --help       show this help
 
-Opening the file from Explorer shows a window to choose the folder.
-An encrypted archive asks for a password when you press Extract.
--s reads SZIP_PASSWORD and does not ask."
+With no terminal, Windows shows a setup window and Linux asks for a
+folder with zenity or kdialog (or extracts beside this program).
+An encrypted archive asks for a password before extracting.
+-s reads SZIP_PASSWORD and does not ask. Without -d, -s uses the
+working directory."
     );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_double_click_extracts_beside_the_program() {
+        let exe = PathBuf::from("/tmp/payload.sfx");
+        let cwd = PathBuf::from("/home/work");
+        assert_eq!(default_dest(&exe, &cwd, true), PathBuf::from("/tmp"));
+        assert_eq!(default_dest(&exe, &cwd, false), cwd);
+        assert_eq!(default_dest(Path::new("shellzip-sfx"), &cwd, true), cwd);
+    }
 
     #[test]
     fn parses_attached_dest_and_switches() {

@@ -28,6 +28,9 @@ windows-sys = { version = "0.59", default-features = false, features = [
 ] }
 zeroize = { version = "1.9.1", default-features = false }
 
+[target.'cfg(unix)'.dependencies]
+zeroize = { version = "1.9.1", default-features = false, features = ["alloc"] }
+
 [dev-dependencies]
 tempfile = "3"
 

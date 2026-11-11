@@ -30,7 +30,7 @@ ShellZip does not inject into other processes, write Run / AppInit / IFEO keys, 
 - **ZIP AES-256** (WinZip AE-2) for file contents; names stay visible
 - **7z AES-256**, optional header encryption (`--hp`), solid or non-solid blocks
 - **Update, freshen, delete, and rename** inside ZIP and 7z
-- **Self-extractors** (`szip a --sfx` or `szip s`): stub + ZIP or 7z payload + 24-byte trailer. Windows cannot start a package of 4 GiB or larger
+- **Self-extractors** (`szip a --sfx` or `szip s`): stub + ZIP or 7z payload + 24-byte trailer. The Linux stub is an ELF that extracts by itself; without a terminal it asks for a folder with zenity or kdialog. Windows cannot start a package of 4 GiB or larger
 - **Desktop manager** with explorer, add/extract dialogs, test, view, info, reports, and themes
 - **File associations and shell menus** on Windows, macOS, and Linux (`shellzip --integrate`)
 - **WinRAR-style switches** on the CLI (`-p`, `-mt`, `-sfx`, `-hp`, `-si`, …)
