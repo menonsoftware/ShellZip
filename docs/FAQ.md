@@ -94,11 +94,11 @@ On Windows, an older build that wrote `%APPDATA%\ShellZip\shellzip\config\settin
 
 ## Is there an Explorer / Finder context menu?
 
-Yes for Velopack / portable installs. **Options → Integrate with the file manager** (or `shellzip --integrate`) registers per-user associations and menus. The ShellZip submenu offers Open, Extract to…, Extract Here, and Extract Here (name). Handlers start `shellzip`; they do not extract inside the file manager. Remove with **Remove integration** or `shellzip --unintegrate`.
+Yes for Velopack / portable installs. **Options → Integrate with the file manager** (or `shellzip --integrate`) registers per-user associations and menus. The ShellZip submenu offers Add to archive, Open, Extract to…, Extract Here, and Extract Here (name). Handlers start `shellzip`; they do not extract inside the file manager. Remove with **Remove integration** or `shellzip --unintegrate`.
 
 - **Windows (Velopack / portable)** — `shellzip_shell.dll` (`IContextMenu`, icon handler). Place the DLL next to `shellzip.exe`. See [platform/windows/README.md](../platform/windows/README.md).
 - **Windows (Microsoft Store)** — archive types, static Extract verbs, and a Windows 11 `IExplorerCommand` cascade come from the MSIX manifest (`shellzip_shell.dll` as an STA surrogate). The Integrate menu is hidden. Windows 10 1809 and Windows Server 2019 have no Packaged COM, so a local `make msix` also registers the classic Explorer menu for the packaged binaries.
-- **Linux** — desktop actions, KDE service menu, Nemo actions, Thunar snippet; optional GPL Nautilus script under [platform/linux/nautilus/](../platform/linux/nautilus/).
+- **Linux** — `--integrate` installs a `.desktop` file, the ShellZip app icon, KDE/Nemo/Thunar/PCManFM actions, and a GNOME Files submenu. GNOME Files needs `python3-nautilus` / `nautilus-python` for a top-level **ShellZip** menu; otherwise verbs appear under **Scripts → ShellZip**. See [platform/linux/README.md](../platform/linux/README.md).
 - **macOS** — document types and a Finder Sync Swift source under [platform/macos/](../platform/macos/).
 
 ## Why does Windows Defender call ShellZip a trojan?

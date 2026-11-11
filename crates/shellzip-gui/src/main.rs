@@ -79,7 +79,8 @@ fn run_window(action: launch::LaunchAction) {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1080.0, 720.0])
         .with_min_inner_size([820.0, 480.0])
-        .with_title("ShellZip");
+        .with_title("ShellZip")
+        .with_app_id("shellzip");
     if let Some(icon) = window_icon() {
         viewport = viewport.with_icon(icon);
     }

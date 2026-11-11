@@ -32,6 +32,8 @@ pub use menu::{
 };
 pub use stem::folder_stem;
 pub use writers::{
-    desktop_entry, kde_servicemenu, macos_document_types, nemo_actions, thunar_uca,
+    APP_ICON_NAME, desktop_entry, kde_servicemenu, kde_servicemenu_add, kde_servicemenus,
+    macos_document_types, merge_thunar_uca, nautilus_python_extension, nautilus_scripts,
+    nemo_actions, pcmanfm_actions, strip_thunar_shellzip_actions, thunar_uca,
     windows_registry_plan,
 };

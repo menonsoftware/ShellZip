@@ -1,41 +1,61 @@
-# ShellZip Nautilus extension — optional.
+# ShellZip Nautilus extension.
 #
-# This file is licensed under the GNU General Public License v2.0 or later
-# because it loads into Nautilus. It is not part of the ShellZip Rust crates
-# (which stay MIT). Install manually:
+# Licensed under the GNU General Public License v2.0 or later because it
+# loads into Nautilus. It is not part of the ShellZip Rust crates (which
+# stay MIT). `shellzip --integrate` writes a copy of this file with an
+# absolute executable path. Manual install:
 #
 #   mkdir -p ~/.local/share/nautilus-python/extensions
 #   cp shellzip.py ~/.local/share/nautilus-python/extensions/
 #   nautilus -q
 #
+# Requires the `python3-nautilus` / `nautilus-python` package.
+#
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-from gi.repository import Nautilus, GObject
-import subprocess
+import gi
+
+try:
+    gi.require_version("Nautilus", "4.0")
+except ValueError:
+    gi.require_version("Nautilus", "3.0")
+
+from gi.repository import GObject, Nautilus
 import os
+import subprocess
+
+# --integrate replaces this assignment with the absolute GUI path.
+SHELLZIP = "shellzip"
+
+ARCHIVE_SUFFIXES = (
+    ".tar.gz",
+    ".tar.bz2",
+    ".tar.xz",
+    ".tar.zst",
+    ".tgz",
+    ".tbz2",
+    ".txz",
+    ".tzst",
+    ".zipx",
+    ".zip",
+    ".7z",
+    ".rar",
+    ".tar",
+    ".gz",
+    ".bz2",
+    ".xz",
+    ".zst",
+)
 
 
-def _stem(name: str) -> str:
+def _is_archive(path):
+    lower = path.lower()
+    return any(lower.endswith(suffix) for suffix in ARCHIVE_SUFFIXES)
+
+
+def _stem(name):
     lower = name.lower()
-    for suffix in (
-        ".tar.gz",
-        ".tar.bz2",
-        ".tar.xz",
-        ".tar.zst",
-        ".tgz",
-        ".tbz2",
-        ".txz",
-        ".tzst",
-        ".zipx",
-        ".zip",
-        ".7z",
-        ".rar",
-        ".tar",
-        ".gz",
-        ".bz2",
-        ".xz",
-        ".zst",
-    ):
+    for suffix in ARCHIVE_SUFFIXES:
         if lower.endswith(suffix):
             stem = name[: -len(suffix)]
             return stem or "archive"
@@ -43,34 +63,65 @@ def _stem(name: str) -> str:
     return base or "archive"
 
 
+def _item(name, label, icon=None):
+    kwargs = {"name": name, "label": label}
+    if icon:
+        kwargs["icon"] = icon
+    return Nautilus.MenuItem(**kwargs)
+
+
 class ShellZipExtension(GObject.GObject, Nautilus.MenuProvider):
     def get_file_items(self, *args):
         files = args[-1]
-        paths = [f.get_location().get_path() for f in files if not f.is_directory()]
+        paths = []
+        for file_info in files:
+            path = file_info.get_location().get_path()
+            if path:
+                paths.append(path)
         if not paths:
             return []
-        if len(paths) == 1:
-            named = f"Extract Here ({_stem(os.path.basename(paths[0]))})"
-        else:
-            named = "Extract Here (separate folders)"
 
+        archives = [path for path in paths if _is_archive(path)]
         submenu = Nautilus.Menu()
+
+        add_zip = "Add to ZIP"
+        add_7z = "Add to 7z"
+        if len(paths) == 1:
+            stem = os.path.splitext(os.path.basename(paths[0].rstrip(os.sep)))[0]
+            if stem:
+                add_zip = f"Add to {stem}.zip"
+                add_7z = f"Add to {stem}.7z"
+
         for label, flag in (
-            ("Open", None),
-            ("Extract to…", "--extract-to"),
-            ("Extract Here", "--extract-here"),
-            (named, "--extract-here-named"),
+            ("Add to archive...", "--add"),
+            (add_zip, "--add-zip"),
+            (add_7z, "--add-7z"),
         ):
-            item = Nautilus.MenuItem(name=f"ShellZip::{label}", label=label)
+            item = _item(f"ShellZip::{label}", label)
             item.connect("activate", self._run, flag, paths)
             submenu.append_item(item)
 
-        root = Nautilus.MenuItem(name="ShellZip::Root", label="ShellZip")
+        if archives:
+            if len(archives) == 1:
+                named = f"Extract Here ({_stem(os.path.basename(archives[0]))})"
+            else:
+                named = "Extract Here (separate folders)"
+            for label, flag in (
+                ("Open", None),
+                ("Extract to…", "--extract-to"),
+                ("Extract Here", "--extract-here"),
+                (named, "--extract-here-named"),
+            ):
+                item = _item(f"ShellZip::{label}", label)
+                item.connect("activate", self._run, flag, archives)
+                submenu.append_item(item)
+
+        root = _item("ShellZip::Root", "ShellZip", icon="shellzip")
         root.set_submenu(submenu)
         return [root]
 
     def _run(self, _menu, flag, paths):
-        cmd = ["shellzip"]
+        cmd = [SHELLZIP]
         if flag:
             cmd.append(flag)
         cmd.extend(paths)

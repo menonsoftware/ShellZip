@@ -603,7 +603,7 @@ pub fn confirm_shell_integrate(
             "Integrate with the file manager",
             "Register ShellZip as an archive handler for this user?\n\n\
              This adds Open / Open With associations, document icons, and \
-             context-menu verbs (Open, Extract to…, Extract Here).",
+             context-menu verbs (Add, Open, Extract to…, Extract Here).",
             "Integrate",
             theme::palette(ctx).ok,
         ),

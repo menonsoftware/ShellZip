@@ -101,7 +101,8 @@ Settings persist in `settings.toml` (see [FAQ.md](FAQ.md#where-does-the-gui-stor
 
 - Default / Open With handlers for zip, zipx, 7z, rar, tar, gz, tgz, bz2, tbz2, xz, txz, zst, tzst
 - Per-format document icons from `grx/shellzip_file_icons` (or `icons/` next to a Velopack install)
-- Context menu: Open, Extract to…, Extract Here, Extract Here (archive folder name)
+- Linux application icon (`hicolor/apps/shellzip.png`) so launchers and the dock match the window
+- Context menu: Add to archive / ZIP / 7z, Open, Extract to…, Extract Here, Extract Here (archive folder name)
 
 Velopack install/update/uninstall FastCallbacks run integrate automatically on Windows; on Linux and macOS, first launch and post-update restart do so (there is no Velopack uninstall hook when the AppImage / `.app` is deleted). **Options → Remove file manager integration** asks for confirmation before clearing those registrations.
 
@@ -118,7 +119,7 @@ shellzip --integrate
 shellzip --unintegrate
 ```
 
-Extract Here uses the saved overwrite policy (Ask by default) and the password prompt when needed. Linux also installs `scripts/shellzip.desktop` MIME actions; see [platform/](../platform/) for OS-specific notes.
+Extract Here uses the saved overwrite policy (Ask by default) and the password prompt when needed. Linux also installs MIME actions, a Nautilus Python submenu (GPL, needs `python3-nautilus`), Scripts fallback, KDE/Nemo/Thunar/PCManFM handlers, and the ShellZip theme icon; see [platform/linux](../platform/linux).
 
 ## Limitations
 

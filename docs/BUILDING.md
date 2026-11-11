@@ -144,7 +144,7 @@ make gen-file-icons
 cargo run -p xtask -- gen-file-icons
 ```
 
-That writes Vista-compatible `.ico` (BMP ≤64 + PNG 256 for Explorer Medium/Large/Extra Large), full Retina `.icns` under `icns/` and `macos/`, and freedesktop MIME PNGs under `linux/hicolor/{16..512}/`.
+That writes Vista-compatible `.ico` (BMP ≤64 + PNG 256 for Explorer Medium/Large/Extra Large), full Retina `.icns` under `icns/` and `macos/`, freedesktop MIME PNGs under `linux/hicolor/{16..512}/mimetypes/`, and the application icon at `linux/hicolor/{16..512}/apps/shellzip.png`.
 
 ## Shell integration
 

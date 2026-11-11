@@ -31,6 +31,8 @@ pub struct IntegratePaths {
     pub icons_source: PathBuf,
     /// Optional path to the Windows shell-extension DLL.
     pub shell_dll: Option<PathBuf>,
+    /// PNG bytes written to `hicolor/256x256/apps/shellzip.png` on Linux.
+    pub app_icon_png: Option<Vec<u8>>,
 }
 
 impl IntegratePaths {
@@ -53,6 +55,7 @@ impl IntegratePaths {
             exe,
             icons_source,
             shell_dll,
+            app_icon_png: None,
         }
     }
 }

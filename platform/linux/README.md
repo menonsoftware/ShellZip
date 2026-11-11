@@ -24,4 +24,16 @@ shellzip --integrate
 shellzip --unintegrate
 ```
 
-Writes `~/.local/share/applications/shellzip.desktop`, hicolor MIME icons, and KDE/Nemo/Thunar actions. Optional Nautilus Python extension: [nautilus/shellzip.py](nautilus/shellzip.py) (GPL-2.0+, not installed by `--integrate`).
+Writes:
+
+- `~/.local/share/applications/shellzip.desktop` (MIME defaults, launcher actions, `StartupWMClass=shellzip`)
+- Application icon `~/.local/share/icons/hicolor/*/apps/shellzip.png` (plus archive MIME icons)
+- GNOME Files: `~/.local/share/nautilus-python/extensions/shellzip.py` (GPL-2.0+, generated with the absolute GUI path) and `~/.local/share/nautilus/scripts/ShellZip/`
+- KDE Dolphin: service menus under `kio/servicemenus` and `kservices5/ServiceMenus` (Add on every file/folder; Open/Extract on archives)
+- Nemo, Caja scripts, PCManFM/libfm actions, and Thunar `~/.config/Thunar/uca.xml` (merged, with stable `unique-id`s)
+
+A top-level **ShellZip** submenu in GNOME Files needs `python3-nautilus` (Debian/Ubuntu) or `nautilus-python`. Without that package, the same verbs appear under **Scripts → ShellZip**. Restart the file manager (`nautilus -q`) after integrate.
+
+The `.desktop` `Icon=shellzip` name is a freedesktop theme icon, not an ELF resource. The raw `shellzip` binary in a folder listing still uses the generic executable glyph; the launcher, dock, window, and context-menu icon are ShellZip.
+
+Manual copy of the Nautilus plugin (uses `shellzip` from `PATH`): [nautilus/shellzip.py](nautilus/shellzip.py).

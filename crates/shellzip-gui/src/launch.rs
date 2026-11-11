@@ -172,7 +172,23 @@ fn paths_for_integrate() -> IntegratePaths {
             }
         }
     }
+    #[cfg(target_os = "linux")]
+    {
+        paths.app_icon_png = linux_app_icon_png();
+    }
     paths
+}
+
+/// Rasterize the embedded window icon for `hicolor/256x256/apps/shellzip.png`.
+#[cfg(target_os = "linux")]
+fn linux_app_icon_png() -> Option<Vec<u8>> {
+    let image = image::load_from_memory(include_bytes!("../assets/icon.png")).ok()?;
+    let resized = image.resize_exact(256, 256, image::imageops::FilterType::Lanczos3);
+    let mut out = Vec::new();
+    resized
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .ok()?;
+    Some(out)
 }
 
 /// Install file associations for the current user.

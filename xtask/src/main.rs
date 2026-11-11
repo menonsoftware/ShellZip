@@ -524,6 +524,7 @@ fn register_shell_at(exe: &Path, dll: &Path, icons: &Path) -> Result<(), String>
         exe: exe.to_path_buf(),
         icons_source: icons.to_path_buf(),
         shell_dll: Some(dll.to_path_buf()),
+        app_icon_png: None,
     };
     shellzip_integrate::integrate(&paths).map_err(|err| err.to_string())?;
     println!("registered classic Explorer menu for {}", exe.display());
@@ -537,6 +538,7 @@ fn unregister_shell() -> Result<(), String> {
         exe: PathBuf::from("shellzip.exe"),
         icons_source: PathBuf::from("."),
         shell_dll: None,
+        app_icon_png: None,
     };
     shellzip_integrate::unintegrate(&paths).map_err(|err| err.to_string())?;
     println!("unregistered classic Explorer menu");
@@ -932,7 +934,6 @@ fn msix_version(semver: &str) -> Result<String, Box<dyn std::error::Error>> {
     Ok(format!("{major}.{minor}.{patch}.0"))
 }
 
-#[cfg(windows)]
 fn write_resized_png(src: &Path, dest: &Path, size: u32) -> Result<(), Box<dyn std::error::Error>> {
     let image = image::open(src)?;
     let resized = image.resize_exact(size, size, image::imageops::FilterType::Lanczos3);
@@ -1875,6 +1876,22 @@ fn gen_file_icons() -> Result<(), Box<dyn std::error::Error>> {
         }
         println!("wrote {name}.ico / {name}.icns + hicolor");
     }
+    write_linux_app_icons(&hicolor)?;
+    Ok(())
+}
+
+/// Rasterize the GUI icon into freedesktop `hicolor/*/apps/shellzip.png`.
+fn write_linux_app_icons(hicolor: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let icon_src = PathBuf::from("crates/shellzip-gui/assets/icon.png");
+    if !icon_src.is_file() {
+        return Err(format!("missing app icon {}", icon_src.display()).into());
+    }
+    for &size in LINUX_SIZES {
+        let dir = hicolor.join(format!("{size}x{size}")).join("apps");
+        fs::create_dir_all(&dir)?;
+        write_resized_png(&icon_src, &dir.join("shellzip.png"), size)?;
+    }
+    println!("wrote hicolor/*/apps/shellzip.png");
     Ok(())
 }
 
