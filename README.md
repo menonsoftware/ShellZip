@@ -106,7 +106,7 @@ shellzip archive.zip
 
 `make release` writes `szip`, `shellzip`, and `shellzip-sfx` under `target/release`. On Windows it also builds `shellzip_shell.dll`. `make explore` opens that folder.
 
-Tagged GitHub releases ship that portable archive and a Velopack package: a Windows Setup, a Linux AppImage, and a macOS `.app`.
+Tagged GitHub releases ship that portable archive and a Velopack package: a Windows Setup, a Linux AppImage and `.deb`, and a macOS `.app`.
 
 ```bash
 make install        # cargo install szip

@@ -21,6 +21,7 @@ fn main() {
         "gen-file-icons" => gen_file_icons(),
         "velopack-stage" => velopack_stage(),
         "velopack-pack" => velopack_pack(),
+        "deb-pack" => deb_pack(),
         "msix-pack" => msix_pack(),
         "msix-register-shell" => register_shell_from_args(),
         "msix-unregister-shell" => unregister_shell_from_args(),
@@ -28,7 +29,7 @@ fn main() {
         "gpg-sign-release" => gpg_sign_release(),
         _ => {
             eprintln!(
-                "usage: xtask bench | build-fixtures | package-stubs [stub] | gen-file-icons | velopack-stage | velopack-pack | msix-pack [--install] | msix-register-shell <exe> <dll> <icons> | msix-unregister-shell | msix-uninstall | gpg-sign-release <dir>"
+                "usage: xtask bench | build-fixtures | package-stubs [stub] | gen-file-icons | velopack-stage | velopack-pack | deb-pack | msix-pack [--install] | msix-register-shell <exe> <dll> <icons> | msix-unregister-shell | msix-uninstall | gpg-sign-release <dir>"
             );
             std::process::exit(2);
         }
@@ -249,6 +250,328 @@ fn velopack_pack() -> Result<(), Box<dyn std::error::Error>> {
         let _ = gpg_sign_dir(&output);
     }
     Ok(())
+}
+
+/// Debian maintainer recorded in the `.deb` control and changelog.
+const DEB_MAINTAINER: &str = "Ajay Menon <ajaymenon@users.noreply.github.com>";
+
+/// Project homepage used in the Debian control file.
+const DEB_HOMEPAGE: &str = "https://github.com/menonsoftware/ShellZip";
+
+/// Build an amd64/arm64 `.deb` from the release GUI, CLI, and SFX binaries.
+///
+/// Requires `dpkg-deb` (from `dpkg`). Output is `dist/deb/shellzip_<ver>_<arch>.deb`.
+fn deb_pack() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err("deb-pack is Linux-only".into())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        deb_pack_linux()
+    }
+}
+
+/// Map a Rust target triple (or host arch) to a Debian architecture name.
+fn debian_arch(target: &str) -> Result<&'static str, Box<dyn std::error::Error>> {
+    let arch = if target.is_empty() {
+        std::env::consts::ARCH
+    } else {
+        target
+    };
+    if arch.starts_with("x86_64") {
+        Ok("amd64")
+    } else if arch.starts_with("aarch64") {
+        Ok("arm64")
+    } else {
+        Err(format!("unsupported Debian architecture for target {target:?}").into())
+    }
+}
+
+/// Debian `control` file body.
+fn debian_control(version: &str, arch: &str, installed_size_kib: u64) -> String {
+    format!(
+        "\
+Package: shellzip
+Version: {version}
+Section: utils
+Priority: optional
+Architecture: {arch}
+Maintainer: {maintainer}
+Homepage: {homepage}
+Installed-Size: {installed_size_kib}
+Depends: libc6, libgtk-3-0 | libgtk-3-0t64, libglib2.0-0 | libglib2.0-0t64, libx11-6, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libegl1
+Recommends: python3-nautilus | nautilus-python
+Description: Archive manager with a desktop window and CLI
+ ShellZip packs and unpacks ZIP, 7z, tar, gzip, and zstd. It extracts xz,
+ bzip2, and RAR, and never creates a RAR archive. This package installs
+ the desktop app (shellzip), the CLI (szip), and the self-extractor stub
+ (shellzip-sfx).
+",
+        maintainer = DEB_MAINTAINER,
+        homepage = DEB_HOMEPAGE,
+    )
+}
+
+/// Debian `copyright` file (machine-readable format 1.0).
+fn debian_copyright(mit_license: &str) -> String {
+    format!(
+        "\
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: ShellZip
+Source: {homepage}
+Comment: The Nautilus Python extension is GPL-2.0-or-later because it loads
+ into Nautilus. The rest of ShellZip is MIT.
+
+Files: *
+Copyright: 2026 Ajay Menon
+License: MIT
+
+Files: usr/share/nautilus-python/extensions/shellzip.py
+Copyright: 2026 Ajay Menon
+License: GPL-2.0-or-later
+
+License: MIT
+{mit}
+
+License: GPL-2.0-or-later
+ This file is licensed under the GNU General Public License version 2
+ or later. On Debian systems, the full text is in
+ /usr/share/common-licenses/GPL-2.
+",
+        homepage = DEB_HOMEPAGE,
+        mit = indent_debian_text(mit_license),
+    )
+}
+
+fn indent_debian_text(text: &str) -> String {
+    let mut out = String::new();
+    for line in text.replace("\r\n", "\n").lines() {
+        if line.is_empty() {
+            out.push_str(" .\n");
+        } else {
+            out.push(' ');
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Debian changelog stanza.
+fn debian_changelog(version: &str, date: &str) -> String {
+    format!(
+        "\
+shellzip ({version}) unstable; urgency=medium
+
+  * Packaged from the ShellZip {version} release.
+
+ -- {maintainer}  {date}
+",
+        maintainer = DEB_MAINTAINER,
+    )
+}
+
+const DEBIAN_POSTINST: &str = "\
+#!/bin/sh
+set -e
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q /usr/share/applications || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
+fi
+";
+
+#[cfg(target_os = "linux")]
+fn deb_pack_linux() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let version = std::env::var("VELOPACK_VERSION")
+        .or_else(|_| workspace_version().map_err(|e| e.to_string()))
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let target = std::env::var("CARGO_BUILD_TARGET").unwrap_or_default();
+    let arch = debian_arch(&target)?;
+    let release_dir = if target.is_empty() {
+        PathBuf::from("target").join("release")
+    } else {
+        PathBuf::from("target").join(&target).join("release")
+    };
+    let minisize_dir = if target.is_empty() {
+        PathBuf::from("target").join("minisize")
+    } else {
+        PathBuf::from("target").join(&target).join("minisize")
+    };
+
+    let gui = release_dir.join("shellzip");
+    let cli = release_dir.join("szip");
+    let sfx = minisize_dir.join("shellzip-sfx");
+    for path in [&gui, &cli, &sfx] {
+        if !path.is_file() {
+            return Err(format!(
+                "missing {}; build release CLI/GUI and the minisize SFX stub first",
+                path.display()
+            )
+            .into());
+        }
+    }
+
+    let out_dir = PathBuf::from("dist").join("deb");
+    if out_dir.exists() {
+        fs::remove_dir_all(&out_dir)?;
+    }
+    let root = out_dir.join("pkg");
+    let debian = root.join("DEBIAN");
+    let bin = root.join("usr").join("bin");
+    let apps = root.join("usr").join("share").join("applications");
+    let icons = root.join("usr").join("share").join("icons").join("hicolor");
+    let doc = root.join("usr").join("share").join("doc").join("shellzip");
+    let nautilus = root
+        .join("usr")
+        .join("share")
+        .join("nautilus-python")
+        .join("extensions");
+    let kde6 = root
+        .join("usr")
+        .join("share")
+        .join("kio")
+        .join("servicemenus");
+    let kde5 = root
+        .join("usr")
+        .join("share")
+        .join("kservices5")
+        .join("ServiceMenus");
+    let nemo = root.join("usr").join("share").join("nemo").join("actions");
+    let pcmanfm = root
+        .join("usr")
+        .join("share")
+        .join("file-manager")
+        .join("actions");
+    for dir in [
+        &debian, &bin, &apps, &icons, &doc, &nautilus, &kde6, &kde5, &nemo, &pcmanfm,
+    ] {
+        fs::create_dir_all(dir)?;
+    }
+
+    fs::copy(&gui, bin.join("shellzip"))?;
+    fs::copy(&cli, bin.join("szip"))?;
+    fs::copy(&sfx, bin.join("shellzip-sfx"))?;
+    for name in ["shellzip", "szip", "shellzip-sfx"] {
+        fs::set_permissions(bin.join(name), fs::Permissions::from_mode(0o755))?;
+    }
+
+    fs::write(
+        apps.join("shellzip.desktop"),
+        shellzip_integrate::desktop_entry("shellzip"),
+    )?;
+
+    let hicolor_src = PathBuf::from("grx")
+        .join("shellzip_file_icons")
+        .join("linux")
+        .join("hicolor");
+    if hicolor_src.is_dir() {
+        copy_tree(&hicolor_src, &icons)?;
+    }
+    let app_icon = icons.join("256x256").join("apps").join("shellzip.png");
+    if !app_icon.is_file() {
+        let src = PathBuf::from("crates/shellzip-gui/assets/icon.png");
+        if src.is_file() {
+            fs::create_dir_all(
+                app_icon
+                    .parent()
+                    .ok_or_else(|| "missing apps icon parent".to_string())?,
+            )?;
+            write_resized_png(&src, &app_icon, 256)?;
+        }
+    }
+
+    for (name, body) in shellzip_integrate::kde_servicemenus("shellzip") {
+        fs::write(kde6.join(&name), &body)?;
+        fs::write(kde5.join(&name), &body)?;
+    }
+    for (name, body) in shellzip_integrate::nemo_actions("shellzip") {
+        fs::write(nemo.join(name), body)?;
+    }
+    for (name, body) in shellzip_integrate::pcmanfm_actions("shellzip") {
+        fs::write(pcmanfm.join(name), body)?;
+    }
+    fs::write(
+        nautilus.join("shellzip.py"),
+        shellzip_integrate::nautilus_python_extension("shellzip"),
+    )?;
+
+    let license = fs::read_to_string("LICENSE").unwrap_or_else(|_| String::from("MIT License\n"));
+    fs::write(doc.join("copyright"), debian_copyright(&license))?;
+    let date = debian_rfc5322_date();
+    fs::write(doc.join("changelog"), debian_changelog(&version, &date))?;
+
+    let postinst = debian.join("postinst");
+    fs::write(&postinst, DEBIAN_POSTINST)?;
+    fs::set_permissions(&postinst, fs::Permissions::from_mode(0o755))?;
+    let postrm = debian.join("postrm");
+    fs::write(&postrm, DEBIAN_POSTINST)?;
+    fs::set_permissions(&postrm, fs::Permissions::from_mode(0o755))?;
+
+    let installed_size = dir_size_kib(&root.join("usr"))?;
+    fs::write(
+        debian.join("control"),
+        debian_control(&version, arch, installed_size),
+    )?;
+
+    let deb_name = format!("shellzip_{version}_{arch}.deb");
+    let deb_path = out_dir.join(&deb_name);
+    let status = Command::new("dpkg-deb")
+        .args(["--build", "--root-owner-group"])
+        .arg(&root)
+        .arg(&deb_path)
+        .status()
+        .map_err(|err| format!("dpkg-deb was not found on PATH ({err})"))?;
+    if !status.success() {
+        return Err(format!("dpkg-deb --build failed with {status}").into());
+    }
+    fs::remove_dir_all(&root)?;
+
+    if env_nonempty("GPG_PRIVATE_KEY").is_some() || env_nonempty("GPG_KEY_ID").is_some() {
+        let key_id = std::env::var("GPG_KEY_ID").unwrap_or_default();
+        sign_with_gpg(&deb_path, &key_id)?;
+    }
+    println!("packed {}", deb_path.display());
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn debian_rfc5322_date() -> String {
+    Command::new("date")
+        .args(["-u", "+%a, %d %b %Y %H:%M:%S +0000"])
+        .output()
+        .ok()
+        .and_then(|out| {
+            if out.status.success() {
+                String::from_utf8(out.stdout).ok()
+            } else {
+                None
+            }
+        })
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Thu, 01 Jan 2026 00:00:00 +0000".into())
+}
+
+#[cfg(target_os = "linux")]
+fn dir_size_kib(root: &Path) -> Result<u64, Box<dyn std::error::Error>> {
+    fn walk(path: &Path, total: &mut u64) -> std::io::Result<()> {
+        if path.is_dir() {
+            for entry in fs::read_dir(path)? {
+                walk(&entry?.path(), total)?;
+            }
+        } else {
+            *total = total.saturating_add(fs::metadata(path)?.len());
+        }
+        Ok(())
+    }
+    let mut bytes = 0u64;
+    walk(root, &mut bytes)?;
+    Ok(bytes.div_ceil(1024).max(1))
 }
 
 /// GitHub Actions injects missing secrets as empty strings, so `var_os` alone is
@@ -1183,7 +1506,7 @@ fn gpg_sign_dir(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     for path in &files {
         if path
             .extension()
-            .is_some_and(|ext| ext == "AppImage" || ext == "nupkg" || ext == "zip")
+            .is_some_and(|ext| ext == "AppImage" || ext == "nupkg" || ext == "zip" || ext == "deb")
             || path
                 .file_name()
                 .is_some_and(|n| n.to_string_lossy().contains("AppImage"))
@@ -1929,7 +2252,10 @@ fn write_icns(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_appx_manifest, msix_version, version_from_workspace_toml};
+    use super::{
+        DEB_HOMEPAGE, DEBIAN_POSTINST, build_appx_manifest, debian_arch, debian_changelog,
+        debian_control, debian_copyright, msix_version, version_from_workspace_toml,
+    };
 
     #[test]
     fn reads_workspace_package_version() {
@@ -1972,6 +2298,48 @@ edition = "2024"
 version = "should-not-win"
 "#;
         assert_eq!(version_from_workspace_toml(text), None);
+    }
+
+    #[test]
+    fn debian_control_names_package_and_homepage() {
+        let text = debian_control("0.1.16", "amd64", 12_000);
+        assert!(text.contains("Package: shellzip\n"));
+        assert!(text.contains("Version: 0.1.16\n"));
+        assert!(text.contains("Architecture: amd64\n"));
+        assert!(text.contains(DEB_HOMEPAGE));
+        assert!(text.contains("libgtk-3-0"));
+        assert!(text.contains("Installed-Size: 12000\n"));
+        assert!(text.contains("szip"));
+    }
+
+    #[test]
+    fn debian_arch_maps_gnu_targets() {
+        assert_eq!(debian_arch("x86_64-unknown-linux-gnu").unwrap(), "amd64");
+        assert_eq!(debian_arch("aarch64-unknown-linux-gnu").unwrap(), "arm64");
+        assert_eq!(debian_arch("x86_64").unwrap(), "amd64");
+        assert!(debian_arch("riscv64gc-unknown-linux-gnu").is_err());
+    }
+
+    #[test]
+    fn debian_copyright_splits_mit_and_gpl() {
+        let text = debian_copyright("MIT License\n\nCopyright (c) 2026 Ajay Menon\n");
+        assert!(text.contains("License: MIT"));
+        assert!(text.contains("GPL-2.0-or-later"));
+        assert!(text.contains("usr/share/nautilus-python/extensions/shellzip.py"));
+        assert!(text.contains(" Copyright (c) 2026 Ajay Menon"));
+    }
+
+    #[test]
+    fn debian_changelog_names_version() {
+        let text = debian_changelog("0.1.16", "Thu, 01 Jan 2026 00:00:00 +0000");
+        assert!(text.contains("shellzip (0.1.16) unstable;"));
+        assert!(text.contains("Ajay Menon"));
+    }
+
+    #[test]
+    fn debian_postinst_refreshes_desktop_and_icons() {
+        assert!(DEBIAN_POSTINST.contains("update-desktop-database"));
+        assert!(DEBIAN_POSTINST.contains("gtk-update-icon-cache"));
     }
 
     #[test]

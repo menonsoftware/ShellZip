@@ -35,6 +35,7 @@ libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 | `make bench` | Release ZIP timings into `docs/BENCH.md` |
 | `make velopack-stage` | Stage GUI/CLI/SFX (+ shell DLL) and icons under `dist/velopack/` |
 | `make velopack-pack` | Stage then run `vpk pack` (GPG on Linux when env is set) |
+| `make deb` | Linux: pack `dist/deb/shellzip_<version>_amd64.deb` from release binaries |
 | `make msix` | Windows: build, pack, self-sign with a local developer cert, and sideload the Store MSIX |
 | `make doc` | `cargo doc --workspace --no-deps --open` |
 | `make clean` | `cargo clean` |
@@ -168,7 +169,7 @@ make release                # or release-cli/gui/sfx/shell as needed
 make velopack-pack          # stages dist/velopack/<channel>/ then vpk pack
 ```
 
-Tag releases still upload portable `ShellZip-<tag>-<target>.zip|.tar.gz` archives; prefer the Velopack Setup / AppImage / `.app` for GUI installs with updates. Windows also packs `ShellZip-<tag>-x64.msix` for Partner Center.
+Tag releases still upload portable `ShellZip-<tag>-<target>.zip|.tar.gz` archives; prefer the Velopack Setup / AppImage / `.app` for GUI installs with updates. Linux also packs `shellzip_<version>_amd64.deb` (`make deb` / `xtask deb-pack`). Windows also packs `ShellZip-<tag>-x64.msix` for Partner Center.
 
 ### Windows Store MSIX
 
@@ -199,6 +200,7 @@ gpg --import docs/signing-key.asc
 sha256sum -c SHA256SUMS
 gpg --verify SHA256SUMS.asc SHA256SUMS
 gpg --verify ShellZip-*.AppImage.asc ShellZip-*.AppImage
+gpg --verify shellzip_*_amd64.deb.asc shellzip_*_amd64.deb
 ```
 
 ### macOS
@@ -208,7 +210,7 @@ Velopack packs an `.app` on `macos-latest`, but Apple Developer ID signing and n
 ## Platform notes
 
 - **Windows** — GUI and SFX are `windows_subsystem = "windows"`. Icons and manifests come from `winresource` build scripts. `--om` writes `Zone.Identifier`. Build `shellzip-shell` for the Explorer menu on Velopack / portable installs (`IContextMenu` via `--integrate`) and for the Store MSIX (`IExplorerCommand` surrogate declared in `AppxManifest.xml`).
-- **Linux** — install the apt packages above before `make gui`. `shellzip --integrate` installs the desktop file, hicolor MIME icons, and KDE/Nemo/Thunar actions. Distribution is a Velopack AppImage (`chmod +x`); verify with GPG when signatures are published.
+- **Linux** — install the apt packages above before `make gui`. `shellzip --integrate` installs the desktop file, hicolor MIME icons, and file-manager actions. Distribution is a Velopack AppImage (`chmod +x`) and a `.deb` (`sudo apt install ./shellzip_*_amd64.deb`). Verify with GPG when signatures are published.
 - **macOS** — release matrix builds `aarch64-apple-darwin`. Bundle document types and the Finder Sync sources under `platform/macos/`. Notarization is deferred.
 
 ## API docs

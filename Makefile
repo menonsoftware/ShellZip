@@ -41,7 +41,7 @@ endif
 	test test-cli test-core test-sfx build-sfx \
 	check clippy lint fmt fmt-check doc deny \
 	clean ci install install-gui install-shell \
-	gen-file-icons bench velopack-stage velopack-pack msix msix-uninstall help
+	gen-file-icons bench velopack-stage velopack-pack deb msix msix-uninstall help
 
 # Velopack channel for this host (win / osx / linux).
 ifeq ($(OS),Windows_NT)
@@ -180,6 +180,16 @@ velopack-stage: release
 velopack-pack: velopack-stage
 	$(CARGO) run -p xtask -- velopack-pack $(VELOPACK_CHANNEL)
 
+# Linux-only: .deb with GUI, CLI, SFX, desktop file, icons, and menus.
+deb: release
+ifeq ($(OS),Windows_NT)
+	@echo deb is Linux-only
+else ifeq ($(UNAME_S),Darwin)
+	@echo deb is Linux-only
+else
+	$(CARGO) run -p xtask -- deb-pack
+endif
+
 # Windows-only: release binaries, pack MSIX, self-sign with a local
 # developer cert, and sideload with Add-AppxPackage. CI calls
 # `xtask msix-pack` without --install so Partner Center can re-sign.
@@ -230,6 +240,7 @@ help:
 	@echo   make bench            Release ZIP timings into docs/BENCH.md
 	@echo   make velopack-stage   Stage binaries + icons under dist/velopack/
 	@echo   make velopack-pack    Stage then run vpk pack (GPG when env set)
+	@echo   make deb              Linux: pack dist/deb/shellzip_<ver>_amd64.deb
 	@echo   make msix             Windows: pack, self-sign, and sideload Store MSIX
 	@echo   make msix-uninstall   Windows: clear classic menu keys and remove Appx
 	@echo   make clean            cargo clean

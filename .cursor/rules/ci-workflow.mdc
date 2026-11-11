@@ -24,7 +24,7 @@ alwaysApply: false
 
 ## Release builds
 
-- CLI/GUI: `cargo build --release --locked`. SFX stub: `cargo build --profile minisize --locked`. Upload `szip`, `shellzip`, and `shellzip-sfx` per OS.
+- CLI/GUI: `cargo build --release --locked`. SFX stub: `cargo build --profile minisize --locked`. Upload `szip`, `shellzip`, and `shellzip-sfx` per OS. Linux also packs `shellzip_<version>_amd64.deb` via `xtask deb-pack`.
 - Never `--allow-dirty` or skip `--locked` in release jobs.
 - `release.yml` splits **build** (matrix → Actions artifacts only) from **publish** / **store** (`needs: build`). If any OS fails, GitHub Release assets, Velopack feeds, and Store submission are skipped — no partial binary release.
 - Store submit: `STORE_APP_ID` must be the Partner Center **Product ID / Store ID** (≈12 chars, usually starts with `9`). CI uses `msstore publish --appId=…` (not `-id`) and probes `msstore apps list` after `reconfigure`. “Could not retrieve your application” means a wrong Product ID or an Entra app without Manager access to that product.

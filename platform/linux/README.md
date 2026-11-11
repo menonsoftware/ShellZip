@@ -1,5 +1,15 @@
 # Linux packaging and shell integration
 
+## Debian package
+
+Release CI packs `shellzip_<version>_amd64.deb` (`xtask deb-pack` / `make deb`) with `shellzip`, `szip`, `shellzip-sfx`, the desktop file, hicolor icons, and KDE/Nemo/Nautilus/PCManFM menus. Install with:
+
+```bash
+sudo apt install ./shellzip_*_amd64.deb
+```
+
+The package Recommends `python3-nautilus` so GNOME Files can show a top-level ShellZip submenu. AppImage updates still use Velopack; the `.deb` is a normal apt install without auto-update.
+
 ## Velopack AppImage
 
 Release CI builds an x86_64 AppImage with Velopack (`packId` `com.shellzip.ShellZip`, channel `linux`). Users download the AppImage, run `chmod +x`, and start it. Auto-updates use the same GitHub Releases feed as Windows/macOS.
@@ -15,7 +25,7 @@ Format icons ship beside the binary as `icons/` (freedesktop tree from `grx/shel
 
 ### GPG signatures
 
-When release secrets `GPG_PRIVATE_KEY` / `GPG_KEY_ID` are set, CI publishes `SHA256SUMS`, `SHA256SUMS.asc`, and `*.AppImage.asc`. Verify with the public key documented in [docs/BUILDING.md](../../docs/BUILDING.md) (published as `docs/signing-key.asc` once the release key exists).
+When release secrets `GPG_PRIVATE_KEY` / `GPG_KEY_ID` are set, CI publishes `SHA256SUMS`, `SHA256SUMS.asc`, `*.AppImage.asc`, and `*.deb.asc`. Verify with the public key documented in [docs/BUILDING.md](../../docs/BUILDING.md) (published as `docs/signing-key.asc` once the release key exists).
 
 ## Integrate
 

@@ -139,6 +139,33 @@ jobs:
             printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --import
           fi
           cargo run -p xtask -- velopack-pack ${{ matrix.channel }}
+      - name: Pack Debian package
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          export VELOPACK_VERSION="$VERSION"
+          if [ -n "${GPG_PRIVATE_KEY:-}" ]; then
+            GNUPGHOME="$(mktemp -d)"
+            export GNUPGHOME
+            chmod 700 "$GNUPGHOME"
+            printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          fi
+          cargo run -p xtask -- deb-pack
+          shopt -s nullglob
+          deb=(dist/deb/shellzip_*.deb)
+          test -f "${deb[0]}"
+          dpkg-deb --info "${deb[0]}"
+          dpkg-deb --contents "${deb[0]}" | grep -F "./usr/bin/shellzip"
+          dpkg-deb --contents "${deb[0]}" | grep -F "./usr/bin/szip"
+          dpkg-deb --contents "${deb[0]}" | grep -F "./usr/share/applications/shellzip.desktop"
       - name: Pack Store MSIX
         if: runner.os == 'Windows'
         shell: bash
@@ -164,6 +191,13 @@ jobs:
         with:
           name: velopack-${{ matrix.channel }}
           path: dist/velopack/Releases-${{ matrix.channel }}/
+          if-no-files-found: error
+      - name: Upload Debian artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/deb/
           if-no-files-found: error
       - name: Upload Store MSIX artifact
         if: runner.os == 'Windows'
@@ -200,6 +234,13 @@ jobs:
           cp artifacts/portable-win/* dist/release/
           cp artifacts/portable-linux/* dist/release/
           cp artifacts/portable-osx/* dist/release/
+          if [ -d artifacts/deb ]; then
+            cp artifacts/deb/*.deb dist/release/
+            shopt -s nullglob
+            for asc in artifacts/deb/*.asc; do
+              cp "$asc" dist/release/
+            done
+          fi
           if [ -d artifacts/msix ]; then
             cp artifacts/msix/*.msix dist/release/
           fi
