@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ShellZip — Fast archiving, built in Rust</title>
+    <meta name="description" content="ShellZip is a Rust archive manager: a desktop window, the szip command-line tool, and a self-extracting stub. Create ZIP and 7z, extract RAR, and check paths before anything is written.">
+    <meta name="theme-color" content="#f6f1e8">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" href="media/icon.png" type="image/png">
+    <link rel="canonical" href="https://menonsoftware.github.io/ShellZip/">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="ShellZip — Fast archiving, built in Rust">
+    <meta property="og:description" content="A desktop archive manager, a command-line tool, and a self-extracting stub. One Rust library does the archive work.">
+    <meta property="og:url" content="https://menonsoftware.github.io/ShellZip/">
+    <meta property="og:image" content="https://menonsoftware.github.io/ShellZip/media/banner.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="top">
+      <nav class="nav" aria-label="Primary">
+        <a class="brand" href="#top">
+          <img src="media/icon.png" width="192" height="192" alt="">
+          <span>ShellZip</span>
+        </a>
+        <div class="nav-links">
+          <a href="#product">Product</a>
+          <a href="#features">Features</a>
+          <a href="#formats">Formats</a>
+          <a href="#requirements">Requirements</a>
+        </div>
+        <a class="btn btn-primary btn-small nav-download" href="https://apps.microsoft.com/store/detail/9MWW41FCVRT7?cid=DevShareMCLPCS">Download</a>
+        <details class="menu">
+          <summary>Menu</summary>
+          <div class="menu-panel">
+            <a href="#product">Product</a>
+            <a href="#features">Features</a>
+            <a href="#formats">Formats</a>
+            <a href="#requirements">Requirements</a>
+            <a href="https://apps.microsoft.com/store/detail/9MWW41FCVRT7?cid=DevShareMCLPCS">Microsoft Store</a>
+            <a href="https://github.com/menonsoftware/ShellZip/releases/latest">GitHub Releases</a>
+          </div>
+        </details>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="wrap">
+          <p class="eyebrow">Fast archiving, built in Rust</p>
+          <h1>There are average archive apps. And there’s <span class="mark">ShellZip</span>.</h1>
+          <p class="lede">A desktop window, a command-line tool, and a self-extracting stub. One library packs and unpacks the archive, and the front ends stay thin.</p>
+          <div class="actions">
+            <a class="btn btn-primary" href="https://apps.microsoft.com/store/detail/9MWW41FCVRT7?cid=DevShareMCLPCS">Get it on the Microsoft Store</a>
+            <a class="btn btn-ghost" href="https://github.com/menonsoftware/ShellZip/releases/latest">GitHub Releases</a>
+            <a class="btn btn-ghost" href="#features">See the desktop app</a>
+          </div>
+          <p class="platforms">Windows 10 or later · 64-bit Linux · macOS on Apple silicon · MIT licence</p>
+          <figure class="frame hero-shot">
+            <img src="media/banner.png" width="1280" height="720" alt="ShellZip banner: a copper shell with a zipper, and the words Fast archiving, built in Rust.">
+          </figure>
+        </div>
+      </section>
+
+      <section id="product">
+        <div class="wrap">
+          <p class="kicker">Product</p>
+          <h2>Three programs, one archive library.</h2>
+          <p class="intro"><code>shellzip-core</code> detects the format from the file bytes, packs and unpacks, and checks every entry name before it touches disk. The programs on top of it are small.</p>
+          <div class="faces">
+            <article class="card">
+              <p class="mono">shellzip</p>
+              <h3>Desktop window</h3>
+              <p>Folder tree, file list, and a toolbar for Open, Add, Extract, Test, View, Delete, SFX, Info, and About. Drop a folder to pack it, or drop an archive to open it.</p>
+            </article>
+            <article class="card">
+              <p class="mono">szip</p>
+              <h3>Command line</h3>
+              <p>Add, update, freshen, delete, extract, list, test, and print. Familiar switches such as <code>-p</code>, <code>-mt</code>, <code>-sfx</code>, and <code>-hp</code> work the way archive scripts already expect.</p>
+            </article>
+            <article class="card">
+              <p class="mono">shellzip-sfx</p>
+              <h3>Self-extractor</h3>
+              <p>A small stub, a ZIP or 7z payload, and a 24-byte trailer. On Windows the package opens a folder picker. Keep it under 4 GiB so Windows can start the program.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="features">
+        <div class="wrap">
+          <p class="kicker">Features</p>
+          <h2>The window you actually work in.</h2>
+          <p class="intro">Light, dark, or follow the system. The status bar keeps the result and the elapsed time after a job finishes. Passwords are asked for when needed, and they are not saved in settings.</p>
+
+          <article class="story">
+            <div class="copy">
+              <h3>Start on a folder. Open an archive when you have one.</h3>
+              <p>The address bar shows the current folder. Recent archives sit under File. While a ZIP or 7z is open, that same bar walks around inside it, and Up steps back out to the parent folder.</p>
+            </div>
+            <figure class="frame">
+              <img src="media/browse.png" width="1024" height="709" alt="ShellZip showing an empty Downloads folder, with the toolbar, address bar, and file list.">
+            </figure>
+          </article>
+
+          <article class="story reverse">
+            <div class="copy">
+              <h3>Name the archive, then choose how it is packed.</h3>
+              <p>Set the path, ZIP or 7z, the compression method, a solid block, a password, and an optional self-extractor. Leave the password empty and the archive stays unencrypted. A ZIP comment has its own page in the same dialog.</p>
+            </div>
+            <figure class="frame">
+              <img src="media/add.png" width="1024" height="709" alt="Add dialog set to ZIP, Deflate, solid archive, with the password field left empty.">
+            </figure>
+          </article>
+
+          <article class="story">
+            <div class="copy">
+              <h3>Watch the bytes, or keep working.</h3>
+              <p>The progress window names the current file, the bytes written, and the time remaining. Choose Start in background when the file list should stay usable while the job runs.</p>
+            </div>
+            <figure class="frame">
+              <img src="media/progress.png" width="1024" height="709" alt="Progress dialog adding files to a 7z archive, showing bytes written and time remaining.">
+            </figure>
+          </article>
+
+          <article class="story reverse">
+            <div class="copy">
+              <h3>Test it before you send it.</h3>
+              <p>Test checks checksums and sizes and reports the result in a dialog. Info summarizes the header without decoding every payload. Generate report writes an HTML, Markdown, or text listing of the open archive.</p>
+            </div>
+            <figure class="frame">
+              <img src="media/test.png" width="1024" height="709" alt="Test results dialog reporting OK for 19 entries, with the archive file list behind it.">
+            </figure>
+          </article>
+        </div>
+      </section>
+
+      <section class="band">
+        <div class="wrap">
+          <p class="kicker">Also in the box</p>
+          <h2>Pack, protect, and hand the file to someone else.</h2>
+          <div class="minis">
+            <article class="mini">
+              <h3>AES-256</h3>
+              <p>ZIP encryption covers file contents, WinZip AE-2 style, so names stay visible. 7z can hide names as well when header encryption is on.</p>
+            </article>
+            <article class="mini">
+              <h3>Update a ZIP or 7z</h3>
+              <p>Add and replace, update, freshen, delete, and rename members. Tar and single-file streams are written again from scratch.</p>
+            </article>
+            <article class="mini">
+              <h3>File manager menus</h3>
+              <p>Register Open, Extract to, Extract Here, and Extract Here with the archive’s folder name on Windows, macOS, and Linux.</p>
+            </article>
+            <article class="mini">
+              <h3>Paths checked first</h3>
+              <p>Absolute paths, <code>..</code>, drive letters, and reserved names are refused before a file is created. Extract and test stop at 64 GiB uncompressed.</p>
+            </article>
+            <article class="mini">
+              <h3>Self-extracting packages</h3>
+              <p>Wrap a ZIP or 7z from the SFX button or with <code>szip a --sfx</code>. The stub extracts LZMA2 and AES. Extra 7z codecs need the full program.</p>
+            </article>
+            <article class="mini">
+              <h3>Offline by default</h3>
+              <p>Packing and extracting never call the network. The optional update check looks at GitHub Releases, and only for a Velopack install.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="formats">
+        <div class="wrap">
+          <p class="kicker">Formats</p>
+          <h2>Create the common ones. Read a few more.</h2>
+          <p class="intro">Opening an archive sniffs the bytes, so a <code>.zip</code> that is actually RAR is treated as RAR. The extension matters when you are creating a new file.</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Format</th>
+                  <th scope="col">Create</th>
+                  <th scope="col">Extract, list, test</th>
+                  <th scope="col">Password</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">ZIP</th>
+                  <td>Yes. Deflate, Zstd, or stored</td>
+                  <td>Yes</td>
+                  <td>AES-256, contents only</td>
+                </tr>
+                <tr>
+                  <th scope="row">7z</th>
+                  <td>Yes. LZMA2 by default</td>
+                  <td>Yes</td>
+                  <td>AES-256. Header encryption hides names</td>
+                </tr>
+                <tr>
+                  <th scope="row">TAR, TAR.GZ, TAR.ZST</th>
+                  <td>Yes</td>
+                  <td>Yes</td>
+                  <td>No</td>
+                </tr>
+                <tr>
+                  <th scope="row">GZ, ZST</th>
+                  <td>Yes</td>
+                  <td>Yes</td>
+                  <td>No</td>
+                </tr>
+                <tr>
+                  <th scope="row">TAR.XZ, TAR.BZ2, XZ, BZ2</th>
+                  <td>No</td>
+                  <td>Yes</td>
+                  <td>No</td>
+                </tr>
+                <tr>
+                  <th scope="row">RAR 4 and RAR 5</th>
+                  <td class="never">Never</td>
+                  <td>Yes</td>
+                  <td>Yes, for extract</td>
+                </tr>
+                <tr>
+                  <th scope="row">SFX, ZIP or 7z payload</th>
+                  <td>Yes</td>
+                  <td>Yes</td>
+                  <td>Same as the payload</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">RAR creation is out of scope. The UnRAR licence allows extraction, and it forbids rebuilding the RAR compressor. ShellZip will list, test, and extract RAR 4 and RAR 5.</p>
+        </div>
+      </section>
+
+      <section id="requirements">
+        <div class="wrap">
+          <p class="kicker">Requirements</p>
+          <h2>A 64-bit machine and a little disk.</h2>
+          <p class="intro">Published builds are x86_64 Windows, x86_64 Linux, and Apple silicon macOS. <code>szip</code> is a terminal program. <code>shellzip</code> is a desktop window on the same machine.</p>
+          <div class="reqs">
+            <article class="req">
+              <h3>Minimum</h3>
+              <dl>
+                <dt>Processor</dt>
+                <dd>One 64-bit core.</dd>
+                <dt>Memory</dt>
+                <dd>1 GB RAM. File bytes stream through a fixed buffer, so the archive does not have to fit in memory.</dd>
+                <dt>Disk</dt>
+                <dd>50 MB for the program. The Windows Setup is about 27 MB and the Linux AppImage about 23 MB. Leave room for the archive and the unpacked files.</dd>
+                <dt>Display</dt>
+                <dd>820×480 for the desktop window.</dd>
+                <dt>Graphics</dt>
+                <dd>OpenGL, including integrated graphics. 64 MB of video memory is enough. DirectX is not used.</dd>
+                <dt>System</dt>
+                <dd>Windows 10 or later, 64-bit Linux with GTK 3 and X11 or Wayland, or macOS on Apple silicon.</dd>
+              </dl>
+            </article>
+            <article class="req">
+              <h3>Recommended</h3>
+              <dl>
+                <dt>Processor</dt>
+                <dd>4 or more cores. Workers default to the CPU count, up to 64.</dd>
+                <dt>Memory</dt>
+                <dd>4 GB RAM or more. Solid LZMA2 uses more than the streaming ZIP path.</dd>
+                <dt>Disk</dt>
+                <dd>An SSD, with free space well above the archives you pack or unpack.</dd>
+                <dt>Display</dt>
+                <dd>1080×720, the window’s default size.</dd>
+                <dt>Graphics</dt>
+                <dd>The same integrated OpenGL GPU. Archive work runs on the CPU.</dd>
+                <dt>Network</dt>
+                <dd>None for archive work. An installed copy can optionally check GitHub Releases for an update.</dd>
+              </dl>
+            </article>
+          </div>
+          <div class="source">
+            <h3>To build from source</h3>
+            <p>Rust 1.88 or newer, edition 2024. On Linux the desktop window also needs the GTK, X11, and Wayland packages in the <a href="https://github.com/menonsoftware/ShellZip/blob/master/docs/BUILDING.md">building guide</a>. <code>make release</code> writes <code>szip</code>, <code>shellzip</code>, and <code>shellzip-sfx</code>.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="wrap cli">
+          <div class="copy">
+            <p class="kicker">Command line</p>
+            <h2>The same jobs, without the window.</h2>
+            <p class="intro">Passwords come from <code>--password=SECRET</code>, a silent prompt, or <code>SZIP_PASSWORD</code>, in that order. The value is never written to the log or a window title.</p>
+            <a class="btn btn-ghost" href="https://github.com/menonsoftware/ShellZip/blob/master/docs/CLI.md">Read the command reference</a>
+          </div>
+          <pre><code><span>szip</span> a backup.zip docs photos -m5 --threads 8
+<span>szip</span> a secret.7z ledger --password --hp
+<span>szip</span> x backup.zip -o restore --yes
+<span>szip</span> t backup.zip
+<span>szip</span> a payload.exe src --sfx --sfx-format zip</code></pre>
+        </div>
+      </section>
+
+      <section>
+        <div class="wrap">
+          <article class="story reverse">
+            <div class="copy">
+              <p class="kicker">Licence</p>
+              <h2>MIT, with the notices in the open.</h2>
+              <p>Help → About shows the project licence, the UnRAR extraction notice, and every third-party crate linked into that build. ShellZip is not published to crates.io.</p>
+              <a class="btn btn-ghost" href="https://github.com/menonsoftware/ShellZip/blob/master/LICENSE">Read the MIT licence</a>
+            </div>
+            <figure class="frame">
+              <img src="media/about.png" width="1024" height="709" alt="About ShellZip, with the banner, version, MIT licence, and third-party notices.">
+            </figure>
+          </article>
+        </div>
+      </section>
+
+      <section class="closing">
+        <div class="wrap">
+          <div class="closing-panel">
+            <div>
+              <h2>Get the current build.</h2>
+              <p>The Microsoft Store package for Windows is signed by Partner Center. GitHub Releases also ships a Windows Setup, a Linux AppImage, a macOS app, and a portable archive.</p>
+            </div>
+            <div class="closing-actions">
+              <a class="btn btn-primary" href="https://apps.microsoft.com/store/detail/9MWW41FCVRT7?cid=DevShareMCLPCS">Microsoft Store</a>
+              <a class="btn btn-ghost" href="https://github.com/menonsoftware/ShellZip/releases/latest">GitHub Releases</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap foot-grid">
+        <div>
+          <h2>ShellZip</h2>
+          <p>An archive manager written in Rust. Desktop window, command line, and self-extractor.</p>
+        </div>
+        <div>
+          <h2>Product</h2>
+          <a href="#features">Desktop app</a>
+          <a href="#formats">Formats</a>
+          <a href="#requirements">Requirements</a>
+          <a href="https://apps.microsoft.com/store/detail/9MWW41FCVRT7?cid=DevShareMCLPCS">Microsoft Store</a>
+          <a href="https://github.com/menonsoftware/ShellZip/releases/latest">Releases</a>
+        </div>
+        <div>
+          <h2>Guides</h2>
+          <a href="https://github.com/menonsoftware/ShellZip/blob/master/docs/GUI.md">Desktop guide</a>
+          <a href="https://github.com/menonsoftware/ShellZip/blob/master/docs/CLI.md">Command line</a>
+          <a href="https://github.com/menonsoftware/ShellZip/blob/master/docs/FORMATS.md">Format details</a>
+          <a href="https://github.com/menonsoftware/ShellZip/blob/master/docs/FAQ.md">FAQ</a>
+        </div>
+        <div>
+          <h2>Project</h2>
+          <a href="https://github.com/menonsoftware/ShellZip">Source</a>
+          <a href="https://github.com/menonsoftware/ShellZip/blob/master/docs/BUILDING.md">Building</a>
+          <a href="https://github.com/menonsoftware/ShellZip/blob/master/LICENSE">Licence</a>
+          <a href="https://github.com/menonsoftware/ShellZip/blob/master/privacy.md">Privacy</a>
+        </div>
+      </div>
+      <div class="wrap">
+        <p class="legal">ShellZip is MIT licensed. RAR extraction uses UnRAR, which keeps its own licence.</p>
+      </div>
+    </footer>
+  </body>
+</html>
