@@ -646,7 +646,8 @@ mod tests {
         let text = nautilus_python_extension("/opt/ShellZip/shellzip");
         assert!(text.contains("SHELLZIP = \"/opt/ShellZip/shellzip\""));
         assert!(!text.contains("SHELLZIP = \"shellzip\""));
-        assert!(text.contains("gi.require_version(\"Nautilus\", \"4.0\")"));
+        assert!(text.contains("\"4.1\", \"4.0\", \"3.0\""));
+        assert!(text.contains("gi.require_version(\"Nautilus\", _version)"));
         assert!(text.contains("--add"));
         assert!(text.contains("icon=\"shellzip\"") || text.contains("icon='shellzip'"));
     }

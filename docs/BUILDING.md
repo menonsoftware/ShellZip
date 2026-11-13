@@ -173,7 +173,7 @@ Tag releases still upload portable `ShellZip-<tag>-<target>.zip|.tar.gz` archive
 
 ### Windows Store MSIX
 
-`make msix` runs `xtask msix-pack --install`: packs the full-trust desktop package (`shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, `shellzip_shell.dll`), creates or reuses a self-signed developer certificate under `dist/msix/ShellZipDev.pfx` whose subject matches the package Publisher (`CN=ShellZip` by default), signs with SignTool, imports the cert into **LocalMachine TrustedPeople** (UAC elevation on first run; AppX ignores CurrentUser stores), and sideloads with `Add-AppxPackage`. On Windows 10 1809 and Windows Server 2019 the package manifest's `IExplorerCommand` is not activated (those builds have no Packaged COM), so the install also registers the classic Explorer menu for the packaged binaries and may prompt for administrator approval. Turn on Developer Mode if install still fails. Release CI calls `xtask msix-pack` without `--install` so the GitHub Releases artifact stays **unsigned**; Partner Center re-signs after `msstore publish`.
+`make msix` runs `xtask msix-pack --install`: packs the full-trust desktop package (`shellzip.exe`, `szip.exe`, `shellzip-sfx.exe`, `shellzip_shell.dll`), creates or reuses a self-signed developer certificate under `dist/msix/ShellZipDev.pfx` whose subject matches the package Publisher (`CN=ShellZip` by default), signs with SignTool, imports the cert into **LocalMachine TrustedPeople** (UAC elevation on first run; AppX ignores CurrentUser stores), and sideloads with `Add-AppxPackage`. On Windows 10 1809 and Windows Server 2019 the package manifest's `IExplorerCommand` is not activated (those builds have no Packaged COM), so the install also registers the classic Explorer menu for the packaged binaries and may prompt for administrator approval. Turn on Developer Mode if install still fails. Release CI calls `xtask msix-pack` without `--install` and uploads the **unsigned** `ShellZip-<tag>-x64.msix` to the GitHub Release. It does not call Partner Center. Partner Center re-signs the package when you submit it.
 
 | Env / secret | Purpose |
 |---|---|
@@ -185,9 +185,11 @@ Tag releases still upload portable `ShellZip-<tag>-<target>.zip|.tar.gz` archive
 
 Upload only the `.msix` from `dist/msix/` (not the `payload/` folder). Partner Center re-signs it. Local defaults (`CN=ShellZip` / display name `ShellZip`) are for layout checks only — a Store submission must be packed with the real identity env vars set. `runFullTrust` needs a restricted-capability note / approval in Partner Center the first time.
 
-`msstore publish` fails with “Could not retrieve your application… AppId” when `STORE_APP_ID` is wrong **or** when the Entra app cannot see that product. After `msstore reconfigure`, CI runs `msstore apps list`; the Product ID must appear there. Fix: Partner Center → app → **Product identity** → copy Store ID into `STORE_APP_ID`, and under Partner Center users give the Azure AD application Manager access.
+`msstore publish` fails with “Could not retrieve your application… AppId” when `STORE_APP_ID` is wrong **or** when the Entra app cannot see that product. After `msstore reconfigure`, the Store workflow runs `msstore apps list`; the Product ID must appear there. Fix: Partner Center → app → **Product identity** → copy Store ID into `STORE_APP_ID`, and under Partner Center users give the Azure AD application Manager access.
 
-If any publish secret is empty, CI skips the Store upload and still ships Velopack. Reserve the app name and complete the first listing in Partner Center before the CLI can publish updates.
+Submit from GitHub Actions → **store** → Run workflow, after the release workflow for that tag is green. Enter the tag (for example `v0.1.42`) and type `publish`. The workflow downloads `ShellZip-<tag>-x64.msix` from that GitHub Release and runs `msstore publish`. Skip it for a Linux-only, macOS-only, or any other release that should not reach the Store.
+
+The package version is the tag plus `.0` (`v0.1.9` → `0.1.9.0`). Partner Center rejects a version that is not higher than the last submission, so publish a newer tag than the last Store submission. Missing Store secrets fail this workflow. Reserve the app name and complete the first listing in Partner Center before the first submission.
 
 Windows Velopack Setup and the portable zip stay unsigned on purpose (no Authenticode signer in CI).
 

@@ -311,10 +311,8 @@ fn finish_staged(
         let target = target.to_str().ok_or_else(|| {
             Error::UnsafePath(format!("symlink `{name}` has a non-Unicode target"))
         })?;
-        if !opts.allow_unsafe_links {
-            crate::fs::safe_path::symlink_stays_inside(&opts.output, dest, target)?;
-        }
-        match crate::fs::metadata::create_symlink(target, dest) {
+        let stored = super::policy::symlink_target_text(name, dest, target, opts)?;
+        match crate::fs::metadata::create_symlink(&stored, dest) {
             Ok(()) => report.extracted += 1,
             Err(err) => report.warnings.push(err.to_string()),
         }

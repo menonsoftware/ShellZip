@@ -275,38 +275,197 @@ pub fn restore_entry_time(
     crate::fs::metadata::restore_mtime(path, time)
 }
 
-/// Validate a symlink target and return the link path when it is safe.
+/// A symlink that is safe to create inside the destination.
+#[derive(Debug)]
+pub struct SymlinkExtract {
+    /// Path of the link inside the destination.
+    pub path: PathBuf,
+    /// Target text to store. An absolute target that names another member of
+    /// the same tree is rewritten relative to [`Self::path`].
+    pub target: String,
+}
+
+/// Validate a symlink and return where to create it.
+///
+/// Absolute targets are not written as absolute paths. When the target names
+/// another member of this archive, it is stored as a relative link under the
+/// destination the caller chose. Targets that still leave that directory are
+/// refused unless `allow_unsafe_links` is set.
+///
+/// # Errors
+///
+/// [`Error::UnsafePath`] when the link name is empty or the target would leave
+/// the destination.
 pub fn symlink_destination(
     raw_name: &str,
     target: &str,
     opts: &ExtractOpts,
-) -> Result<PathBuf, Error> {
-    let raw_name = strip_prefix(raw_name, &opts.strip_prefix);
-    let raw_name = if opts.flat {
-        raw_name
+) -> Result<SymlinkExtract, Error> {
+    let archive_name = raw_name.trim_matches(['/', '\\']).to_string();
+    let placed = strip_prefix(&archive_name, &opts.strip_prefix);
+    let placed = if opts.flat {
+        placed
             .rsplit(['/', '\\'])
             .next()
-            .unwrap_or(raw_name.as_str())
+            .unwrap_or(placed.as_str())
             .to_string()
     } else {
-        raw_name
+        placed
     };
-    if raw_name.is_empty() {
+    if placed.is_empty() {
         return Err(Error::UnsafePath("symlink has an empty name".to_string()));
     }
-    let rel = safe_rel(&raw_name)?;
+    let rel = safe_rel(&placed)?;
     let path = safe_join(&opts.output, &rel)?;
     if let Some(parent) = path.parent() {
         ensure_dir(parent)?;
     }
-    if opts.allow_unsafe_links {
-        if target.is_empty() || target.chars().any(char::is_control) {
-            return Err(Error::UnsafePath(target.to_string()));
-        }
-    } else {
-        symlink_stays_inside(&opts.output, &path, target)?;
+    let target = symlink_target_text(&archive_name, &path, target, opts)?;
+    Ok(SymlinkExtract { path, target })
+}
+
+/// Target text to store for a link already placed at `link_path`.
+///
+/// `archive_name` is the member name before strip or flat placement.
+pub(crate) fn symlink_target_text(
+    archive_name: &str,
+    link_path: &Path,
+    target: &str,
+    opts: &ExtractOpts,
+) -> Result<String, Error> {
+    if target.is_empty() || target.chars().any(char::is_control) {
+        return Err(Error::UnsafePath(target.to_string()));
     }
-    Ok(path)
+    if opts.allow_unsafe_links {
+        return Ok(target.to_string());
+    }
+    if let Some(relative) =
+        rebase_absolute_symlink(archive_name, target, &opts.strip_prefix, opts.flat)
+    {
+        symlink_stays_inside(&opts.output, link_path, &relative)?;
+        return Ok(relative);
+    }
+    symlink_stays_inside(&opts.output, link_path, target)?;
+    Ok(target.to_string())
+}
+
+/// Rewrite an absolute link onto the archive tree, then onto the stripped destination.
+fn rebase_absolute_symlink(
+    archive_name: &str,
+    target: &str,
+    prefix: &str,
+    flat: bool,
+) -> Option<String> {
+    if flat || !is_absolute_link_target(target) {
+        return None;
+    }
+    let archive_target = infer_archive_target(archive_name, target)?;
+    let stripped_link = strip_prefix(archive_name, prefix);
+    let stripped_target = strip_prefix(&archive_target, prefix);
+    if stripped_link.is_empty() || stripped_target.is_empty() {
+        return None;
+    }
+    relative_link(&stripped_link, &stripped_target)
+}
+
+fn is_absolute_link_target(target: &str) -> bool {
+    let bytes = target.as_bytes();
+    target.starts_with('/')
+        || target.starts_with('\\')
+        || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+        || Path::new(target).is_absolute()
+}
+
+/// Archive-relative path of `absolute`, using `link_rel`'s directory as the anchor.
+fn infer_archive_target(link_rel: &str, absolute: &str) -> Option<String> {
+    let link_parts = lexical_parts(link_rel)?;
+    if link_parts.len() < 2 {
+        return None;
+    }
+    let target_parts = lexical_parts(absolute)?;
+    if target_parts.is_empty() {
+        return None;
+    }
+    let link_dir = &link_parts[..link_parts.len() - 1];
+    let target_dir = &target_parts[..target_parts.len() - 1];
+    let (_matched, start) = find_anchor(link_dir, target_dir)?;
+    Some(target_parts[start..].join("/"))
+}
+
+/// Longest prefix of `link_dir` that occurs in `target_dir`, preferring the rightmost hit.
+fn find_anchor(link_dir: &[String], target_dir: &[String]) -> Option<(usize, usize)> {
+    let max = link_dir.len().min(target_dir.len());
+    for len in (1..=max).rev() {
+        let last = target_dir.len() - len;
+        for start in (0..=last).rev() {
+            if components_eq(&target_dir[start..start + len], &link_dir[..len]) {
+                return Some((len, start));
+            }
+        }
+    }
+    None
+}
+
+fn relative_link(from_file: &str, to_file: &str) -> Option<String> {
+    let from = lexical_parts(from_file)?;
+    let to = lexical_parts(to_file)?;
+    if from.is_empty() || to.is_empty() {
+        return None;
+    }
+    let from_dir = &from[..from.len() - 1];
+    let to_dir = &to[..to.len() - 1];
+    let mut common = 0;
+    while common < from_dir.len()
+        && common < to_dir.len()
+        && component_eq(&from_dir[common], &to_dir[common])
+    {
+        common += 1;
+    }
+    let mut out = Vec::new();
+    for _ in 0..(from_dir.len() - common) {
+        out.push("..".to_string());
+    }
+    out.extend(to_dir[common..].iter().cloned());
+    out.push(to[to.len() - 1].clone());
+    Some(out.join("/"))
+}
+
+fn lexical_parts(raw: &str) -> Option<Vec<String>> {
+    if raw.is_empty() || raw.chars().any(char::is_control) {
+        return None;
+    }
+    let mut norm = raw.replace('\\', "/");
+    let bytes = norm.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        norm = norm[2..].to_string();
+    }
+    let mut parts = Vec::new();
+    for component in norm.split('/') {
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        if component == ".." {
+            parts.pop()?;
+            continue;
+        }
+        if component.contains(':') {
+            return None;
+        }
+        parts.push(component.to_string());
+    }
+    Some(parts)
+}
+
+fn components_eq(left: &[String], right: &[String]) -> bool {
+    left.len() == right.len() && left.iter().zip(right).all(|(a, b)| component_eq(a, b))
+}
+
+fn component_eq(left: &str, right: &str) -> bool {
+    if cfg!(windows) {
+        left.eq_ignore_ascii_case(right)
+    } else {
+        left == right
+    }
 }
 
 /// Copy the archive zone onto a file that was just written, when `-om` is set.
@@ -568,6 +727,67 @@ mod tests {
             panic!("expected a write");
         };
         assert_eq!(path, root.join("Images").join("a.txt"));
+        drop(guard);
+    }
+
+    #[test]
+    fn absolute_symlink_inside_the_archive_is_rewritten_into_the_destination() {
+        let (guard, root) = scratch();
+        let opts = ExtractOpts::new(&root);
+        let link = symlink_destination(
+            "code/rea/ghidra-release",
+            "/home/ajaymenon/code/rea/ghidra_12.1.4_PUBLIC",
+            &opts,
+        )
+        .unwrap();
+        assert_eq!(link.target, "ghidra_12.1.4_PUBLIC");
+        assert_eq!(
+            link.path,
+            root.join("code").join("rea").join("ghidra-release")
+        );
+        drop(guard);
+    }
+
+    #[test]
+    fn stripped_absolute_symlink_stays_beside_its_target() {
+        let (guard, root) = scratch();
+        let mut opts = ExtractOpts::new(&root);
+        opts.strip_prefix = "code/rea".to_string();
+        let link = symlink_destination(
+            "code/rea/ghidra-release",
+            "/home/ajaymenon/code/rea/ghidra_12.1.4_PUBLIC",
+            &opts,
+        )
+        .unwrap();
+        assert_eq!(link.target, "ghidra_12.1.4_PUBLIC");
+        assert_eq!(link.path, root.join("ghidra-release"));
+        drop(guard);
+    }
+
+    #[test]
+    fn absolute_symlink_deeper_than_its_target_uses_parent_segments() {
+        let (guard, root) = scratch();
+        let opts = ExtractOpts::new(&root);
+        let link = symlink_destination(
+            "code/rea/nested/link",
+            "/home/ajaymenon/code/rea/ghidra_12.1.4_PUBLIC",
+            &opts,
+        )
+        .unwrap();
+        assert_eq!(link.target, "../ghidra_12.1.4_PUBLIC");
+        drop(guard);
+    }
+
+    #[test]
+    fn absolute_symlink_outside_the_archive_is_still_refused() {
+        let (guard, root) = scratch();
+        let opts = ExtractOpts::new(&root);
+        let err = symlink_destination("code/rea/ghidra-release", "/etc/passwd", &opts).unwrap_err();
+        assert!(matches!(err, Error::UnsafePath(_)), "{err}");
+        let mut allowed = ExtractOpts::new(&root);
+        allowed.allow_unsafe_links = true;
+        let link = symlink_destination("code/rea/ghidra-release", "/etc/passwd", &allowed).unwrap();
+        assert_eq!(link.target, "/etc/passwd");
         drop(guard);
     }
 }

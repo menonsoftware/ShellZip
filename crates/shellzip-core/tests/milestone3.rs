@@ -159,6 +159,42 @@ fn passwords_are_rejected_for_tar() {
     assert!(matches!(err, Error::Usage(_)), "{err}");
 }
 
+#[cfg(unix)]
+#[test]
+fn absolute_symlink_to_an_archived_directory_extracts_into_the_chosen_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src_root = tmp.path().join("src");
+    let tree = src_root.join("code").join("rea");
+    let payload = tree.join("ghidra_12.1.4_PUBLIC");
+    fs::create_dir_all(&payload).unwrap();
+    fs::write(payload.join("note.txt"), b"hi").unwrap();
+    let link = tree.join("ghidra-release");
+    std::os::unix::fs::symlink(&payload, &link).unwrap();
+
+    let archive = tmp.path().join("code.zip");
+    add(
+        &archive,
+        &[src_root.join("code")],
+        &CompressOpts::default(),
+        &NopProgress,
+    )
+    .unwrap();
+    let out = tmp.path().join("elsewhere");
+    fs::create_dir(&out).unwrap();
+    extract(&archive, &ExtractOpts::new(&out), None, &NopProgress).unwrap();
+
+    let extracted = out.join("code").join("rea").join("ghidra-release");
+    let target = fs::read_link(&extracted).unwrap();
+    assert!(
+        !target.is_absolute(),
+        "link still points outside the chosen folder: {}",
+        target.display()
+    );
+    let resolved = extracted.parent().unwrap().join(target);
+    assert_eq!(fs::read(resolved.join("note.txt")).unwrap(), b"hi");
+    assert_eq!(fs::read(payload.join("note.txt")).unwrap(), b"hi");
+}
+
 #[test]
 fn symlink_targets_outside_the_destination_are_refused() {
     let tmp = tempfile::tempdir().unwrap();

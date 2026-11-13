@@ -119,7 +119,7 @@ shellzip --integrate
 shellzip --unintegrate
 ```
 
-Extract Here uses the saved overwrite policy (Ask by default) and the password prompt when needed. Linux also installs MIME actions, a Nautilus Python submenu (GPL, needs `python3-nautilus`), Scripts fallback, KDE/Nemo/Thunar/PCManFM handlers, and the ShellZip theme icon; see [platform/linux](../platform/linux).
+Extract Here uses the saved overwrite policy (Ask by default) and the password prompt when needed. Linux also installs MIME actions, a Nautilus Python submenu (GPL, needs `python3-nautilus`; GI 4.1, 4.0, or 3.0), Scripts fallback, KDE/Nemo/Thunar/PCManFM handlers, and the ShellZip theme icon; see [platform/linux](../platform/linux).
 
 ## Limitations
 

@@ -208,7 +208,8 @@ jobs:
           if-no-files-found: error
 
   # Runs only when every matrix leg of `build` succeeded. Publishes GitHub
-  # Release assets and Velopack feeds in one place so a failed OS cannot ship.
+  # Release assets (including the unsigned Store MSIX) and Velopack feeds in one
+  # place so a failed OS cannot ship. Partner Center submission is store.yml.
   publish:
     needs: build
     runs-on: ubuntu-latest
@@ -286,86 +287,3 @@ jobs:
               --publish \
               --merge
           done
-
-  # Store submission is Windows-only and still gated on every platform build.
-  store:
-    needs: build
-    runs-on: windows-latest
-    steps:
-      - name: Download Store MSIX artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: msix
-          path: dist/msix
-      - name: Setup Microsoft Store CLI
-        uses: microsoft/microsoft-store-apppublisher@v1.2
-      - name: Publish MSIX to Microsoft Store
-        # PowerShell on purpose: msstore is on that PATH. Use --flag="$env:VAR"
-        # so a client secret that starts with "-" stays one argument.
-        shell: pwsh
-        env:
-          STORE_APP_ID: ${{ secrets.STORE_APP_ID }}
-          STORE_TENANT_ID: ${{ secrets.STORE_TENANT_ID }}
-          STORE_SELLER_ID: ${{ secrets.STORE_SELLER_ID }}
-          STORE_CLIENT_ID: ${{ secrets.STORE_CLIENT_ID }}
-          STORE_CLIENT_SECRET: ${{ secrets.STORE_CLIENT_SECRET }}
-        run: |
-          $required = @(
-            'STORE_APP_ID',
-            'STORE_TENANT_ID',
-            'STORE_SELLER_ID',
-            'STORE_CLIENT_ID',
-            'STORE_CLIENT_SECRET'
-          )
-          $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
-          if ($missing.Count -gt 0) {
-            Write-Host "Skipping Store publish: $($missing -join ', ') empty"
-            exit 0
-          }
-
-          # Partner Center Product ID (Store ID), usually 12 chars starting with 9
-          # (for example 9NXXXXXXXXXX). Not the package Identity Name, not the
-          # Azure AD application (client) id, and not the seller id.
-          $appId = $env:STORE_APP_ID.Trim()
-          if ($appId -notmatch '^[0-9A-Za-z]{12}$') {
-            Write-Error @"
-          STORE_APP_ID='$appId' does not look like a Partner Center Product ID.
-          Open Partner Center → the ShellZip app → Product identity → Store ID
-          (also called Product ID). It is typically 12 characters and starts with 9.
-          Do not use STORE_IDENTITY_NAME, STORE_CLIENT_ID, or STORE_SELLER_ID here.
-          "@
-            exit 1
-          }
-
-          $msix = Get-ChildItem -Path dist/msix -Filter 'ShellZip-*-x64.msix' |
-            Select-Object -First 1
-          if (-not $msix) {
-            Write-Error 'No ShellZip-*-x64.msix artifact under dist/msix'
-            exit 1
-          }
-
-          msstore reconfigure `
-            --tenantId="$env:STORE_TENANT_ID" `
-            --sellerId="$env:STORE_SELLER_ID" `
-            --clientId="$env:STORE_CLIENT_ID" `
-            --clientSecret="$env:STORE_CLIENT_SECRET"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-          Write-Host "Listing apps visible to this Entra credential (expect Store ID $appId):"
-          msstore apps list --output-stream stdout
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error 'msstore apps list failed — check STORE_TENANT_ID / SELLER_ID / CLIENT_ID / CLIENT_SECRET and that the Entra app has Manager (Windows) in Partner Center.'
-            exit $LASTEXITCODE
-          }
-
-          # Prefer --appId= over -id: -id can be confused with -i (--inputDirectory).
-          msstore publish $msix.FullName --appId="$appId" --output-stream stdout
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error @"
-          msstore publish could not retrieve application '$appId'.
-          Confirm STORE_APP_ID matches a Product ID shown by 'msstore apps list' above.
-          If the list is empty or missing ShellZip, grant the Entra app Manager access
-          to this product in Partner Center (Users → the Azure AD application).
-          "@
-            exit $LASTEXITCODE
-          }

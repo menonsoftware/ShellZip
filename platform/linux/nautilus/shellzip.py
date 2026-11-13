@@ -10,15 +10,22 @@
 #   nautilus -q
 #
 # Requires the `python3-nautilus` / `nautilus-python` package.
+# Nautilus 49+ loads GI 4.1 before extensions run; 43–48 use 4.0; older Files uses 3.0.
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 import gi
 
-try:
-    gi.require_version("Nautilus", "4.0")
-except ValueError:
-    gi.require_version("Nautilus", "3.0")
+# Request the already-loaded version first. require_version raises when Files
+# has imported a different Nautilus GI version.
+for _version in ("4.1", "4.0", "3.0"):
+    try:
+        gi.require_version("Nautilus", _version)
+        break
+    except ValueError:
+        continue
+else:
+    raise ImportError("Nautilus typelib not found")
 
 from gi.repository import GObject, Nautilus
 import os

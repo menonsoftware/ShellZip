@@ -1,0 +1,130 @@
+name: store
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag whose MSIX to submit (for example v0.1.42)
+        required: true
+        type: string
+      confirm:
+        description: Type publish to submit this MSIX to Partner Center
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Check tag and confirmation
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if ($env:CONFIRM -cne 'publish') {
+            Write-Error "Store publish aborted: confirm must be exactly 'publish'."
+            exit 1
+          }
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') {
+            Write-Error "tag '$($env:RELEASE_TAG)' must look like v0.1.42."
+            exit 1
+          }
+
+      - name: Download MSIX from GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/msix | Out-Null
+          $asset = "ShellZip-$($env:RELEASE_TAG)-x64.msix"
+          gh release download $env:RELEASE_TAG --repo $env:GH_REPO --pattern $asset --dir dist/msix --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $path = Join-Path dist/msix $asset
+          if (-not (Test-Path -LiteralPath $path)) {
+            Write-Error "GitHub Release $($env:RELEASE_TAG) has no $asset. Wait until the release workflow is green."
+            exit 1
+          }
+          Write-Host "Downloaded $path"
+
+      - name: Setup Microsoft Store CLI
+        uses: microsoft/microsoft-store-apppublisher@v1.2
+      - name: Publish MSIX to Microsoft Store
+        # PowerShell on purpose: msstore is on that PATH. Use --flag="$env:VAR"
+        # so a client secret that starts with "-" stays one argument.
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          STORE_APP_ID: ${{ secrets.STORE_APP_ID }}
+          STORE_TENANT_ID: ${{ secrets.STORE_TENANT_ID }}
+          STORE_SELLER_ID: ${{ secrets.STORE_SELLER_ID }}
+          STORE_CLIENT_ID: ${{ secrets.STORE_CLIENT_ID }}
+          STORE_CLIENT_SECRET: ${{ secrets.STORE_CLIENT_SECRET }}
+        run: |
+          $required = @(
+            'STORE_APP_ID',
+            'STORE_TENANT_ID',
+            'STORE_SELLER_ID',
+            'STORE_CLIENT_ID',
+            'STORE_CLIENT_SECRET'
+          )
+          $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
+          if ($missing.Count -gt 0) {
+            Write-Error "Store publish requires $($missing -join ', ')."
+            exit 1
+          }
+
+          # Partner Center Product ID (Store ID), usually 12 chars starting with 9
+          # (for example 9NXXXXXXXXXX). Not the package Identity Name, not the
+          # Azure AD application (client) id, and not the seller id.
+          $appId = $env:STORE_APP_ID.Trim()
+          if ($appId -notmatch '^[0-9A-Za-z]{12}$') {
+            Write-Error @"
+          STORE_APP_ID='$appId' does not look like a Partner Center Product ID.
+          Open Partner Center → the ShellZip app → Product identity → Store ID
+          (also called Product ID). It is typically 12 characters and starts with 9.
+          Do not use STORE_IDENTITY_NAME, STORE_CLIENT_ID, or STORE_SELLER_ID here.
+          "@
+            exit 1
+          }
+
+          $asset = "ShellZip-$($env:RELEASE_TAG)-x64.msix"
+          $path = Join-Path dist/msix $asset
+          if (-not (Test-Path -LiteralPath $path)) {
+            Write-Error "No $asset under dist/msix"
+            exit 1
+          }
+
+          $packageVersion = ($env:RELEASE_TAG.TrimStart('v') + '.0')
+          Write-Host "Submitting $asset (package version $packageVersion). Partner Center rejects a version that is not higher than the last submission."
+
+          msstore reconfigure `
+            --tenantId="$env:STORE_TENANT_ID" `
+            --sellerId="$env:STORE_SELLER_ID" `
+            --clientId="$env:STORE_CLIENT_ID" `
+            --clientSecret="$env:STORE_CLIENT_SECRET"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          Write-Host "Listing apps visible to this Entra credential (expect Store ID $appId):"
+          msstore apps list --output-stream stdout
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error 'msstore apps list failed — check STORE_TENANT_ID / SELLER_ID / CLIENT_ID / CLIENT_SECRET and that the Entra app has Manager (Windows) in Partner Center.'
+            exit $LASTEXITCODE
+          }
+
+          # Prefer --appId= over -id: -id can be confused with -i (--inputDirectory).
+          msstore publish $path --appId="$appId" --output-stream stdout
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error @"
+          msstore publish could not retrieve application '$appId'.
+          Confirm STORE_APP_ID matches a Product ID shown by 'msstore apps list' above.
+          If the list is empty or missing ShellZip, grant the Entra app Manager access
+          to this product in Partner Center (Users → the Azure AD application).
+          "@
+            exit $LASTEXITCODE
+          }

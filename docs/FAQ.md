@@ -68,7 +68,7 @@ TAR and single-file streams are rewrite-on-create, not in-place editors. `szip a
 
 ## Why did extract refuse a path?
 
-Entry names go through a whitelist before any create or symlink. Absolute paths, `..`, drive letters, NTFS reserved names (`CON`, `NUL`, …), trailing dots/spaces, and control characters are rejected as `refusing unsafe archive path`. That is zip-slip protection. Symlink targets that leave the destination need `--allow-unsafe-links`.
+Entry names go through a whitelist before any create or symlink. Absolute paths, `..`, drive letters, NTFS reserved names (`CON`, `NUL`, …), trailing dots/spaces, and control characters are rejected as `refusing unsafe archive path`. That is zip-slip protection. An absolute symlink target that points at another member of the same archive is rewritten as a relative link inside the destination you chose. Symlink targets that still leave that directory need `--allow-unsafe-links`.
 
 ## What are the 64 GiB and 1_000_000:1 limits?
 
@@ -98,7 +98,7 @@ Yes for Velopack / portable installs. **Options → Integrate with the file mana
 
 - **Windows (Velopack / portable)** — `shellzip_shell.dll` (`IContextMenu`, icon handler). Place the DLL next to `shellzip.exe`. See [platform/windows/README.md](../platform/windows/README.md).
 - **Windows (Microsoft Store)** — archive types, static Extract verbs, and a Windows 11 `IExplorerCommand` cascade come from the MSIX manifest (`shellzip_shell.dll` as an STA surrogate). The Integrate menu is hidden. Windows 10 1809 and Windows Server 2019 have no Packaged COM, so a local `make msix` also registers the classic Explorer menu for the packaged binaries.
-- **Linux** — `--integrate` installs a `.desktop` file, the ShellZip app icon, KDE/Nemo/Thunar/PCManFM actions, and a GNOME Files submenu. GNOME Files needs `python3-nautilus` / `nautilus-python` for a top-level **ShellZip** menu; otherwise verbs appear under **Scripts → ShellZip**. See [platform/linux/README.md](../platform/linux/README.md).
+- **Linux** — `--integrate` installs a `.desktop` file, the ShellZip app icon, KDE/Nemo/Thunar/PCManFM actions, and a GNOME Files submenu. GNOME Files needs `python3-nautilus` / `nautilus-python` for a top-level **ShellZip** menu (Nautilus GI 4.1, 4.0, or 3.0). Without that package, verbs appear under **Scripts → ShellZip**. A `.deb` that already installed the Nautilus extension stays the only copy: `--integrate` removes the per-user extension and the Scripts folder. Removing the `.deb`, or `--unintegrate`, also drops `shellzip.desktop` from `mimeapps.list` so Files does not keep an Open With entry after the package is gone. See [platform/linux/README.md](../platform/linux/README.md).
 - **macOS** — document types and a Finder Sync Swift source under [platform/macos/](../platform/macos/).
 
 ## Why does Windows Defender call ShellZip a trojan?

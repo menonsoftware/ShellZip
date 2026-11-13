@@ -356,7 +356,7 @@ fn write_member<R: std::io::Read + std::io::Seek + Send>(
         })?;
         let target = target.trim_end_matches('\0').to_string();
         let link = symlink_destination(&member.name, &target, ctx.opts)?;
-        match crate::fs::metadata::create_symlink(&target, &link) {
+        match crate::fs::metadata::create_symlink(&link.target, &link.path) {
             Ok(()) => ctx.report.extracted += 1,
             Err(err) => ctx.report.warnings.push(err.to_string()),
         }

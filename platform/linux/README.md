@@ -42,7 +42,9 @@ Writes:
 - KDE Dolphin: service menus under `kio/servicemenus` and `kservices5/ServiceMenus` (Add on every file/folder; Open/Extract on archives)
 - Nemo, Caja scripts, PCManFM/libfm actions, and Thunar `~/.config/Thunar/uca.xml` (merged, with stable `unique-id`s)
 
-A top-level **ShellZip** submenu in GNOME Files needs `python3-nautilus` (Debian/Ubuntu) or `nautilus-python`. Without that package, the same verbs appear under **Scripts → ShellZip**. Restart the file manager (`nautilus -q`) after integrate.
+A top-level **ShellZip** submenu in GNOME Files needs `python3-nautilus` (Debian/Ubuntu) or `nautilus-python`. The extension accepts Nautilus GI 4.1 (Files 49 and later, which loads that version before extensions run), 4.0 (Files 43–48), or 3.0. Without that package, the same verbs appear under **Scripts → ShellZip**. When the package imports, `--integrate` removes that Scripts folder. When `/usr/share/nautilus-python/extensions/shellzip.py` or the `/usr/local` copy is already installed (the `.deb`), `--integrate` also removes the per-user extension and its `__pycache__` so the submenu appears once. Restart the file manager (`nautilus -q`) after integrate.
+
+`--integrate` also sets `shellzip.desktop` as the default opener in `~/.config/mimeapps.list`. That list is not part of the package, so `apt remove` used to leave a ShellZip entry on the right-click menu. `--unintegrate` and the `.deb` `postrm` now delete only that desktop id. Other applications on the same line stay.
 
 The `.desktop` `Icon=shellzip` name is a freedesktop theme icon, not an ELF resource. The raw `shellzip` binary in a folder listing still uses the generic executable glyph; the launcher, dock, window, and context-menu icon are ShellZip.
 

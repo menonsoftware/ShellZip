@@ -215,7 +215,7 @@ pub fn extract_zip(
                 .map_err(|err| Error::io(name.clone(), err))?;
             budget.charge(target.len() as u64)?;
             let link = symlink_destination(&name, target.trim_end_matches('\0'), opts)?;
-            match crate::fs::metadata::create_symlink(target.trim_end_matches('\0'), &link) {
+            match crate::fs::metadata::create_symlink(&link.target, &link.path) {
                 Ok(()) => report.extracted += 1,
                 Err(err) => report.warnings.push(format!("{err}")),
             }

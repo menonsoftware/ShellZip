@@ -15,6 +15,14 @@ use crate::writers::{
 pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
     let home = home_dir()?;
     integrate_into(&home, paths)?;
+    // The .deb already ships the Nautilus extension, and a working
+    // python3-nautilus install shows that submenu directly. Drop the per-user
+    // copy and the Scripts fallback so Files does not list ShellZip twice.
+    finish_nautilus_menu(
+        &home,
+        packaged_nautilus_extension_installed(),
+        nautilus_python_importable(),
+    );
     refresh_desktop(&home, true);
     hint_nautilus_python();
     Ok(())
@@ -113,8 +121,8 @@ pub(crate) fn unintegrate_into(home: &Path, paths: &IntegratePaths) -> Result<()
     let _ = fs::remove_file(thunar.join("shellzip-uca.xml"));
     unmerge_thunar_config(&thunar)?;
 
-    let _ = fs::remove_file(home.join(".local/share/nautilus-python/extensions/shellzip.py"));
-    let _ = fs::remove_dir_all(home.join(".local/share/nautilus/scripts/ShellZip"));
+    remove_nautilus_python_extension(home);
+    remove_nautilus_scripts(home);
     let _ = fs::remove_dir_all(home.join(".local/share/caja/scripts/ShellZip"));
 
     let pcmanfm = home.join(".local/share/file-manager/actions");
@@ -125,6 +133,7 @@ pub(crate) fn unintegrate_into(home: &Path, paths: &IntegratePaths) -> Result<()
     let hicolor = home.join(".local/share/icons/hicolor");
     remove_shellzip_mime_icons(&hicolor)?;
     remove_shellzip_app_icons(&hicolor)?;
+    clear_shellzip_mimeapps(home)?;
     let _ = paths;
     Ok(())
 }
@@ -144,6 +153,63 @@ fn refresh_desktop(home: &Path, set_mime_defaults: bool) {
         }
     }
     let _ = Command::new("nautilus").arg("-q").status();
+}
+
+const SHELLZIP_DESKTOP_ID: &str = "shellzip.desktop";
+
+/// Drop `shellzip.desktop` from a mimeapps list. A line whose only handler is
+/// ShellZip is removed. Other handlers on the same line stay.
+fn strip_shellzip_mimeapps(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let newline = if line.ends_with('\n') { "\n" } else { "" };
+        let body = line.trim_end_matches(['\n', '\r']);
+        if let Some(kept) = strip_shellzip_mimeapps_line(body) {
+            out.push_str(&kept);
+            out.push_str(newline);
+        }
+    }
+    out
+}
+
+fn strip_shellzip_mimeapps_line(line: &str) -> Option<String> {
+    if !line.contains(SHELLZIP_DESKTOP_ID) {
+        return Some(line.to_string());
+    }
+    let Some((key, value)) = line.split_once('=') else {
+        return Some(line.to_string());
+    };
+    let trailing = value.ends_with(';');
+    let kept: Vec<&str> = value
+        .split(';')
+        .filter(|part| !part.is_empty() && *part != SHELLZIP_DESKTOP_ID)
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    let mut joined = kept.join(";");
+    if trailing {
+        joined.push(';');
+    }
+    Some(format!("{key}={joined}"))
+}
+
+fn clear_shellzip_mimeapps(home: &Path) -> Result<(), IntegrateError> {
+    for relative in [
+        ".config/mimeapps.list",
+        ".local/share/applications/mimeapps.list",
+    ] {
+        let path = home.join(relative);
+        if !path.is_file() {
+            continue;
+        }
+        let original = fs::read_to_string(&path)?;
+        let cleaned = strip_shellzip_mimeapps(&original);
+        if cleaned != original {
+            fs::write(&path, cleaned)?;
+        }
+    }
+    Ok(())
 }
 
 fn home_dir() -> Result<PathBuf, IntegrateError> {
@@ -272,13 +338,73 @@ fn copy_dir(src: &Path, dest: &Path) -> Result<(), IntegrateError> {
     Ok(())
 }
 
-fn hint_nautilus_python() {
-    let ok = Command::new("python3")
+fn nautilus_extension_dir(home: &Path) -> PathBuf {
+    home.join(".local/share/nautilus-python/extensions")
+}
+
+fn nautilus_scripts_dir(home: &Path) -> PathBuf {
+    home.join(".local/share/nautilus/scripts/ShellZip")
+}
+
+/// Remove `shellzip.py` and any bytecode left after the source file is gone.
+fn remove_nautilus_python_extension(home: &Path) {
+    let ext = nautilus_extension_dir(home);
+    let _ = fs::remove_file(ext.join("shellzip.py"));
+    let cache = ext.join("__pycache__");
+    if let Ok(entries) = fs::read_dir(&cache) {
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                continue;
+            };
+            if name.starts_with("shellzip.") && name.ends_with(".pyc") {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+    let _ = fs::remove_dir(&cache);
+}
+
+fn remove_nautilus_scripts(home: &Path) {
+    let _ = fs::remove_dir_all(nautilus_scripts_dir(home));
+}
+
+/// Keep a single Nautilus menu.
+///
+/// `packaged_extension` means Files already loads `/usr/share/.../shellzip.py`,
+/// so the home copy (and its `__pycache__`) would add a second submenu.
+/// `python_extension` means the top-level submenu can load, so the Scripts
+/// folder is only a duplicate.
+fn finish_nautilus_menu(home: &Path, packaged_extension: bool, python_extension: bool) {
+    if packaged_extension {
+        remove_nautilus_python_extension(home);
+    }
+    if packaged_extension || python_extension {
+        remove_nautilus_scripts(home);
+    }
+}
+
+fn packaged_nautilus_extension_installed() -> bool {
+    [
+        "/usr/share/nautilus-python/extensions/shellzip.py",
+        "/usr/local/share/nautilus-python/extensions/shellzip.py",
+    ]
+    .into_iter()
+    .any(|path| Path::new(path).is_file())
+}
+
+fn nautilus_python_importable() -> bool {
+    Command::new("python3")
         .args(["-c", "from gi.repository import Nautilus"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .map(|status| status.success())
-        .unwrap_or(false);
-    if !ok {
+        .unwrap_or(false)
+}
+
+fn hint_nautilus_python() {
+    if !nautilus_python_importable() {
         eprintln!(
             "shellzip: GNOME Files shows a top-level ShellZip submenu after installing python3-nautilus (or nautilus-python) and re-running --integrate; Scripts → ShellZip is available without that package"
         );
@@ -356,12 +482,18 @@ mod tests {
             1
         );
 
+        let cache = home.join(".local/share/nautilus-python/extensions/__pycache__");
+        fs::create_dir_all(&cache).unwrap();
+        let pyc = cache.join("shellzip.cpython-314.pyc");
+        fs::write(&pyc, b"stale").unwrap();
+
         unintegrate_into(home, &paths).unwrap();
         assert!(
             !home
                 .join(".local/share/nautilus-python/extensions/shellzip.py")
                 .exists()
         );
+        assert!(!pyc.exists());
         assert!(!home.join(".local/share/nautilus/scripts/ShellZip").exists());
         assert!(!icon.exists());
         let uca3 = fs::read_to_string(home.join(".config/Thunar/uca.xml")).unwrap();
@@ -388,5 +520,95 @@ mod tests {
         let uca = fs::read_to_string(thunar.join("uca.xml")).unwrap();
         assert!(uca.contains("Open Terminal Here"));
         assert!(!uca.contains("shellzip-add"));
+    }
+
+    #[test]
+    fn packaged_nautilus_extension_drops_the_user_copy_and_scripts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let paths = test_paths(home, None);
+        integrate_into(home, &paths).unwrap();
+        let cache = home.join(".local/share/nautilus-python/extensions/__pycache__");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("shellzip.cpython-314.pyc"), b"stale").unwrap();
+
+        finish_nautilus_menu(home, true, true);
+
+        assert!(
+            !home
+                .join(".local/share/nautilus-python/extensions/shellzip.py")
+                .exists()
+        );
+        assert!(!cache.join("shellzip.cpython-314.pyc").exists());
+        assert!(!home.join(".local/share/nautilus/scripts/ShellZip").exists());
+    }
+
+    #[test]
+    fn python_nautilus_keeps_the_extension_and_drops_scripts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let paths = test_paths(home, None);
+        integrate_into(home, &paths).unwrap();
+
+        finish_nautilus_menu(home, false, true);
+
+        assert!(
+            home.join(".local/share/nautilus-python/extensions/shellzip.py")
+                .is_file()
+        );
+        assert!(!home.join(".local/share/nautilus/scripts/ShellZip").exists());
+    }
+
+    #[test]
+    fn scripts_stay_when_nautilus_python_is_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let paths = test_paths(home, None);
+        integrate_into(home, &paths).unwrap();
+
+        finish_nautilus_menu(home, false, false);
+
+        assert!(
+            home.join(".local/share/nautilus-python/extensions/shellzip.py")
+                .is_file()
+        );
+        assert!(
+            home.join(".local/share/nautilus/scripts/ShellZip/Extract Here")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn unintegrate_drops_shellzip_from_mimeapps_and_keeps_other_apps() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let config = home.join(".config");
+        fs::create_dir_all(&config).unwrap();
+        fs::write(
+            config.join("mimeapps.list"),
+            "\
+[Default Applications]
+application/zip=shellzip.desktop
+application/x-7z-compressed=org.gnome.FileRoller.desktop;shellzip.desktop;
+text/html=google-chrome.desktop
+
+[Added Associations]
+application/zip=shellzip.desktop;
+application/gzip=org.gnome.FileRoller.desktop;shellzip.desktop;
+",
+        )
+        .unwrap();
+        let paths = test_paths(home, None);
+        unintegrate_into(home, &paths).unwrap();
+        let text = fs::read_to_string(config.join("mimeapps.list")).unwrap();
+        assert!(!text.contains("shellzip.desktop"), "{text}");
+        assert!(text.contains("application/x-7z-compressed=org.gnome.FileRoller.desktop;"));
+        assert!(text.contains("text/html=google-chrome.desktop"));
+        assert!(text.contains("application/gzip=org.gnome.FileRoller.desktop;"));
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.starts_with("application/zip="))
+        );
     }
 }

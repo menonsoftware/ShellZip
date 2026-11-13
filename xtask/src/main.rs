@@ -389,6 +389,44 @@ fi
 /// is left to the new package's `postinst`.
 const DEBIAN_POSTRM: &str = r#"#!/bin/sh
 set -e
+
+# `--integrate` writes shellzip.desktop into the user's mimeapps.list. Package
+# removal does not delete that file, so Files keeps a ShellZip menu until the
+# desktop id is stripped. Other handlers on the same line stay.
+strip_shellzip_mimeapps() {
+    file="$1"
+    [ -f "$file" ] || return 0
+    grep -q 'shellzip\.desktop' "$file" || return 0
+    uid=$(stat -c '%u' "$file")
+    gid=$(stat -c '%g' "$file")
+    mode=$(stat -c '%a' "$file")
+    tmp=$(mktemp "${file}.XXXXXX")
+    awk '
+        index($0, "shellzip.desktop") == 0 { print; next }
+        {
+            eq = index($0, "=")
+            if (eq == 0) { print; next }
+            key = substr($0, 1, eq - 1)
+            val = substr($0, eq + 1)
+            n = split(val, parts, ";")
+            out = ""
+            trailing = (substr(val, length(val), 1) == ";")
+            for (i = 1; i <= n; i++) {
+                if (parts[i] != "" && parts[i] != "shellzip.desktop") {
+                    if (out != "") out = out ";"
+                    out = out parts[i]
+                }
+            }
+            if (out == "") next
+            if (trailing) out = out ";"
+            print key "=" out
+        }
+    ' "$file" > "$tmp"
+    mv "$tmp" "$file"
+    chown "$uid:$gid" "$file"
+    chmod "$mode" "$file"
+}
+
 case "$1" in
 remove|purge|disappear|abort-install)
     if command -v update-desktop-database >/dev/null 2>&1; then
@@ -397,6 +435,15 @@ remove|purge|disappear|abort-install)
     if command -v gtk-update-icon-cache >/dev/null 2>&1; then
         gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
     fi
+    if [ -n "${SUDO_USER:-}" ]; then
+        sudo_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+        strip_shellzip_mimeapps "$sudo_home/.config/mimeapps.list"
+        strip_shellzip_mimeapps "$sudo_home/.local/share/applications/mimeapps.list"
+    fi
+    for home in /home/* /root; do
+        strip_shellzip_mimeapps "$home/.config/mimeapps.list"
+        strip_shellzip_mimeapps "$home/.local/share/applications/mimeapps.list"
+    done
     ;;
 esac
 "#;
@@ -2379,6 +2426,15 @@ version = "should-not-win"
             "cache cleanup must sit inside the removal case"
         );
         assert!(DEBIAN_POSTRM.contains("gtk-update-icon-cache"));
+        assert!(DEBIAN_POSTRM.contains("strip_shellzip_mimeapps"));
+        assert!(DEBIAN_POSTRM.contains("mimeapps.list"));
+        let strip = DEBIAN_POSTRM
+            .find("strip_shellzip_mimeapps \"$home/.config/mimeapps.list\"")
+            .expect("postrm clears per-user MIME defaults");
+        assert!(
+            case < strip,
+            "mimeapps cleanup must sit inside the removal case"
+        );
         assert!(DEBIAN_POSTRM.contains("remove|purge|disappear|abort-install"));
         assert!(
             !DEBIAN_POSTRM.contains("upgrade)"),

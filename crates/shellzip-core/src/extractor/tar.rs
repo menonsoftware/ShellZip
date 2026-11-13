@@ -167,7 +167,7 @@ pub fn extract_tar(
                 std::io::copy(&mut entry, &mut std::io::sink())
                     .map_err(|err| Error::io(name.clone(), err))?;
                 let link = symlink_destination(&name, &target, opts)?;
-                match crate::fs::metadata::create_symlink(&target, &link) {
+                match crate::fs::metadata::create_symlink(&link.target, &link.path) {
                     Ok(()) => report.extracted += 1,
                     Err(err) => report.warnings.push(err.to_string()),
                 }
