@@ -55,6 +55,14 @@ ARCHIVE_SUFFIXES = (
 )
 
 
+def _file_manager_disabled():
+    """True after --unintegrate while the packaged copy of this file remains."""
+    marker = os.path.join(
+        os.path.expanduser("~"), ".config", "shellzip", "file-manager-disabled"
+    )
+    return os.path.isfile(marker)
+
+
 def _is_archive(path):
     lower = path.lower()
     return any(lower.endswith(suffix) for suffix in ARCHIVE_SUFFIXES)
@@ -79,6 +87,8 @@ def _item(name, label, icon=None):
 
 class ShellZipExtension(GObject.GObject, Nautilus.MenuProvider):
     def get_file_items(self, *args):
+        if _file_manager_disabled():
+            return []
         files = args[-1]
         paths = []
         for file_info in files:

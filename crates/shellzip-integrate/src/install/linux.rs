@@ -28,7 +28,12 @@ pub fn integrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
     Ok(())
 }
 
-/// Remove the files this crate installed under the home directory.
+/// Remove per-user menus and hide the packaged file-manager entries.
+///
+/// A `.deb` keeps `/usr/share/nautilus-python/extensions/shellzip.py` and
+/// `/usr/share/applications/shellzip.desktop`. Those files are not writable
+/// here. The extension shows nothing once `file-manager-disabled` exists, and
+/// `[Removed Associations]` hides the desktop id from Open With.
 pub fn unintegrate(paths: &IntegratePaths) -> Result<(), IntegrateError> {
     let home = home_dir()?;
     unintegrate_into(&home, paths)?;
@@ -94,6 +99,8 @@ pub(crate) fn integrate_into(home: &Path, paths: &IntegratePaths) -> Result<(), 
     for (name, body) in pcmanfm_actions(&exe) {
         fs::write(pcmanfm.join(name), body)?;
     }
+    allow_shellzip_open_with(home)?;
+    let _ = fs::remove_file(file_manager_disabled(home));
     Ok(())
 }
 
@@ -133,8 +140,22 @@ pub(crate) fn unintegrate_into(home: &Path, paths: &IntegratePaths) -> Result<()
     let hicolor = home.join(".local/share/icons/hicolor");
     remove_shellzip_mime_icons(&hicolor)?;
     remove_shellzip_app_icons(&hicolor)?;
-    clear_shellzip_mimeapps(home)?;
+    hide_shellzip_open_with(home)?;
+    write_file_manager_disabled(home)?;
     let _ = paths;
+    Ok(())
+}
+
+fn file_manager_disabled(home: &Path) -> PathBuf {
+    home.join(".config/shellzip/file-manager-disabled")
+}
+
+fn write_file_manager_disabled(home: &Path) -> Result<(), IntegrateError> {
+    let path = file_manager_disabled(home);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, b"")?;
     Ok(())
 }
 
@@ -194,22 +215,126 @@ fn strip_shellzip_mimeapps_line(line: &str) -> Option<String> {
     Some(format!("{key}={joined}"))
 }
 
-fn clear_shellzip_mimeapps(home: &Path) -> Result<(), IntegrateError> {
-    for relative in [
-        ".config/mimeapps.list",
-        ".local/share/applications/mimeapps.list",
-    ] {
-        let path = home.join(relative);
+fn rewrite_mimeapps(
+    home: &Path,
+    edit: impl Fn(&str) -> String,
+    create_when_missing: bool,
+) -> Result<(), IntegrateError> {
+    let paths = [
+        home.join(".config/mimeapps.list"),
+        home.join(".local/share/applications/mimeapps.list"),
+    ];
+    let mut wrote = false;
+    for path in &paths {
         if !path.is_file() {
             continue;
         }
-        let original = fs::read_to_string(&path)?;
-        let cleaned = strip_shellzip_mimeapps(&original);
+        let original = fs::read_to_string(path)?;
+        let cleaned = edit(&original);
         if cleaned != original {
-            fs::write(&path, cleaned)?;
+            fs::write(path, cleaned)?;
         }
+        wrote = true;
+    }
+    if create_when_missing && !wrote {
+        let path = &paths[0];
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, edit(""))?;
     }
     Ok(())
+}
+
+/// Drop ShellZip from handler lists so a later `xdg-mime default` can register it.
+fn allow_shellzip_open_with(home: &Path) -> Result<(), IntegrateError> {
+    rewrite_mimeapps(home, strip_shellzip_mimeapps, false)
+}
+
+/// Hide the packaged desktop id from Open With, including when no user list exists yet.
+fn hide_shellzip_open_with(home: &Path) -> Result<(), IntegrateError> {
+    rewrite_mimeapps(home, with_removed_associations, true)
+}
+
+fn with_removed_associations(text: &str) -> String {
+    insert_removed_associations(&strip_shellzip_mimeapps(text), MIME_TYPES)
+}
+
+fn insert_removed_associations(text: &str, mimes: &[&str]) -> String {
+    let mut preamble = Vec::new();
+    let mut sections: Vec<(String, Vec<String>)> = Vec::new();
+    let mut current: Option<(String, Vec<String>)> = None;
+    for raw in text.split('\n') {
+        let line = raw.trim_end_matches('\r').to_string();
+        if line.starts_with('[') && line.ends_with(']') {
+            if let Some(section) = current.take() {
+                sections.push(section);
+            }
+            current = Some((line, Vec::new()));
+        } else if let Some((_, body)) = current.as_mut() {
+            body.push(line);
+        } else {
+            preamble.push(line);
+        }
+    }
+    if let Some(section) = current {
+        sections.push(section);
+    }
+
+    let mut found = false;
+    for (header, body) in &mut sections {
+        if header == "[Removed Associations]" {
+            found = true;
+            upsert_removed_associations(body, mimes);
+        }
+    }
+    if !found {
+        let mut body = Vec::new();
+        upsert_removed_associations(&mut body, mimes);
+        sections.push(("[Removed Associations]".to_string(), body));
+    }
+
+    let mut out = String::new();
+    if preamble.iter().any(|line| !line.is_empty()) {
+        for line in &preamble {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    for (header, body) in &sections {
+        out.push_str(header);
+        out.push('\n');
+        for line in body {
+            if line.is_empty() {
+                continue;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn upsert_removed_associations(body: &mut Vec<String>, mimes: &[&str]) {
+    while body.last().is_some_and(String::is_empty) {
+        body.pop();
+    }
+    for mime in mimes {
+        let prefix = format!("{mime}=");
+        if let Some(line) = body.iter_mut().find(|line| line.starts_with(&prefix)) {
+            let value = line[prefix.len()..].to_string();
+            let already = value.split(';').any(|part| part == SHELLZIP_DESKTOP_ID);
+            if !already {
+                if !value.is_empty() && !value.ends_with(';') {
+                    line.push(';');
+                }
+                line.push_str(SHELLZIP_DESKTOP_ID);
+                line.push(';');
+            }
+        } else {
+            body.push(format!("{mime}={SHELLZIP_DESKTOP_ID};"));
+        }
+    }
 }
 
 fn home_dir() -> Result<PathBuf, IntegrateError> {
@@ -601,14 +726,81 @@ application/gzip=org.gnome.FileRoller.desktop;shellzip.desktop;
         let paths = test_paths(home, None);
         unintegrate_into(home, &paths).unwrap();
         let text = fs::read_to_string(config.join("mimeapps.list")).unwrap();
-        assert!(!text.contains("shellzip.desktop"), "{text}");
         assert!(text.contains("application/x-7z-compressed=org.gnome.FileRoller.desktop;"));
         assert!(text.contains("text/html=google-chrome.desktop"));
         assert!(text.contains("application/gzip=org.gnome.FileRoller.desktop;"));
         assert!(
             !text
                 .lines()
-                .any(|line| line.starts_with("application/zip="))
+                .any(|line| line.starts_with("application/zip=shellzip.desktop")
+                    && !removed_section_line(&text, line))
         );
+        let removed = removed_associations(&text);
+        assert!(
+            removed.contains("application/zip=shellzip.desktop;"),
+            "{text}"
+        );
+        assert!(
+            removed.contains("application/x-7z-compressed=shellzip.desktop;"),
+            "{text}"
+        );
+        assert!(
+            !removed.contains("org.gnome.FileRoller.desktop"),
+            "{removed}"
+        );
+        assert!(
+            home.join(".config/shellzip/file-manager-disabled")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn unintegrate_hides_the_packaged_file_manager_menu() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let paths = test_paths(home, None);
+        unintegrate_into(home, &paths).unwrap();
+
+        assert!(
+            home.join(".config/shellzip/file-manager-disabled")
+                .is_file()
+        );
+        let text = fs::read_to_string(home.join(".config/mimeapps.list")).unwrap();
+        assert!(text.contains("[Removed Associations]"));
+        for mime in MIME_TYPES {
+            assert!(
+                text.contains(&format!("{mime}=shellzip.desktop;")),
+                "{mime} missing from {text}"
+            );
+        }
+
+        integrate_into(home, &paths).unwrap();
+        assert!(!home.join(".config/shellzip/file-manager-disabled").exists());
+        let text = fs::read_to_string(home.join(".config/mimeapps.list")).unwrap();
+        assert!(!text.contains("shellzip.desktop"), "{text}");
+        let py =
+            fs::read_to_string(home.join(".local/share/nautilus-python/extensions/shellzip.py"))
+                .unwrap();
+        assert!(py.contains("def _file_manager_disabled"));
+    }
+
+    fn removed_associations(text: &str) -> String {
+        let mut in_section = false;
+        let mut out = String::new();
+        for line in text.lines() {
+            if line.starts_with('[') && line.ends_with(']') {
+                in_section = line == "[Removed Associations]";
+                continue;
+            }
+            if in_section {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    fn removed_section_line(text: &str, line: &str) -> bool {
+        removed_associations(text).lines().any(|item| item == line)
     }
 }
