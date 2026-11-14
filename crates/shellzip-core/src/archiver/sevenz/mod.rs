@@ -3,6 +3,10 @@
 //!
 //! An update recompresses members that this run keeps. A solid block cannot be
 //! copied through, which is the same constraint `zesven`'s own appender has.
+//!
+//! A file of 64 MiB or more is written in its own block. With solid compression
+//! on, `zesven` reads that file into one buffer and only then compresses it, so
+//! the progress bar sits at the end for the whole compression.
 
 mod options;
 mod rewrite;
@@ -21,8 +25,13 @@ use zesven::{ArchivePath, Timestamp, Writer};
 use super::{ArchiveWriter, commit_output, prepare_output, prepare_temp};
 use crate::entry::{EntryMeta, to_archive_path};
 use crate::error::{Error, map_zesven};
-use crate::options::CompressOpts;
+use crate::options::{CompressOpts, SevenZMethod};
 use crate::progress::ProgressSink;
+
+/// `zesven` streams an entry only at this size, and only when the entry is not
+/// inside a solid block. At or above it, a solid archive would hold the file
+/// in memory first.
+const STREAM_ALONE: u64 = 64 * 1024 * 1024;
 
 /// Builds one 7z archive beside `path`, then moves it into place.
 pub struct SevenZArchiver {
@@ -183,10 +192,72 @@ fn write_file_body(
 ) -> Result<(), Error> {
     let path = archive_path(rel)?;
     let seven = seven_meta(meta, false, false);
-    archiver
-        .writer()?
-        .add_stream(path, src, seven)
-        .map_err(|err| map_zesven(err, archiver.opts.password.is_some()))
+    archiver.add_payload(path, src, seven, meta.size)
+}
+
+impl SevenZArchiver {
+    /// Compress `src` into `path`.
+    ///
+    /// A large LZMA or LZMA2 file is taken out of the solid block for this one
+    /// entry so `zesven` compresses it as it reads. Smaller files, and codecs
+    /// that cannot stream, keep the caller's solid setting.
+    fn add_payload(
+        &mut self,
+        path: ArchivePath,
+        src: &mut dyn Read,
+        meta: SevenMeta,
+        size: u64,
+    ) -> Result<(), Error> {
+        let alone = streams_without_solid(&self.opts, size);
+        if alone {
+            self.apply_solid(false)?;
+        }
+        let written = match self.writer() {
+            Ok(writer) => writer
+                .add_stream(path, src, meta)
+                .map_err(|err| map_zesven(err, self.opts.password.is_some())),
+            Err(err) => Err(err),
+        };
+        if !alone {
+            return written;
+        }
+        let restored = self.apply_solid(self.opts.sevenz.solid);
+        written?;
+        restored
+    }
+
+    /// Replace the writer's solid flag. Entries already accepted keep the
+    /// options they were accepted under; the next `add_stream` flushes anything
+    /// still waiting under the previous flag.
+    fn apply_solid(&mut self, solid: bool) -> Result<(), Error> {
+        let writer = self
+            .inner
+            .take()
+            .ok_or_else(|| Error::Archive("7z writer is closed".to_string()))?;
+        let mut opts = self.opts.clone();
+        opts.sevenz.solid = solid;
+        let options = match options::write_options(&opts) {
+            Ok(options) => options,
+            Err(err) => {
+                self.inner = Some(writer);
+                return Err(err);
+            }
+        };
+        self.inner = Some(writer.options(options));
+        Ok(())
+    }
+}
+
+/// `true` when this entry has to leave the solid block to be compressed as it
+/// is read.
+///
+/// Encryption and the non-LZMA codecs still need the whole entry in memory.
+/// Level 0 already disables solid, so stored files stream without this.
+fn streams_without_solid(opts: &CompressOpts, size: u64) -> bool {
+    if size < STREAM_ALONE || !opts.sevenz.solid || opts.level == 0 || opts.password.is_some() {
+        return false;
+    }
+    matches!(opts.sevenz.method, SevenZMethod::Lzma2 | SevenZMethod::Lzma)
 }
 
 impl SevenZArchiver {
@@ -301,5 +372,50 @@ impl CloneMeta for EntryMeta {
             mode: self.mode,
             size_known: self.size_known,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::options::SevenZOpts;
+
+    fn opts(method: SevenZMethod, solid: bool, level: u8) -> CompressOpts {
+        CompressOpts {
+            level,
+            sevenz: SevenZOpts {
+                method,
+                solid,
+                ..SevenZOpts::default()
+            },
+            ..CompressOpts::default()
+        }
+    }
+
+    #[test]
+    fn large_lzma2_file_leaves_the_solid_block() {
+        let cases = [
+            (SevenZMethod::Lzma2, true, 3, STREAM_ALONE, true),
+            (SevenZMethod::Lzma, true, 5, STREAM_ALONE + 1, true),
+            (SevenZMethod::Lzma2, true, 3, STREAM_ALONE - 1, false),
+            (SevenZMethod::Lzma2, false, 3, STREAM_ALONE, false),
+            (SevenZMethod::Lzma2, true, 0, STREAM_ALONE, false),
+            (SevenZMethod::Ppmd, true, 3, STREAM_ALONE, false),
+            (SevenZMethod::Zstd, true, 3, STREAM_ALONE, false),
+        ];
+        for (method, solid, level, size, want) in cases {
+            assert_eq!(
+                streams_without_solid(&opts(method, solid, level), size),
+                want,
+                "{method:?} solid={solid} level={level} size={size}"
+            );
+        }
+    }
+
+    #[test]
+    fn encrypted_large_file_stays_solid() {
+        let mut opts = opts(SevenZMethod::Lzma2, true, 3);
+        opts.password = Some(crate::crypto::Password::new("secret").unwrap());
+        assert!(!streams_without_solid(&opts, STREAM_ALONE));
     }
 }

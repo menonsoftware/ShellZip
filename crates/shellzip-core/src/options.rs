@@ -97,6 +97,9 @@ pub struct SevenZOpts {
     /// Codec used when the level is not 0.
     pub method: SevenZMethod,
     /// Compress files together. Default is on, matching 7-Zip.
+    ///
+    /// A file of 64 MiB or more is still written in its own block. Solid mode
+    /// would otherwise read the whole file into memory before compressing it.
     pub solid: bool,
     /// Encrypt names and metadata as well as file contents. This is `-hp`.
     pub encrypt_headers: bool,

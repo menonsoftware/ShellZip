@@ -82,6 +82,7 @@ pub(super) fn keep_mapped(
             continue;
         }
         let meta = seven_meta(&meta_for(&member), false, member.is_symlink);
+        let size = member.size;
         let (mut reader, mut writer) =
             std::io::pipe().map_err(|err| Error::io("open 7z rewrite pipe", err))?;
         // The pipe writer has to be dropped when extraction finishes, or the
@@ -94,11 +95,10 @@ pub(super) fn keep_mapped(
                     .map(|_| ())
                     .map_err(|err| map_zesven(err, had_password))
             });
-            let consumed = archiver.writer().and_then(|out| {
+            let consumed = {
                 let mut progress_reader = ProgressReader::new(&mut reader, progress);
-                out.add_stream(path, &mut progress_reader, meta)
-                    .map_err(|err| map_zesven(err, had_password))
-            });
+                archiver.add_payload(path, &mut progress_reader, meta, size)
+            };
             drop(reader);
             let produced = producer.join().unwrap_or_else(|_| {
                 Err(Error::Archive(

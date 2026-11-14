@@ -274,6 +274,14 @@ fn write_sequential(
         }
         progress.end_entry();
     }
+    // Payload bytes are already counted. 7z still encodes the header and
+    // flushes the temporary file here, which is silent if the bar stays full.
+    if planned
+        .iter()
+        .any(|item| item.meta.size >= 64 * 1024 * 1024)
+    {
+        progress.begin_entry("Finishing archive", 0);
+    }
     writer.finish()
 }
 

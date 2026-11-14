@@ -4,6 +4,7 @@
 //! BZip2 and Deflate need `sevenz-codecs` as well.
 
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use shellzip_core::{
@@ -66,6 +67,52 @@ fn add_lists_and_extracts_through_the_core() {
     assert_eq!(entries[0].method.as_deref(), Some("LZMA2"));
     let out = extract_bytes(&dest, None);
     assert_eq!(fs::read(out.path().join("notes.txt")).unwrap(), b"hello\n");
+}
+
+#[test]
+fn large_file_is_not_packed_into_the_solid_block() {
+    let tmp = tempfile::tempdir().unwrap();
+    let small_a = tmp.path().join("a.dat");
+    let small_b = tmp.path().join("b.dat");
+    let large = tmp.path().join("payload.zzz");
+    fs::write(&small_a, b"one").unwrap();
+    fs::write(&small_b, b"two").unwrap();
+    write_zeros(&large, 64 * 1024 * 1024);
+    let dest = tmp.path().join("notes.7z");
+    let opts = CompressOpts {
+        level: 1,
+        ..CompressOpts::default()
+    };
+    add(&dest, &[small_a, small_b, large], &opts, &NopProgress).unwrap();
+    let (_opened, entries) = list(&dest).unwrap();
+    let file = |name: &str| {
+        entries
+            .iter()
+            .find(|entry| entry.path.ends_with(name))
+            .unwrap_or_else(|| panic!("missing {name}"))
+    };
+    assert!(file("a.dat").solid, "small files stay in one solid block");
+    assert!(file("b.dat").solid, "small files stay in one solid block");
+    assert!(
+        !file("payload.zzz").solid,
+        "a 64 MiB file is compressed on its own so the writer does not buffer it"
+    );
+    let out = extract_bytes(&dest, None);
+    assert_eq!(fs::read(out.path().join("a.dat")).unwrap(), b"one");
+    let extracted = fs::read(out.path().join("payload.zzz")).unwrap();
+    assert_eq!(extracted.len(), 64 * 1024 * 1024);
+    assert!(extracted.iter().all(|byte| *byte == 0));
+}
+
+fn write_zeros(path: &Path, len: u64) {
+    let mut file = fs::File::create(path).unwrap();
+    let buf = vec![0u8; 1024 * 1024];
+    let mut left = len;
+    while left > 0 {
+        let n = (buf.len() as u64).min(left) as usize;
+        file.write_all(&buf[..n]).unwrap();
+        left -= n as u64;
+    }
 }
 
 #[test]
