@@ -26,11 +26,6 @@ ignore = [
     # zip 2.6.1 aborts inside ZipArchive::extract when a symlink's declared size is huge.
     # The patched release is zip >= 9. ShellZip reads entries itself and never calls extract.
     { id = "RUSTSEC-2026-0429", reason = "ShellZip does not call ZipArchive::extract or ZipStreamReader::extract" },
-    # zip 2.6.1 and zesven 3.2.0 require zstd 0.13. The fix is zstd >= 0.14.3.
-    # Each member gets a new encoder or decoder; contexts are not reused.
-    { id = "RUSTSEC-2026-0391", reason = "zstd 0.13 is required by zip 2.6.1 and zesven 3.2.0; encoders are not reused across members" },
-    { id = "RUSTSEC-2026-0398", reason = "Seekable::decompress is unused; zstd 0.13 is required by zip 2.6.1 and zesven 3.2.0" },
-    { id = "RUSTSEC-2026-0403", reason = "zstd 0.13 is required by zip 2.6.1 and zesven 3.2.0; the fix is zstd-safe >= 8.2.0" },
 ]
 
 [licenses]
